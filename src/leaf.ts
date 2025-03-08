@@ -75,29 +75,57 @@ export class EntityId {
   }
 }
 
+type EntityDoc = LoroDoc<
+  Record<string, Container> & {
+    __components__: LoroMap<Record<string, true | undefined>>;
+  }
+>;
 class Entity {
   id: EntityId;
-  doc: LoroDoc<
-    Record<string, Container> & {
-      __components__: LoroMap<Record<string, true | undefined>>;
-    }
-  >;
+  #doc: EntityDoc;
+
+  get doc(): EntityDoc {
+    return this.#doc;
+  }
 
   constructor() {
     this.id = new EntityId();
-    this.doc = new LoroDoc();
+    this.#doc = new LoroDoc();
   }
 
   has<T extends LoroContainerType>(def: ComponentDef<T>): boolean {
-    return this.doc.getMap("__components__").get(def.id) === true;
+    return this.#doc.getMap("__components__").get(def.id) === true;
   }
 
+  /** Delete a component from the entity */
   delete<T extends LoroContainerType>(def: ComponentDef<T>) {
-    this.doc.getMap("__components__").delete(def.id);
+    const { constructor, id } = def;
+    this.#doc.getMap("__components__").delete(def.id);
+
+    if (constructor === LoroCounter) {
+      const counter = this.#doc.getCounter(id);
+      counter.decrement(counter.value);
+    } else if (constructor === LoroList) {
+      this.#doc.getList(id).clear();
+    } else if (constructor === LoroMap) {
+      this.#doc.getMap(id).clear();
+    } else if (constructor === LoroMovableList) {
+      this.#doc.getMovableList(id).clear();
+    } else if (constructor === LoroText) {
+      const t = this.#doc.getText(id);
+      t.splice(0, t.length, "");
+    } else if (constructor === LoroTree) {
+      const t = this.#doc.getTree(id);
+      for (const root of t.roots()) {
+        t.delete(root.id);
+      }
+    } else {
+      throw new Error("Invalid constructor type when getting component");
+    }
   }
 
   init<T extends LoroContainerType>(def: ComponentDef<T>) {
-    const components = this.doc.getMap("__components__");
+    const components = this.#doc.getMap("__components__");
     if (!components.get(def.id) == true) {
       const raw = this.#getRaw(def);
       def.init(raw);
@@ -107,7 +135,7 @@ class Entity {
 
   getOrInit<T extends LoroContainerType>(def: ComponentDef<T>): T {
     const raw = this.#getRaw(def);
-    const components = this.doc.getMap("__components__");
+    const components = this.#doc.getMap("__components__");
     if (components.get(def.id) !== true) {
       def.init(raw);
       components.set(def.id, true);
@@ -125,17 +153,17 @@ class Entity {
     constructor,
   }: ComponentDef<T>): T {
     if (constructor === LoroCounter) {
-      return this.doc.getCounter(id) as T;
+      return this.#doc.getCounter(id) as T;
     } else if (constructor === LoroList) {
-      return this.doc.getList(id) as T;
+      return this.#doc.getList(id) as T;
     } else if (constructor === LoroMap) {
-      return this.doc.getMap(id) as T;
+      return this.#doc.getMap(id) as T;
     } else if (constructor === LoroMovableList) {
-      return this.doc.getMovableList(id) as T;
+      return this.#doc.getMovableList(id) as T;
     } else if (constructor === LoroText) {
-      return this.doc.getText(id) as T;
+      return this.#doc.getText(id) as T;
     } else if (constructor === LoroTree) {
-      return this.doc.getTree(id) as T;
+      return this.#doc.getTree(id) as T;
     } else {
       throw new Error("Invalid constructor type when getting component");
     }
@@ -146,6 +174,15 @@ const Name = defComponent("name", LoroMap<{ name: string }>, (map) =>
   map.set("name", "unnamed")
 );
 const Age = defComponent("age", LoroCounter, (age) => age.increment(1));
+const Links = defComponent(
+  "01JNVN9ZRHRCRXGXT33QA8Z9XK",
+  LoroMap<{
+    links: LoroMovableList<{ href: string; label?: string }>;
+  }>,
+  (comp) => {
+    comp.setContainer("links", new LoroMovableList());
+  }
+);
 
 const ent = new Entity();
 console.log(ent.id.toString());
@@ -164,4 +201,8 @@ console.log("name", ent.get(Name));
 
 ent.delete(Name);
 
-console.log("name", ent.get(Name));
+const links = ent.getOrInit(Links);
+
+links.get("links").push({ href: "hello", label: "world" });
+
+console.log("doc", ent.doc.toJSON());
