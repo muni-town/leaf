@@ -12,6 +12,8 @@ import {
   LoroTree,
 } from "loro-crdt";
 
+export type EntityIdStr = `leaf:${string}`;
+
 export type LoroContainerType =
   | LoroCounter
   | LoroList
@@ -47,9 +49,10 @@ export class EntityId {
    *
    * If `id` is not specified a random ID will be generated.
    *
-   * @argument id 32 bytes encoded as a Crockford base32 string.
+   * @argument id a string starting with `leaf:` and ending with 32 bytes encoded as a Crockford
+   * base32 string.
    */
-  constructor(id?: string) {
+  constructor(id?: EntityIdStr) {
     if (id) {
       const data = new Uint8Array(decodeBase32(id, "Crockford"));
       if (data.length != 32)
@@ -67,8 +70,8 @@ export class EntityId {
   }
 
   /** Get the entity ID as a Crockford base32 string. */
-  toString(): string {
-    return encodeBase32(this.bytes, "Crockford").toLowerCase();
+  toString(): EntityIdStr {
+    return `leaf:${encodeBase32(this.bytes, "Crockford").toLowerCase()}`;
   }
 }
 
@@ -139,16 +142,17 @@ class Entity {
   }
 }
 
-const Name = defComponent("name", LoroMap<{ value: string }>, (map) =>
-  map.set("value", "unnamed")
+const Name = defComponent("name", LoroMap<{ name: string }>, (map) =>
+  map.set("name", "unnamed")
 );
 const Age = defComponent("age", LoroCounter, (age) => age.increment(1));
 
 const ent = new Entity();
+console.log(ent.id.toString());
 console.log(ent.has(Name));
 
 const name = ent.getOrInit(Name);
-name.set("value", "john");
+name.set("name", "john");
 console.log(name.toJSON());
 
 const age = ent.getOrInit(Age);
