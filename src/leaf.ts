@@ -1,22 +1,43 @@
 import decodeBase32 from "base32-decode";
 import encodeBase32 from "base32-encode";
 
-import { LoroDoc } from "loro-crdt";
+import {
+  Container,
+  LoroCounter,
+  LoroDoc,
+  LoroList,
+  LoroMap,
+  LoroMovableList,
+  LoroText,
+  LoroTree,
+} from "loro-crdt";
+
+export type LoroContainerType =
+  | LoroCounter
+  | LoroList
+  | LoroMap
+  | LoroMovableList
+  | LoroText
+  | LoroTree;
+type LoroContainerConstructor<T extends LoroContainerType> = new () => T;
 
 type ComponentId = string;
-type Component<T> = { id: ComponentId; data: T };
-type ComponentDef<T> = ((data: T) => Component<T>) & {
+type ComponentDef<T extends LoroContainerType> = {
   id: ComponentId;
-  delete: () => ComponentDelete;
+  constructor: LoroContainerConstructor<T>;
+  init: (container: T) => void;
 };
-type ComponentDelete = { delete: ComponentId };
-type ComponentUpdate<T> = Component<T> | ComponentDelete;
 
-function defComponent<T>(id: string): ComponentDef<T> {
-  const constructor = (data: T) => ({ id, data });
-  constructor.id = id;
-  constructor.delete = () => ({ delete: id });
-  return constructor;
+function defComponent<T extends LoroContainerType>(
+  id: string,
+  constructor: LoroContainerConstructor<T>,
+  init: (container: T) => void = () => {}
+): ComponentDef<T> {
+  return {
+    id,
+    constructor,
+    init,
+  };
 }
 
 export class EntityId {
@@ -53,35 +74,90 @@ export class EntityId {
 
 class Entity {
   id: EntityId;
-  components: { [id: ComponentId]: unknown };
+  doc: LoroDoc<
+    Record<string, Container> & {
+      __components__: LoroMap<Record<string, true | undefined>>;
+    }
+  >;
 
-  constructor(...components: Component<unknown>[]) {
+  constructor() {
     this.id = new EntityId();
-    this.components = {};
-    for (const { id, data } of components) {
-      this.components[id] = data;
+    this.doc = new LoroDoc();
+  }
+
+  has<T extends LoroContainerType>(def: ComponentDef<T>): boolean {
+    return this.doc.getMap("__components__").get(def.id) === true;
+  }
+
+  delete<T extends LoroContainerType>(def: ComponentDef<T>) {
+    this.doc.getMap("__components__").delete(def.id);
+  }
+
+  init<T extends LoroContainerType>(def: ComponentDef<T>) {
+    const components = this.doc.getMap("__components__");
+    if (!components.get(def.id) == true) {
+      const raw = this.#getRaw(def);
+      def.init(raw);
+      components.set(def.id, true);
     }
   }
 
-  update(...updates: ComponentUpdate<unknown>[]) {
-    for (const update of updates) {
-      if ("delete" in update) {
-        delete this.components[update.delete];
-      } else {
-        this.components[update.id] = update.data;
-      }
+  getOrInit<T extends LoroContainerType>(def: ComponentDef<T>): T {
+    const raw = this.#getRaw(def);
+    const components = this.doc.getMap("__components__");
+    if (components.get(def.id) !== true) {
+      def.init(raw);
+      components.set(def.id, true);
     }
+    return raw;
   }
 
-  get<T>(def: ComponentDef<T>): T | undefined {
-    return this.components[def.id] as T | undefined;
+  get<T extends LoroContainerType>(def: ComponentDef<T>): T | undefined {
+    if (!this.has(def)) return undefined;
+    return this.#getRaw(def);
+  }
+
+  #getRaw<T extends LoroContainerType>({
+    id,
+    constructor,
+  }: ComponentDef<T>): T {
+    if (constructor === LoroCounter) {
+      return this.doc.getCounter(id) as T;
+    } else if (constructor === LoroList) {
+      return this.doc.getList(id) as T;
+    } else if (constructor === LoroMap) {
+      return this.doc.getMap(id) as T;
+    } else if (constructor === LoroMovableList) {
+      return this.doc.getMovableList(id) as T;
+    } else if (constructor === LoroText) {
+      return this.doc.getText(id) as T;
+    } else if (constructor === LoroTree) {
+      return this.doc.getTree(id) as T;
+    } else {
+      throw new Error("Invalid constructor type when getting component");
+    }
   }
 }
 
-const Name = defComponent<string>("name");
-const LastName = defComponent<string>("LastName");
-const Age = defComponent<number>("age");
+const Name = defComponent("name", LoroMap<{ value: string }>, (map) =>
+  map.set("value", "unnamed")
+);
+const Age = defComponent("age", LoroCounter, (age) => age.increment(1));
 
-const ent = new Entity(Name("john"), Age(5));
+const ent = new Entity();
+console.log(ent.has(Name));
 
-console.log(ent)
+const name = ent.getOrInit(Name);
+name.set("value", "john");
+console.log(name.toJSON());
+
+const age = ent.getOrInit(Age);
+console.log(age.value);
+age.increment(1);
+console.log(age.value);
+
+console.log("name", ent.get(Name));
+
+ent.delete(Name);
+
+console.log("name", ent.get(Name));
