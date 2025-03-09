@@ -1,6 +1,7 @@
 import decodeBase32 from "base32-decode";
 import encodeBase32 from "base32-encode";
 
+export * from "loro-crdt";
 import {
   Container,
   LoroCounter,
@@ -30,7 +31,7 @@ type ComponentDef<T extends LoroContainerType> = {
   init: (container: T) => void;
 };
 
-function defComponent<T extends LoroContainerType>(
+export function defComponent<T extends LoroContainerType>(
   id: string,
   constructor: LoroContainerConstructor<T>,
   init: (container: T) => void = () => {}
@@ -80,7 +81,7 @@ type EntityDoc = LoroDoc<
     __components__: LoroMap<Record<string, true | undefined>>;
   }
 >;
-class Entity {
+export class Entity {
   id: EntityId;
   #doc: EntityDoc;
 
@@ -169,40 +170,3 @@ class Entity {
     }
   }
 }
-
-const Name = defComponent("name", LoroMap<{ name: string }>, (map) =>
-  map.set("name", "unnamed")
-);
-const Age = defComponent("age", LoroCounter, (age) => age.increment(1));
-const Links = defComponent(
-  "01JNVN9ZRHRCRXGXT33QA8Z9XK",
-  LoroMap<{
-    links: LoroMovableList<{ href: string; label?: string }>;
-  }>,
-  (comp) => {
-    comp.setContainer("links", new LoroMovableList());
-  }
-);
-
-const ent = new Entity();
-console.log(ent.id.toString());
-console.log(ent.has(Name));
-
-const name = ent.getOrInit(Name);
-name.set("name", "john");
-console.log(name.toJSON());
-
-const age = ent.getOrInit(Age);
-console.log(age.value);
-age.increment(1);
-console.log(age.value);
-
-console.log("name", ent.get(Name));
-
-ent.delete(Name);
-
-const links = ent.getOrInit(Links);
-
-links.get("links").push({ href: "hello", label: "world" });
-
-console.log("doc", ent.doc.toJSON());
