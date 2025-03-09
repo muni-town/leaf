@@ -3,10 +3,16 @@
   "version": "0.1.0-preview.1",
   "description": "The Leaf SDK — Entity-Component Data on Top of Synchronized CRDTs",
   "main": "src/leaf.ts",
-  "scripts": {},
+  "scripts": {
+    "docs:build": "cd src && typedoc",
+    "docs:dev": "cd src && typedoc --watch"
+  },
   "dependencies": {
     "base32-decode": "^1.0.0",
     "base32-encode": "^2.0.0",
     "loro-crdt": "^1.4.6"
+  },
+  "devDependencies": {
+    "typedoc": "^0.27.9"
   }
 }

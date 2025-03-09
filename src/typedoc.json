@@ -1,0 +1,14 @@
+{
+  "entryPoints": [
+    "./leaf.ts"
+  ],
+  "excludeReferences": true,
+  "cleanOutputDir": true,
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowSyntheticDefaultImports": true,
+  },
+  "readme": "none",
+  "basePath": ".",
+  "out": "../docs"
+}

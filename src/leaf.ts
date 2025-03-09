@@ -1,3 +1,19 @@
+/**
+ * Welcome to the Leaf SDK! Leaf is an opinionated wrapper around CRDT tools for building local-first apps!
+ * 
+ * Leaf is built around an Entity-Component data model designed to help you build inter-operable
+ * apps.
+ *
+ * If you are new to Leaf, first check out {@linkcode defComponent} and then look at
+ * {@linkcode Entity} to get an idea of how things are put together.
+ *
+ * Leaf is currently built on [Loro](https://loro.dev) as it's underlying CRDT, and
+ * {@link Entity.doc} is in fact a {@linkcode LoroDoc}, so reading the Loro documentation will be
+ * necessary to understand how to fully interact with the Leaf entity data.
+ *
+ * @packageDocumentation
+ */
+
 import decodeBase32 from "base32-decode";
 import encodeBase32 from "base32-encode";
 
@@ -13,27 +29,114 @@ import {
   LoroTree,
 } from "loro-crdt";
 
+/** String representation of an {@linkcode EntityId}. */
 export type EntityIdStr = `leaf:${string}`;
 
-export type LoroContainerType =
+/** A Loro CRDT type that may be used as the type of a {@link defComponent|component}. */
+export type ComponentType =
   | LoroCounter
   | LoroList
   | LoroMap
   | LoroMovableList
   | LoroText
   | LoroTree;
-type LoroContainerConstructor<T extends LoroContainerType> = new () => T;
+/** A constructor for a {@linkcode ComponentType}. */
+export type ComponentConstructor<T extends ComponentType> = new () => T;
 
-type ComponentId = string;
-type ComponentDef<T extends LoroContainerType> = {
+/** The ID for a component. */
+export type ComponentId = string;
+
+/**
+ * A component definition.
+ *
+ * Component definitions have the information needed to get and initialize the component on an Entity.
+ *
+ * Use {@linkcode defComponent} to create a new {@linkcode ComponentDef}.
+ */
+export type ComponentDef<T extends ComponentType> = {
   id: ComponentId;
-  constructor: LoroContainerConstructor<T>;
+  constructor: ComponentConstructor<T>;
   init: (container: T) => void;
 };
 
-export function defComponent<T extends LoroContainerType>(
+/**
+ * Define a new component type.
+ *
+ * All data in Leaf is made up of components. These components are meant to be small, re-usable, and
+ * semantically meaningful pieces of data, such as a `Name`, `Image`, or `Description`.
+ *
+ * Before you can use a component you must define it, which sets its unique ID, it's type, and it's
+ * initialization function.
+ *
+ * ## Example
+ *
+ * Here's an example of a `Name` component that requires a first name and optionally has a last
+ * name.
+ *
+ * ```ts
+ * export const Name = defComponent(
+ *    "01JNVY76XPH6Q5AVA385HP04G7",
+ *    LoroMap<{ first: string; last?: string }>,
+ *    (map) => map.set("first", "")
+ * );
+ * ```
+ *
+ * After defining a component you may use it with an {@linkcode Entity}.
+ *
+ * Let's break it down piece-by-piece.
+ *
+ * #### Exported Variable
+ * Notice that we store the definition in a variable and we export it from the module. This allows
+ *   us to use the same component definition throughout the codebase, and even in other projects
+ *   that might depend on this module, if we are writing a library.
+ *
+ * This is not required, of course, but will often be useful in real projects.
+ *
+ * #### Unique ID
+ * The unique ID makes sure that this component is distinguished from any other component that might
+ *   exist. By using exported variables and unique IDs, we don't have to worry about conflicting
+ *   names for different components.
+ *
+ * #### Component Type
+ * The next argument is the type we want to use for the component. This must be one of the
+ *   {@linkcode ComponentType}s and should usually include extra type annotations describing the
+ *   data that will go inside.
+ *
+ * In this example we say that `Name` is a {@linkcode LoroMap} and we annotate the inner data as
+ * requiring a `string` `first` name and optionally having a `string` `last` name.
+ *
+ * Note that components must be a so called "container type", such as a map, array, rich text, etc.
+ * If you wish to store only one primitive value such as a `string` or `number` in a component, you
+ * can always store it in a map with one field.
+ *
+ * #### Initialization Function
+ *
+ * Finally, the last argument is an initialization function. When the component gets created it will
+ * be the empty, default value of whatever {@linkcode ComponentType} that you specified.
+ *
+ * In this case, that means `Name` will start off as an empty map which, notably, does not match our
+ * type annotation of requiring a first name.
+ *
+ * Therefore it is important, when annotating your component type, that you also supply an
+ * initialization function to set any required fields so that your returned component will match
+ * your annotated type.
+ *
+ * In this case, we just initialize the first name to an empty string.
+ *
+ * @param id The globally unique ID of the component type. Often this will be a
+ * [ULID](https://ulidgenerator.com/) or [UUID](https://www.uuidgenerator.net/).
+ * @param constructor One of the {@linkcode ComponentType}s. This will be used to construct the
+ * component initially, in addition to the `init` function if provided.
+ * @param init An optional function that will be called to initialize the component when it is first
+ * added to an Entity. Since the constructor will initialize an empty version of whatever type you
+ * select, you must use this init function if you want to make sure that it has any of the initial
+ * data necessary to match your annotated type.
+ * @returns A component definition that can be used to add, edit, and delete components on an
+ * {@linkcode Entity}.
+ */
+export function defComponent<T extends ComponentType>(
   id: string,
-  constructor: LoroContainerConstructor<T>,
+  constructor: ComponentConstructor<T>,
   init: (container: T) => void = () => {}
 ): ComponentDef<T> {
   return {
@@ -43,14 +146,27 @@ export function defComponent<T extends LoroContainerType>(
   };
 }
 
+/**
+ * The ID of an {@linkcode Entity}.
+ *
+ * In string from an Entity ID looks like this:
+ *
+ *     leaf:ey02v80j9x376qgcczy8sq0pwvdbx01kbx0n7nbj90f87fnj5c50
+ *
+ * Leaf entity IDs always start with `leaf:` and end with a Crockford base32 encoded sequence of 32
+ * bytes.
+ *
+ * Currently these are random bytes, in the future they will be public keys.
+ * */
 export class EntityId {
+  /** The raw bytes of the Entity ID. */
   bytes: Uint8Array;
 
   /** Create a new Entity ID.
    *
    * If `id` is not specified a random ID will be generated.
    *
-   * @argument id a string starting with `leaf:` and ending with 32 bytes encoded as a Crockford
+   * @param id a string starting with `leaf:` and ending with 32 bytes encoded as a Crockford
    * base32 string.
    */
   constructor(id?: EntityIdStr) {
@@ -70,38 +186,101 @@ export class EntityId {
     }
   }
 
-  /** Get the entity ID as a Crockford base32 string. */
+  /** Get the string formatted Entity ID */
   toString(): EntityIdStr {
     return `leaf:${encodeBase32(this.bytes, "Crockford").toLowerCase()}`;
   }
 }
 
-type EntityDoc = LoroDoc<
+/** The key under which the list of components in an {@linkcode Entity} are stored in it's internal
+ * {@linkcode LoroDoc}.
+ * 
+ * @internal
+ * */
+export const entityComponentsKey = "___leaf_components___";
+
+/** The type of the Loro doc for {@linkcode Entity}s. */
+export type EntityDoc = LoroDoc<
   Record<string, Container> & {
-    __components__: LoroMap<Record<string, true | undefined>>;
+    [entityComponentsKey]: LoroMap<Record<string, true | undefined>>;
   }
 >;
+
+/**
+ * An entity.
+ *
+ * Entities are containers for collections of {@link defComponent|Components}. All data in Leaf is
+ * stored in components that have been attached to {@linkcode Entity}s.
+ *
+ * ## Example
+ *
+ *  For example, assuming you have defined a `Name` component as demonstrated in the
+ *  {@linkcode defComponent} example, you could add it to a new entity like so:
+ *
+ * ```ts
+ * const ent = new Entity();
+ *
+ * const name = ent.getOrInit(Name)
+ * name.set("first", "John")
+ * name.set("last", "Smith")
+ * ```
+ */
 export class Entity {
+  /** The unique {@linkcode EntityId} for this entity. */
   id: EntityId;
   #doc: EntityDoc;
 
+  /**
+   * Get the internal {@linkcode LoroDoc}.
+   *
+   * This can be used to do anything that Loro allows, such as exporting snapshots, doing time
+   * travel, etc.
+   *
+   * ### Entity Storage Format
+   * **Note:** The {@linkcode Entity}'s components are stored in this doc. If you modify the
+   * components directly through the {@linkcode LoroDoc} you may confuse the normal entity API when
+   * it tries to read or write components.
+   *
+   * In the Loro doc the `Entity` stores one special container using the value in
+   * {@linkcode entityComponentsKey} as it's ID. It is important that no component use this key as
+   * it's ID.
+   *
+   * This container will be a map that contains an entry for each component ID on the entity. The
+   * value will always be `true`. For every key in that map, the component is considered to be on
+   * the entity.
+   *
+   * Every other root container in the Loro document will be a component, and it's ID will be the
+   * component ID.
+   */
   get doc(): EntityDoc {
     return this.#doc;
   }
 
+  /**
+   * Create a new {@linkcode Entity}.
+   *
+   * The entity will have a new random ID and be initialize with no components.
+   */
   constructor() {
     this.id = new EntityId();
     this.#doc = new LoroDoc();
   }
 
-  has<T extends LoroContainerType>(def: ComponentDef<T>): boolean {
-    return this.#doc.getMap("__components__").get(def.id) === true;
+  /**
+   * Check whether the entity has a given component on it.
+   *
+   * ```ts
+   * if (!entity.has(Name)) throw "Person must have name!";
+   * ```
+   * */
+  has<T extends ComponentType>(def: ComponentDef<T>): boolean {
+    return this.#doc.getMap(entityComponentsKey).get(def.id) === true;
   }
 
-  /** Delete a component from the entity */
-  delete<T extends LoroContainerType>(def: ComponentDef<T>) {
+  /** Delete a component from the entity. */
+  delete<T extends ComponentType>(def: ComponentDef<T>) {
     const { constructor, id } = def;
-    this.#doc.getMap("__components__").delete(def.id);
+    this.#doc.getMap(entityComponentsKey).delete(def.id);
 
     if (constructor === LoroCounter) {
       const counter = this.#doc.getCounter(id);
@@ -125,18 +304,25 @@ export class Entity {
     }
   }
 
-  init<T extends LoroContainerType>(def: ComponentDef<T>) {
-    const components = this.#doc.getMap("__components__");
+  /**
+   * Initialize a component with it's default value and add it to the entity, if the entity does not
+   * already have a component of that type.
+   * */
+  init<T extends ComponentType>(def: ComponentDef<T>): Entity {
+    const components = this.#doc.getMap(entityComponentsKey);
     if (!components.get(def.id) == true) {
       const raw = this.#getRaw(def);
       def.init(raw);
       components.set(def.id, true);
     }
+    return this;
   }
 
-  getOrInit<T extends LoroContainerType>(def: ComponentDef<T>): T {
+  /** Get the component of the given type on the entity, initializing it with it's default value if
+   * it does not already exist on the entity. */
+  getOrInit<T extends ComponentType>(def: ComponentDef<T>): T {
     const raw = this.#getRaw(def);
-    const components = this.#doc.getMap("__components__");
+    const components = this.#doc.getMap(entityComponentsKey);
     if (components.get(def.id) !== true) {
       def.init(raw);
       components.set(def.id, true);
@@ -144,15 +330,14 @@ export class Entity {
     return raw;
   }
 
-  get<T extends LoroContainerType>(def: ComponentDef<T>): T | undefined {
+  /** Get the component of the given type from the entity, or `undefined` if the component is not on
+   * the entity. */
+  get<T extends ComponentType>(def: ComponentDef<T>): T | undefined {
     if (!this.has(def)) return undefined;
     return this.#getRaw(def);
   }
 
-  #getRaw<T extends LoroContainerType>({
-    id,
-    constructor,
-  }: ComponentDef<T>): T {
+  #getRaw<T extends ComponentType>({ id, constructor }: ComponentDef<T>): T {
     if (constructor === LoroCounter) {
       return this.#doc.getCounter(id) as T;
     } else if (constructor === LoroList) {
