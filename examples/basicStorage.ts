@@ -1,9 +1,15 @@
 import { Entity } from "../src/leaf.ts";
 import { StorageManager } from "../src/storage.ts";
-import { denoFsStorageAdapter } from "../src/storage/deno-fs.ts";
+import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
+
 import { Age, Name } from "./components.ts";
 
-const storage = new StorageManager(denoFsStorageAdapter("./data"));
+const storage = new StorageManager(
+  denoKvStorageAdapter(await Deno.openKv("data/basicStorage.sqlite"))
+);
+
+// We could use a the filesystem storage adapter, or even a custom adapter alternatively.
+// const storage = new StorageManager(denoFsStorageAdapter("./data"));
 
 const ent = new Entity(
   // By providing a specific entity ID we make sure that we will save and load the same doc across

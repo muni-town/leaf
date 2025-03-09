@@ -2,6 +2,11 @@ import { StorageInterface, StorageKey } from "../storage.ts";
 import { join, parse, relative } from "jsr:@std/path";
 import { walk } from "jsr:@std/fs";
 
+/**
+ * Storage adapter that stores each snapshot in it's own file on the filesystem.
+ * 
+ * This is probably not the most efficient adapter when you have many small entities.
+ */
 export const denoFsStorageAdapter = (directory: string): StorageInterface => ({
   async load(key) {
     const path = join(directory, ...key);
