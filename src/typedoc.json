@@ -8,6 +8,7 @@
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
   },
+  "skipErrorChecking": true,
   "readme": "none",
   "basePath": ".",
   "out": "../docs"

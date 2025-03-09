@@ -1,6 +1,6 @@
 /**
  * Welcome to the Leaf SDK! Leaf is an opinionated wrapper around CRDT tools for building local-first apps!
- * 
+ *
  * Leaf is built around an Entity-Component data model designed to help you build inter-operable
  * apps.
  *
@@ -11,11 +11,13 @@
  * {@link Entity.doc} is in fact a {@linkcode LoroDoc}, so reading the Loro documentation will be
  * necessary to understand how to fully interact with the Leaf entity data.
  *
- * @packageDocumentation
+ * @module
  */
 
 import decodeBase32 from "base32-decode";
 import encodeBase32 from "base32-encode";
+
+export * as storage from "./storage.ts";
 
 export * from "loro-crdt";
 import {
@@ -29,8 +31,11 @@ import {
   LoroTree,
 } from "loro-crdt";
 
+/** The prefix for the string representation of {@linkcode EntityId}s. */
+export const entityIdPrefix = `leaf:`;
+
 /** String representation of an {@linkcode EntityId}. */
-export type EntityIdStr = `leaf:${string}`;
+export type EntityIdStr = `${typeof entityIdPrefix}${string}`;
 
 /** A Loro CRDT type that may be used as the type of a {@link defComponent|component}. */
 export type ComponentType =
@@ -75,7 +80,7 @@ export type ComponentDef<T extends ComponentType> = {
  *
  * ```ts
  * export const Name = defComponent(
- *    "01JNVY76XPH6Q5AVA385HP04G7",
+ *    "name:01JNVY76XPH6Q5AVA385HP04G7",
  *    LoroMap<{ first: string; last?: string }>,
  *    (map) => map.set("first", "")
  * );
@@ -123,8 +128,9 @@ export type ComponentDef<T extends ComponentType> = {
  *
  * In this case, we just initialize the first name to an empty string.
  *
- * @param id The globally unique ID of the component type. Often this will be a
- * [ULID](https://ulidgenerator.com/) or [UUID](https://www.uuidgenerator.net/).
+ * @param id The globally unique ID of the component type. Often this will include a
+ * [ULID](https://ulidgenerator.com/) or [UUID](https://www.uuidgenerator.net/) prefixed by a short
+ * human-readable name to assist in debugging.
  * @param constructor One of the {@linkcode ComponentType}s. This will be used to construct the
  * component initially, in addition to the `init` function if provided.
  * @param init An optional function that will be called to initialize the component when it is first
@@ -171,7 +177,12 @@ export class EntityId {
    */
   constructor(id?: EntityIdStr) {
     if (id) {
-      const data = new Uint8Array(decodeBase32(id, "Crockford"));
+      if (!id.startsWith(entityIdPrefix))
+        throw new Error(`Entity ID must start with \`${entityIdPrefix}\``);
+
+      const data = new Uint8Array(
+        decodeBase32(id.slice(entityIdPrefix.length), "Crockford")
+      );
       if (data.length != 32)
         throw new Error(
           `Invalid byte length for Entity ID ( ${data.length} ), expected 32.`
@@ -194,7 +205,7 @@ export class EntityId {
 
 /** The key under which the list of components in an {@linkcode Entity} are stored in it's internal
  * {@linkcode LoroDoc}.
- * 
+ *
  * @internal
  * */
 export const entityComponentsKey = "___leaf_components___";
@@ -259,10 +270,14 @@ export class Entity {
   /**
    * Create a new {@linkcode Entity}.
    *
-   * The entity will have a new random ID and be initialize with no components.
+   * By default the entity will have a new random ID and be initialize with no components.
+   *
+   * @param id Specifying the ID will create an entity with a specific ID instead of a random ID.
+   * The document will sill be empty, by default, so if you are loading a specific entity you may
+   * need to load the entity with a {@linkcode StorageManager}, for instance.
    */
-  constructor() {
-    this.id = new EntityId();
+  constructor(id?: EntityIdStr) {
+    this.id = new EntityId(id);
     this.#doc = new LoroDoc();
   }
 

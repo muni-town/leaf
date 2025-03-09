@@ -4,7 +4,8 @@ import { defComponent, LoroMap, LoroCounter, Entity } from "../src/leaf.ts";
 
 const Name = defComponent(
   // Components should all have globally unique identifiers.
-  "01JNVY76XPH6Q5AVA385HP04G7",
+  // We add a human-readable prefix to make debugging easier.
+  "name:01JNVY76XPH6Q5AVA385HP04G7",
   // Components are defined in terms of a Loro type
   LoroMap<{ first: string; last?: string }>,
   // We pass a function to initialize the component state to match it's type.
@@ -12,7 +13,7 @@ const Name = defComponent(
 );
 
 // Let's make age a counter
-const Age = defComponent("01JNVYC0T0V6SDKDWQP51MYKS1", LoroCounter, (age) =>
+const Age = defComponent("age:01JNVYC0T0V6SDKDWQP51MYKS1", LoroCounter, (age) =>
   age.increment(1)
 );
 
