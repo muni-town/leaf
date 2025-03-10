@@ -1,11 +1,13 @@
 /**
- * Welcome to the Leaf SDK! Leaf is an opinionated wrapper around CRDT tools for building local-first apps!
+ * Welcome to the Leaf SDK! Leaf is an opinionated wrapper around CRDT tools for building
+ * local-first apps!
  *
  * Leaf is built around an Entity-Component data model designed to help you build inter-operable
  * apps.
  *
  * If you are new to Leaf, first check out {@linkcode defComponent} and then look at
- * {@linkcode Entity} to get an idea of how things are put together.
+ * {@linkcode Entity} to get an idea of how things are put together. Finally you'll want to use a
+ * {@linkcode Peer} in most cases to sync your entities with storage and sync interfaces.
  *
  * Leaf is currently built on [Loro](https://loro.dev) as it's underlying CRDT, and
  * {@link Entity.doc} is in fact a {@linkcode LoroDoc}, so reading the Loro documentation will be
@@ -31,6 +33,8 @@ import {
   LoroText,
   LoroTree,
 } from "loro-crdt";
+import { Syncer1 } from "./sync1.ts";
+import { StorageManager } from "./storage.ts";
 
 /** The prefix for the string representation of {@linkcode EntityId}s. */
 export const entityIdPrefix = `leaf:`;
@@ -153,6 +157,17 @@ export function defComponent<T extends ComponentType>(
   };
 }
 
+/** A type that can be converted to an {@linkcode EntityId} */
+export type IntoEntityId = Entity | EntityIdStr | EntityId;
+/** A helper to convert a compatible type to an {@linkcode EntityId}. */
+export function intoEntityId(id: IntoEntityId): EntityId {
+  return id instanceof EntityId
+    ? id
+    : id instanceof Entity
+    ? id.id
+    : new EntityId(id);
+}
+
 /**
  * The ID of an {@linkcode Entity}.
  *
@@ -239,7 +254,7 @@ export type EntityDoc = LoroDoc<
  */
 export class Entity {
   /** The unique {@linkcode EntityId} for this entity. */
-  id: EntityId;
+  #id: EntityId;
   #doc: EntityDoc;
 
   /**
@@ -268,6 +283,11 @@ export class Entity {
     return this.#doc;
   }
 
+  /** The Entity's unique ID. */
+  get id(): EntityId {
+    return this.#id;
+  }
+
   /**
    * Create a new {@linkcode Entity}.
    *
@@ -277,8 +297,8 @@ export class Entity {
    * The document will sill be empty, by default, so if you are loading a specific entity you may
    * need to load the entity with a {@linkcode StorageManager}, for instance.
    */
-  constructor(id?: EntityIdStr | EntityId) {
-    this.id = id instanceof EntityId ? id : new EntityId(id);
+  constructor(id?: IntoEntityId) {
+    this.#id = id ? intoEntityId(id) : new EntityId();
     this.#doc = new LoroDoc();
   }
 
@@ -373,5 +393,105 @@ export class Entity {
     } else {
       throw new Error("Invalid constructor type when getting component");
     }
+  }
+}
+
+/** A policy describing how to  */
+export type StorageConfig = {
+  /** Whether this storage should be read from when loading documents. */
+  read?: boolean;
+  /** Whether this storage should be written to when documents change. */
+  write?: boolean;
+  /**
+   * Custom throttle function that can be used to debounce or throttle writes to this storage. The
+   * function should call `write()` when it wants to actually trigger the pending write to storage.
+   */
+  writeThrottle?: (write: () => void) => void;
+  /** The storage manager to use. */
+  manager: StorageManager;
+};
+
+/**
+ * The entrypoint for opening {@linkcode Entity}s, loading and saving them automatically from
+ * {@linkcode StorageManager}s, and syncing them with {@linkcode Syncer1}s.
+ */
+export class Peer {
+  #syncers: Syncer1[] = [];
+  #storages: StorageConfig[] = [];
+  #storageUnsubscribers: Map<EntityIdStr, () => void> = new Map();
+  #entities: Map<EntityIdStr, Entity> = new Map();
+
+  constructor(options?: { syncers?: Syncer1[]; storages?: StorageConfig[] }) {
+    if (options?.syncers) this.#syncers = options.syncers;
+    if (options?.storages) this.#storages = options.storages;
+  }
+
+  /**
+   * Open the entity with the given ID.
+   *
+   * This will try to load the entity from all read storages and await on that before returning.
+   *
+   * It will also start syncing the entity with all of the peer's syncers.
+   * */
+  async open(id?: IntoEntityId): Promise<Entity> {
+    const entId = id ? intoEntityId(id) : new EntityId();
+    const entIdStr = entId.toString();
+
+    const existingEnt = this.#entities.get(entIdStr);
+    if (existingEnt) return existingEnt;
+
+    const entity = new Entity(entId);
+    this.#entities.set(entIdStr, entity);
+    for (const storage of this.#storages) {
+      if (storage.read !== false) {
+        await storage.manager.load(entity);
+      }
+    }
+    for (const syncer of this.#syncers) {
+      // TODO: allow optionally awaiting on initial snapshot sync.
+      syncer.sync(entity);
+    }
+
+    // Sync to storages on doc change.
+    const unsubscribeStorage = entity.doc.subscribe(() => {
+      queueMicrotask(() => {
+        for (const storage of this.#storages) {
+          if (storage.write !== false) {
+            const save = () => {
+              storage.manager.save(entity);
+            };
+
+            if (storage.writeThrottle) {
+              storage.writeThrottle(save);
+            } else {
+              save();
+            }
+          }
+        }
+      });
+    });
+    this.#storageUnsubscribers.set(entIdStr, unsubscribeStorage);
+
+    return entity;
+  }
+
+  /** Commit the entity, stop syncing it, and flush it to storage. */
+  close(id: Entity) {
+    const entId = id ? intoEntityId(id) : new EntityId();
+    const entIdStr = entId.toString();
+
+    const entity = this.#entities.get(entIdStr);
+
+    if (entity) {
+      // This will trigger a write to storage
+      entity.doc.commit();
+    }
+
+    const unsubscribeStorage = this.#storageUnsubscribers.get(entIdStr);
+    if (unsubscribeStorage) unsubscribeStorage();
+    for (const syncer of this.#syncers) {
+      syncer.unsync(entIdStr);
+    }
+    this.#entities.delete(entIdStr);
   }
 }

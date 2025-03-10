@@ -1,6 +1,12 @@
 /**
  * Synchronization tools that can be used to sync documents over the network with other peers.
  *
+ * **Note:** This module is called `sync1` because it is a temporary placeholder for the more
+ * permanent sync implementation that will come later and be built, most-likely on
+ * [Keyhive](https://www.inkandswitch.com/beehive/notebook/).
+ *
+ * The name is annoying, but is intentionally temporary.
+ *
  * @module
  */
 
@@ -137,8 +143,7 @@ export class Syncer1 {
   }
 
   /** Stop syncing an entity. */
-  unsync(entity: Entity) {
-    const id = entity.id.toString();
+  unsync(id: EntityIdStr) {
     const syncing = this.syncing.get(id);
     if (!syncing) return;
     syncing.unsubscribe();

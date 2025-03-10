@@ -3,6 +3,8 @@ import { memorySync1Adapters, Syncer1 } from "../src/sync1.ts";
 import { Age, Name } from "./components.ts";
 import { assertEquals } from "jsr:@std/assert@1/equals";
 
+// NOTE: usually you'll use a Peer to do this instead of manually using syncers.
+
 // Create in-memory sync adapters
 const [syncAdapter1, syncAdapter2] = memorySync1Adapters();
 
