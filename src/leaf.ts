@@ -18,6 +18,7 @@ import decodeBase32 from "base32-decode";
 import encodeBase32 from "base32-encode";
 
 export * as storage from "./storage.ts";
+export * as sync1 from "./sync1.ts";
 
 export * from "loro-crdt";
 import {
@@ -276,8 +277,8 @@ export class Entity {
    * The document will sill be empty, by default, so if you are loading a specific entity you may
    * need to load the entity with a {@linkcode StorageManager}, for instance.
    */
-  constructor(id?: EntityIdStr) {
-    this.id = new EntityId(id);
+  constructor(id?: EntityIdStr | EntityId) {
+    this.id = id instanceof EntityId ? id : new EntityId(id);
     this.#doc = new LoroDoc();
   }
 
@@ -350,6 +351,10 @@ export class Entity {
   get<T extends ComponentType>(def: ComponentDef<T>): T | undefined {
     if (!this.has(def)) return undefined;
     return this.#getRaw(def);
+  }
+
+  commit(options?: Parameters<typeof this.doc.commit>[0]) {
+    this.doc.commit(options);
   }
 
   #getRaw<T extends ComponentType>({ id, constructor }: ComponentDef<T>): T {
