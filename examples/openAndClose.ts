@@ -3,15 +3,11 @@ import { StorageManager } from "../src/storage.ts";
 import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
 import { Age, Name } from "./components.ts";
 
-const peer = new Peer({
-  storages: [
-    {
-      manager: new StorageManager(
-        denoKvStorageAdapter(await Deno.openKv("./data/openAndClose.sqlite"))
-      ),
-    },
-  ],
-});
+const peer = new Peer(
+  new StorageManager(
+    denoKvStorageAdapter(await Deno.openKv("./data/openAndClose.sqlite"))
+  )
+);
 
 const id = new EntityId((Deno.args[0] as EntityIdStr) || undefined);
 console.log("ID", id.toString());

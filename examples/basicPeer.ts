@@ -8,26 +8,18 @@ import { Age, Name } from "./components.ts";
 // Create in-memory sync adapters
 const [syncAdapter1, syncAdapter2] = memorySync1Adapters();
 
-const peer1 = new Peer({
-  storages: [
-    {
-      manager: new StorageManager(
-        denoKvStorageAdapter(await Deno.openKv("data/peer1.sqlite"))
-      ),
-    },
-  ],
-  syncers: [new Syncer1(syncAdapter1)],
-});
-const peer2 = new Peer({
-  storages: [
-    {
-      manager: new StorageManager(
-        denoKvStorageAdapter(await Deno.openKv("data/peer2.sqlite"))
-      ),
-    },
-  ],
-  syncers: [new Syncer1(syncAdapter2)],
-});
+const peer1 = new Peer(
+  new StorageManager(
+    denoKvStorageAdapter(await Deno.openKv("data/peer1.sqlite"))
+  ),
+  new Syncer1(syncAdapter1)
+);
+const peer2 = new Peer(
+  new StorageManager(
+    denoKvStorageAdapter(await Deno.openKv("data/peer2.sqlite"))
+  ),
+  new Syncer1(syncAdapter2)
+);
 
 const ent1 = await peer1.open((Deno.args[0] as EntityIdStr) || undefined);
 console.log("ID", ent1.id.toString());

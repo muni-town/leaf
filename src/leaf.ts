@@ -411,6 +411,8 @@ export type StorageConfig = {
   manager: StorageManager;
 };
 
+export type PeerOption = StorageManager | Syncer1 | StorageConfig;
+
 /**
  * The entrypoint for opening {@linkcode Entity}s, loading and saving them automatically from
  * {@linkcode StorageManager}s, and syncing them with {@linkcode Syncer1}s.
@@ -421,9 +423,18 @@ export class Peer {
   #storageUnsubscribers: Map<EntityIdStr, () => void> = new Map();
   #entities: Map<EntityIdStr, Entity> = new Map();
 
-  constructor(options?: { syncers?: Syncer1[]; storages?: StorageConfig[] }) {
-    if (options?.syncers) this.#syncers = options.syncers;
-    if (options?.storages) this.#storages = options.storages;
+  constructor(...options: PeerOption[]) {
+    for (const option of options) {
+      if (option instanceof StorageManager) {
+        this.#storages.push({
+          manager: option,
+        });
+      } else if (option instanceof Syncer1) {
+        this.#syncers.push(option);
+      } else if ("manager" in option) {
+        this.#storages.push(option);
+      }
+    }
   }
 
   /**
