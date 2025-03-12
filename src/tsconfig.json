@@ -1,13 +1,22 @@
 {
   "compilerOptions": {
     "target": "ESNext",
+    "module": "ESNext",
     "moduleResolution": "node",
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
+    "lib": [
+      "ESNext"
+    ],
+    "types": [
+      "./types/extra.d.ts",
+      "./types/deno/lib.esnext",
+      "./types/deno/lib",
+      "./types/deno/lib.deno.unstable",
+    ]
   },
   "exclude": [
-    "**/*deno*",
     "*.test.ts",
   ]
 }
