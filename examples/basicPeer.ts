@@ -40,4 +40,4 @@ setTimeout(() => {
   console.log("Value1", ent1.doc.toJSON());
   console.log("Value2", ent2.doc.toJSON());
   assertEquals(ent1.doc.toJSON(), ent2.doc.toJSON());
-}, 0);
+});

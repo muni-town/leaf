@@ -2,7 +2,9 @@
   "name": "leaf",
   "version": "0.1.0-preview.1",
   "description": "The Leaf SDK — Entity-Component Data on Top of Synchronized CRDTs",
-  "main": "src/leaf.ts",
+  "exports": {
+    "default": "./src/leaf.ts"
+  },
   "scripts": {
     "docs:build": "cd src && typedoc",
     "docs:dev": "cd src && typedoc --watch"

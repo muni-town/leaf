@@ -1,6 +1,7 @@
 {
   "entryPoints": [
-    "./leaf.ts"
+    "./leaf.ts",
+    "./super-peer.ts"
   ],
   "excludeReferences": true,
   "cleanOutputDir": true,

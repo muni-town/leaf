@@ -159,6 +159,7 @@ type MemorySync1Adaptr = Sync1Interface & {
   >;
 };
 
+
 export const memorySync1Adapters = (count = 2): MemorySync1Adaptr[] => {
   const interfaces: MemorySync1Adaptr[] = [];
 
