@@ -3,13 +3,19 @@
   "version": "0.1.0-preview.1",
   "description": "The Leaf SDK — Entity-Component Data on Top of Synchronized CRDTs",
   "exports": {
-    "default": "./src/leaf.ts"
+    "default": "./src/leaf.ts",
+    "client": "./src/client.ts",
+    "storage/deno-fs": "./src/storage/deno-fs.ts",
+    "storage/deno-kv": "./src/storage/deno-kv.ts",
+    "server/deno-websocket-atproto": "./src/server/deno-websocket-atproto.ts"
   },
   "scripts": {
     "docs:build": "cd src && typedoc",
     "docs:dev": "cd src && typedoc --watch"
   },
   "dependencies": {
+    "@msgpack/msgpack": "^3.1.1",
+    "arktype": "^2.1.9",
     "base32-decode": "^1.0.0",
     "base32-encode": "^2.0.0",
     "loro-crdt": "^1.4.6"

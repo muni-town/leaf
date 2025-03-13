@@ -4,6 +4,10 @@ import { StorageManager } from "../src/storage.ts";
 import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
 import { Syncer1, SuperPeer1 } from "../src/sync1.ts";
 import { Age } from "./components.ts";
+import {
+  SuperPeer1BinaryWrapper,
+  Sync1BinaryWrapper,
+} from "../src/sync1/proto.ts";
 
 /**
  * First we create a super peer to act as our "sync server". In this case it's local, but it would
@@ -21,9 +25,15 @@ const superPeer = new SuperPeer1(
  * Super peer implements {@link Sync1Interface} so we can pass it into a syncer and use it as our
  * peers' syncer.
  */
-const peer1 = new Peer(new Syncer1(superPeer));
-const peer2 = new Peer(new Syncer1(superPeer));
-const peer3 = new Peer(new Syncer1(superPeer));
+const peer1 = new Peer(
+  new Syncer1(new Sync1BinaryWrapper(new SuperPeer1BinaryWrapper(superPeer)))
+);
+const peer2 = new Peer(
+  new Syncer1(new Sync1BinaryWrapper(new SuperPeer1BinaryWrapper(superPeer)))
+);
+const peer3 = new Peer(
+  new Syncer1(new Sync1BinaryWrapper(new SuperPeer1BinaryWrapper(superPeer)))
+);
 
 const entityId = new EntityId((Deno.args[0] as EntityIdStr) || undefined);
 

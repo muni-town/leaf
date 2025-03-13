@@ -10,8 +10,13 @@
  * @module
  */
 
-import { Entity, EntityIdStr } from "./leaf.ts";
+import { Entity, EntityIdStr, LoroDoc, StorageConfig } from "./leaf.ts";
+import { StorageManager } from "./storage.ts";
 import { getOrDefault } from "./utils.ts";
+
+export * as proto from "./sync1/proto.ts";
+
+export type Subscriber = (entityId: EntityIdStr, update: Uint8Array) => void;
 
 /**
  * An implementation of an entity synchronizer. A synchronizer allows you to sync entities with other
@@ -21,36 +26,21 @@ import { getOrDefault } from "./utils.ts";
  */
 export interface Sync1Interface {
   /**
-   * Get the latest snapshots of the given entity and provide our latest snapshot as well.
-   *
-   * This will be called once when an entity is first starting to sync to get the latest known
-   * state, and to update the remote with our latest state.
-   *
-   * **TODO:** This needs to be made more sophisticated so that the entire snapshot doesn't need to
-   * be shared over the network when partial updates can be synced. At the same time, we may just
-   * want to wait for Sedimentree.
-   *
-   * @param entityId The entity ID to fetch snapshots for.
-   */
-  syncSnapshots(
-    entityId: EntityIdStr,
-    snapshot: Uint8Array
-  ): Promise<Uint8Array[]>;
-
-  /**
    * Subscribe to updates for a given entity.
    *
    * Every time the sync interface has an update for the entity it will call `handleUpdate`, passing
    * it the entity ID and the update.
    *
    * @param entityId The entity ID to subscribe to.
+   * @param localSnapshot The latest snapshot that the subscriber has locally.
    * @param handleUpdate The handler function to be invoked when the sync interface has a new
    * update.
    * @returns Returns a function that may be called to unsubscribe.
    * */
   subscribe(
     entityId: EntityIdStr,
-    handleUpdate: (entityId: EntityIdStr, update: Uint8Array) => void
+    localSnapshot: Uint8Array,
+    handleUpdate: Subscriber
   ): () => void;
 
   /**
@@ -118,28 +108,26 @@ export class Syncer1 {
       });
     });
 
-    (async () => {
-      const syncing = this.syncing.get(id);
-      if (!syncing) return unsubscribeLoro();
-      if (earlyUnsubscribe) return unsubscribeLoro();
+    const syncing = this.syncing.get(id);
+    if (!syncing) return unsubscribeLoro();
+    if (earlyUnsubscribe) return unsubscribeLoro();
 
-      // Subscribe to updates from the network
-      const unsubscribeNet = this.inter.subscribe(id, (_id, update) => {
+    // Subscribe to updates from the network
+    const unsubscribeNet = this.inter.subscribe(
+      id,
+      entity.doc.export({ mode: "snapshot" }),
+      (_id, update) => {
         entity.doc.import(update);
-      });
-      // Record unsubscribe functions for later
-      syncing.unsubscribe = () => {
-        unsubscribeNet();
-        unsubscribeLoro();
-      };
+      }
+    );
+    // Record unsubscribe functions for later
+    syncing.unsubscribe = () => {
+      unsubscribeNet();
+      unsubscribeLoro();
+    };
 
-      // Fetch initial snapshots and apply them.
-      const snapshots = await this.inter.syncSnapshots(
-        id,
-        entity.doc.export({ mode: "snapshot" })
-      );
-      entity.doc.importBatch(snapshots);
-    })();
+    // Fetch initial snapshots and apply them.
+    this.inter.sendUpdate(id, entity.doc.export({ mode: "snapshot" }));
   }
 
   /** Stop syncing an entity. */
@@ -151,31 +139,18 @@ export class Syncer1 {
   }
 }
 
-type MemorySync1Adaptr = Sync1Interface & {
+export type MemorySync1Adapter = Sync1Interface & {
   entities: Map<EntityIdStr, Entity>;
-  subscribers: Map<
-    EntityIdStr,
-    ((id: EntityIdStr, update: Uint8Array) => void)[]
-  >;
+  subscribers: Map<EntityIdStr, Subscriber[]>;
 };
 
-
-export const memorySync1Adapters = (count = 2): MemorySync1Adaptr[] => {
-  const interfaces: MemorySync1Adaptr[] = [];
+export const memorySync1Adapters = (count = 2): MemorySync1Adapter[] => {
+  const interfaces: MemorySync1Adapter[] = [];
 
   for (let i = 0; i < count; i++) {
     interfaces[i] = {
       entities: new Map(),
       subscribers: new Map(),
-      syncSnapshots(id, snapshot) {
-        let entity = this.entities.get(id);
-        if (!entity) {
-          entity = new Entity(id);
-        }
-        entity.doc.import(snapshot);
-
-        return Promise.resolve([entity.doc.export({ mode: "snapshot" })]);
-      },
       sendUpdate(id, update) {
         const entity = this.entities.get(id);
         if (entity) entity.doc.import(update);
@@ -188,8 +163,30 @@ export const memorySync1Adapters = (count = 2): MemorySync1Adaptr[] => {
           }
         }
       },
-      subscribe(id, handleUpdate) {
-        getOrDefault(this.subscribers, id, []).push(handleUpdate);
+      subscribe(id, snapshot, handleUpdate) {
+        const incoming = new LoroDoc();
+        incoming.import(snapshot);
+        const incomingFrontiers = incoming.frontiers();
+
+        const entity = this.entities.get(id) || new Entity(id);
+        entity.doc.import(snapshot);
+
+        const subs: Subscriber[] = getOrDefault(this.subscribers, id, []);
+        subs.push(handleUpdate);
+
+        const cmp = entity.doc.cmpFrontiers(
+          incomingFrontiers,
+          entity.doc.frontiers()
+        );
+        if (cmp === -1 || cmp === undefined) {
+          handleUpdate(
+            id,
+            entity.doc.export({ mode: "update", from: incoming.version() })
+          );
+        }
+
+        this.entities.set(id, entity);
+
         return () => {
           this.subscribers.set(
             id,
@@ -204,3 +201,123 @@ export const memorySync1Adapters = (count = 2): MemorySync1Adaptr[] => {
 
   return interfaces;
 };
+
+export type SuperPeer1Option = StorageConfig | StorageManager;
+
+/**
+ * A {@linkcode SuperPeer1} is a peer that accepts connections from any peer, syncs every
+ * {@linkcode Entity} that it becomes aware of, and persists the entities to storage.
+ *
+ * It is meant to be run as a part of a sync server that can be used to persist and synchronize
+ * {@linkcode Entity}s between multiple client peers, or possibly other super peers.
+ */
+export class SuperPeer1 implements Sync1Interface {
+  #storages: StorageConfig[] = [];
+  #subscribers: Map<EntityIdStr, Subscriber[]> = new Map();
+
+  constructor(...options: SuperPeer1Option[]) {
+    for (const option of options) {
+      if (option instanceof StorageManager) {
+        this.#storages.push({
+          manager: option,
+        });
+      } else if ("manager" in option) {
+        this.#storages.push(option);
+      }
+    }
+  }
+
+  subscribe(
+    entityId: EntityIdStr,
+    snapshot: Uint8Array,
+    handleUpdate: Subscriber
+  ): () => void {
+    (async () => {
+      try {
+        const incomingEnt = new Entity(entityId);
+        incomingEnt.doc.import(snapshot);
+
+        const ent = new Entity(entityId);
+        for (const storage of this.#storages) {
+          if (storage.read !== false) {
+            await storage.manager.load(ent);
+          }
+        }
+        const currentFrontiers = ent.doc.frontiers();
+        ent.doc.import(snapshot);
+        const newFrontiers = ent.doc.frontiers();
+
+        // If the sync gave us new data
+        const cmp = ent.doc.cmpFrontiers(currentFrontiers, newFrontiers);
+        if (cmp === -1 || cmp === undefined) {
+          // Update storage
+          for (const storage of this.#storages) {
+            if (storage.write !== false) {
+              storage.manager.save(ent);
+            }
+          }
+
+          // And sync it to all subscribers
+          const subscriberUpdate = ent.doc.export({
+            mode: "update",
+            from: ent.doc.frontiersToVV(currentFrontiers),
+          });
+          for (const sub of getOrDefault(this.#subscribers, entityId, [])) {
+            sub(entityId, subscriberUpdate);
+          }
+        }
+
+        // Return the updates that the peer didn't already have.
+        handleUpdate(
+          entityId,
+          ent.doc.export({ mode: "update", from: incomingEnt.doc.version() })
+        );
+      } catch (e) {
+        console.error(new Error(`Error syncing snapshots: ${e}`));
+      }
+    })();
+
+    const subs = getOrDefault(this.#subscribers, entityId, []);
+    subs.push(handleUpdate);
+
+    return () => {
+      const subs = getOrDefault(this.#subscribers, entityId, []);
+      this.#subscribers.set(
+        entityId,
+        subs.filter((x) => x !== handleUpdate)
+      );
+    };
+  }
+
+  sendUpdate(entityId: EntityIdStr, update: Uint8Array): void {
+    try {
+      const ent = new Entity(entityId);
+      // Load ent from storage
+      for (const storage of this.#storages) {
+        if (storage.read !== false) {
+          storage.manager.load(ent);
+        }
+      }
+      const currentFrontiers = ent.doc.frontiers();
+      ent.doc.import(update);
+      const newFrontiers = ent.doc.frontiers();
+
+      // If the sync gave us new data
+      if (ent.doc.cmpFrontiers(currentFrontiers, newFrontiers) == -1) {
+        // Save to storage
+        for (const storage of this.#storages) {
+          if (storage.write !== false) {
+            storage.manager.save(ent);
+          }
+        }
+
+        // Notify subscribers
+        for (const sub of getOrDefault(this.#subscribers, entityId, [])) {
+          sub(entityId, update);
+        }
+      }
+    } catch (e) {
+      console.error(new Error(`Error syncing snapshots: ${e}`));
+    }
+  }
+}
