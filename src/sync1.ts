@@ -74,7 +74,7 @@ export class Syncer1 {
    * Start syncing an entity. All local updates will be pushed to peers, and incoming changes will
    * be automatically merged into the entity.
    * */
-  sync(entity: Entity) {
+  sync(entity: Entity): void {
     const id = entity.id.toString();
 
     if (this.syncing.has(id)) return;

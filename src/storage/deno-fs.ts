@@ -1,6 +1,6 @@
 import { StorageInterface, StorageKey } from "../storage.ts";
-import { join, parse, relative } from "jsr:@std/path";
-import { walk } from "jsr:@std/fs";
+import { join, parse, relative } from "jsr:@std/path@1.0.8";
+import { walk } from "jsr:@std/fs@1.0.10";
 
 /**
  * Storage adapter that stores each snapshot in it's own file on the filesystem.

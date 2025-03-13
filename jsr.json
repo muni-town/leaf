@@ -1,0 +1,10 @@
+{
+  "name": "@muni-town/leaf",
+  "version": "0.2.0-preview.1",
+  "exports": {
+    ".": "./src/leaf.ts",
+    "./storage/deno-fs": "./src/storage/deno-fs.ts",
+    "./storage/deno-kv": "./src/storage/deno-kv.ts"
+  },
+  "license": "MIT or APACHE-2.0"
+}

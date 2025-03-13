@@ -37,7 +37,7 @@ import { Syncer1 } from "./sync1.ts";
 import { StorageManager } from "./storage.ts";
 
 /** The prefix for the string representation of {@linkcode EntityId}s. */
-export const entityIdPrefix = `leaf:`;
+export const entityIdPrefix = "leaf:" as const;
 
 /** String representation of an {@linkcode EntityId}. */
 export type EntityIdStr = `${typeof entityIdPrefix}${string}`;
