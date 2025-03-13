@@ -1,6 +1,9 @@
 {
   "entryPoints": [
     "./leaf.ts",
+    "./storage.ts",
+    "./sync1.ts",
+    "./sync1/proto.ts",
     "./storage/deno-fs.ts",
     "./storage/deno-kv.ts"
   ],

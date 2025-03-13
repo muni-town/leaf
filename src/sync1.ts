@@ -14,8 +14,6 @@ import { Entity, EntityIdStr, LoroDoc, StorageConfig } from "./leaf.ts";
 import { StorageManager } from "./storage.ts";
 import { getOrDefault } from "./utils.ts";
 
-export * as proto from "./sync1/proto.ts";
-
 export type Subscriber = (entityId: EntityIdStr, update: Uint8Array) => void;
 
 /**

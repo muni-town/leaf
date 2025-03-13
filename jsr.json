@@ -1,8 +1,9 @@
 {
   "name": "@muni-town/leaf",
-  "version": "0.2.0-preview.2",
+  "version": "0.2.0-preview.3",
   "exports": {
     ".": "./src/leaf.ts",
+    "./storage": "./src/storage.ts",
     "./sync1": "./src/sync1.ts",
     "./sync1/proto": "./src/sync1/proto.ts",
     "./storage/deno-fs": "./src/storage/deno-fs.ts",

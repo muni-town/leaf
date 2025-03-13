@@ -19,9 +19,6 @@
 import decodeBase32 from "base32-decode";
 import encodeBase32 from "base32-encode";
 
-export * as storage from "./storage.ts";
-export * as sync1 from "./sync1.ts";
-
 export * from "loro-crdt";
 import {
   Container,
