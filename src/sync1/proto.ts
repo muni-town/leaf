@@ -128,6 +128,14 @@ export class SuperPeer1BinaryWrapper implements Sync1BinaryInterface {
   setReceiver(receiver: (serverResponse: Uint8Array) => void): void {
     this.#receiver = receiver;
   }
+
+  /** Should be called to unsubscribe all of the subscriptions made through this wrapper when you
+   * are done with it. */
+  cleanup() {
+    for (const unsubscribe of this.#unsubscribers.values()) {
+      unsubscribe();
+    }
+  }
 }
 
 /** Type verifier for client messages. */
