@@ -23,6 +23,29 @@ export class SveltePeer extends Peer {
   }
 }
 
+function makeProxy<T>(t: T, subscribe: () => void): T {
+  if (typeof t !== "object") return t;
+  return new Proxy(t as object, {
+    get(target, prop) {
+      subscribe();
+
+      if (prop in target) {
+        // deno-lint-ignore no-explicit-any
+        const value = (target as any)[prop];
+
+        // Recursively create wrap accessed types in a proxy
+        return typeof value === "function"
+          ? // deno-lint-ignore no-explicit-any
+            (...args: any[]) => {
+              const result = value.bind(target)(...args);
+              return makeProxy(result, subscribe);
+            }
+          : makeProxy(value, subscribe);
+      }
+    },
+  }) as T;
+}
+
 /** Take an entity and return a reactive version of it. */
 export function reactiveEntity(entity: Entity): Entity {
   // Create a subscriber for the entity
@@ -34,18 +57,5 @@ export function reactiveEntity(entity: Entity): Entity {
   });
 
   // Return a proxied entity that will subscribe to changes whenever an entity field is accessed.
-  return new Proxy(entity, {
-    get(target, prop) {
-      // NOTE: subscribing to gets on all  properties is not strictly necessary, but it's the
-      // easiest way to catch everything. It _might_ be worth making this more specific so that it
-      // doesn't trigger unnecessary subscriptions, but I'm not sure, because then it has to be kept
-      // up-to-date with changes to the Entity API.
-      subscribe();
-      if (prop in target) {
-        // deno-lint-ignore no-explicit-any
-        const value = (target as any)[prop];
-        return typeof value === "function" ? value.bind(target) : value;
-      }
-    },
-  });
+  return makeProxy(entity, subscribe);
 }
