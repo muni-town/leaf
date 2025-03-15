@@ -110,7 +110,7 @@ export class Syncer1 {
     if (!syncing) return unsubscribeLoro();
     if (earlyUnsubscribe) return unsubscribeLoro();
 
-    // Subscribe to updates from the network
+    // Subscribe to updates from the network and send our latest snapshot
     const unsubscribeNet = this.inter.subscribe(
       id,
       entity.doc.export({ mode: "snapshot" }),
@@ -123,9 +123,6 @@ export class Syncer1 {
       unsubscribeNet();
       unsubscribeLoro();
     };
-
-    // Fetch initial snapshots and apply them.
-    this.inter.sendUpdate(id, entity.doc.export({ mode: "snapshot" }));
   }
 
   /** Stop syncing an entity. */
@@ -288,34 +285,38 @@ export class SuperPeer1 implements Sync1Interface {
   }
 
   sendUpdate(entityId: EntityIdStr, update: Uint8Array): void {
-    try {
-      const ent = new Entity(entityId);
-      // Load ent from storage
-      for (const storage of this.#storages) {
-        if (storage.read !== false) {
-          storage.manager.load(ent);
-        }
-      }
-      const currentFrontiers = ent.doc.frontiers();
-      ent.doc.import(update);
-      const newFrontiers = ent.doc.frontiers();
-
-      // If the sync gave us new data
-      if (ent.doc.cmpFrontiers(currentFrontiers, newFrontiers) == -1) {
-        // Save to storage
+    (async () => {
+      try {
+        const ent = new Entity(entityId);
+        let n = 0;
+        // Load ent from storage
         for (const storage of this.#storages) {
-          if (storage.write !== false) {
-            storage.manager.save(ent);
+          if (storage.read !== false) {
+            await storage.manager.load(ent);
+            n += 1;
           }
         }
+        const currentFrontiers = ent.doc.frontiers();
+        ent.doc.import(update);
+        const newFrontiers = ent.doc.frontiers();
 
-        // Notify subscribers
-        for (const sub of getOrDefault(this.#subscribers, entityId, [])) {
-          sub(entityId, update);
+        // If the sync gave us new data
+        if (ent.doc.cmpFrontiers(currentFrontiers, newFrontiers) == -1) {
+          // Save to storage
+          for (const storage of this.#storages) {
+            if (storage.write !== false) {
+              storage.manager.save(ent);
+            }
+          }
+
+          // Notify subscribers
+          for (const sub of getOrDefault(this.#subscribers, entityId, [])) {
+            sub(entityId, update);
+          }
         }
+      } catch (e) {
+        console.error(new Error(`Error syncing snapshots: ${e}`));
       }
-    } catch (e) {
-      console.error(new Error(`Error syncing snapshots: ${e}`));
-    }
+    })();
   }
 }

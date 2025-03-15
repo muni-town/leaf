@@ -6,6 +6,8 @@
     "./storage": "./src/storage.ts",
     "./sync1": "./src/sync1.ts",
     "./sync1/proto": "./src/sync1/proto.ts",
+    "./sync1/ws-server": "./src/sync1/ws-server.ts",
+    "./sync1/ws-client": "./src/sync1/ws-client.ts",
     "./storage/deno-fs": "./src/storage/deno-fs.ts",
     "./storage/deno-kv": "./src/storage/deno-kv.ts"
   },

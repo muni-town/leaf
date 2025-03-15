@@ -4,6 +4,8 @@
     "./storage.ts",
     "./sync1.ts",
     "./sync1/proto.ts",
+    "./sync1/ws-server.ts",
+    "./sync1/ws-client.ts",
     "./storage/deno-fs.ts",
     "./storage/deno-kv.ts"
   ],

@@ -411,6 +411,25 @@ export type StorageConfig = {
 export type PeerOption = StorageManager | Syncer1 | StorageConfig;
 
 /**
+ * Options for configuring {@linkcode Peer.open}.
+ *
+ * @see defaultPeerOpenOptions;
+ */
+export type PeerOpenOptions = {
+  /** Whether when opening the entity we should wait to return until we have gotten an update from
+   * one of our syncers, or else the `awaitSyncTimeout` passes. */
+  awaitSync: boolean;
+  /** The amount of time we should wait for a peer to sync us an update before just continuing when
+   * `awaitSync` is `true`. */
+  awaitSyncTimeout: number;
+};
+/** Default {@linkcode PeerOpenOptions}. */
+export const defaultPeerOpenOptions = {
+  awaitSync: true,
+  awaitSyncTimeout: 1000,
+};
+
+/**
  * The entrypoint for opening {@linkcode Entity}s, loading and saving them automatically from
  * {@linkcode StorageManager}s, and syncing them with {@linkcode Syncer1}s.
  */
@@ -441,7 +460,12 @@ export class Peer {
    *
    * It will also start syncing the entity with all of the peer's syncers.
    * */
-  async open(id?: IntoEntityId): Promise<Entity> {
+  async open(
+    id?: IntoEntityId,
+    opts?: Partial<PeerOpenOptions>
+  ): Promise<Entity> {
+    const options = { ...defaultPeerOpenOptions, ...(opts || {}) };
+
     const entId = id ? intoEntityId(id) : new EntityId();
     const entIdStr = entId.toString();
 
@@ -480,26 +504,65 @@ export class Peer {
     });
     this.#storageUnsubscribers.set(entIdStr, unsubscribeStorage);
 
+    if (options.awaitSync) {
+      let stopTimeout: () => void = () => {};
+
+      // Finish with the first to complete
+      await Promise.race([
+        // Wait for doc change
+
+        // TODO: sync we are intending to wait for a _network sync_ not just a doc change,
+        // we should probably modify this to look for network requests, not doc changes.
+        new Promise((r) => {
+          const unsubscribe = entity.doc.subscribe(() => {
+            r(undefined);
+            stopTimeout();
+            unsubscribe();
+          });
+        }),
+
+        // Just timeout if we don't get a doc update
+        new Promise((r) => {
+          const n = setTimeout(r, options.awaitSyncTimeout);
+          stopTimeout = () => {
+            r(undefined);
+            clearTimeout(n);
+          };
+        }),
+      ]);
+    }
+
     return entity;
   }
 
   /** Commit the entity, stop syncing it, and flush it to storage. */
-  close(id: Entity) {
-    const entId = id ? intoEntityId(id) : new EntityId();
-    const entIdStr = entId.toString();
+  close(id: Entity): Promise<void> {
+    return new Promise((resolve) => {
+      // NOTE: we queue a microtask here because if you have _just_ committed an entity, and then
+      // you call this function, the change callbacks on the entity have not yet bent run, and the
+      // network / storage synchronization has not been finished yet. So we queue the actual cleanup
+      // of the entity until _after_ the other callbacks have run, with queueMicrotask, so that the
+      // caller can wait for the entity to actually finish getting persisted.
+      queueMicrotask(() => {
+        const entId = id ? intoEntityId(id) : new EntityId();
+        const entIdStr = entId.toString();
 
-    const entity = this.#entities.get(entIdStr);
+        const entity = this.#entities.get(entIdStr);
 
-    if (entity) {
-      // This will trigger a write to storage
-      entity.doc.commit();
-    }
+        if (entity) {
+          // This will trigger a write to storage
+          entity.doc.commit();
+        }
 
-    const unsubscribeStorage = this.#storageUnsubscribers.get(entIdStr);
-    if (unsubscribeStorage) unsubscribeStorage();
-    for (const syncer of this.#syncers) {
-      syncer.unsync(entIdStr);
-    }
-    this.#entities.delete(entIdStr);
+        const unsubscribeStorage = this.#storageUnsubscribers.get(entIdStr);
+        if (unsubscribeStorage) unsubscribeStorage();
+        for (const syncer of this.#syncers) {
+          syncer.unsync(entIdStr);
+        }
+        this.#entities.delete(entIdStr);
+
+        resolve();
+      });
+    });
   }
 }
