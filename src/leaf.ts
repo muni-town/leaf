@@ -46,9 +46,20 @@ export type ComponentType =
   | LoroMap
   | LoroMovableList
   | LoroText
-  | LoroTree;
+  | LoroTree
+  | Marker;
 /** A constructor for a {@linkcode ComponentType}. */
 export type ComponentConstructor<T extends ComponentType> = new () => T;
+
+/**
+ * A {@linkcode Componenttype} that doesn't have any data.
+ *
+ * This is useful for making "marker" components where you only care whether or not the component is
+ * added to an entity and there is no other data to store in the component itself.
+ * */
+export class Marker {
+  constructor() {}
+}
 
 /** The ID for a component. */
 export type ComponentId = string;
@@ -332,6 +343,9 @@ export class Entity {
       for (const root of t.roots()) {
         t.delete(root.id);
       }
+    } else if (constructor === Marker) {
+      // We don't need to do anything since we already removed the component from the components
+      // list.
     } else {
       throw new Error("Invalid constructor type when getting component");
     }
@@ -387,6 +401,8 @@ export class Entity {
       return this.#doc.getText(id) as T;
     } else if (constructor === LoroTree) {
       return this.#doc.getTree(id) as T;
+    } else if (constructor === Marker) {
+      return new Marker() as T;
     } else {
       throw new Error("Invalid constructor type when getting component");
     }
