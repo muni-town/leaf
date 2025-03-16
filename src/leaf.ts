@@ -551,8 +551,35 @@ export class Peer {
     return entity;
   }
 
+  #rawUnload(entIdStr: EntityIdStr) {
+    const unsubscribeStorage = this.#storageUnsubscribers.get(entIdStr);
+    if (unsubscribeStorage) unsubscribeStorage();
+    for (const syncer of this.#syncers) {
+      syncer.unsync(entIdStr);
+    }
+    this.#entities.delete(entIdStr);
+  }
+
+  /**
+   * Delete an entity completely from local storage.
+   *
+   * > **TODO:** Currently there is no way to have sync peers receive a request to delete an entity.
+   * > It is only deleted locally.
+   * */
+  async delete(id: IntoEntityId) {
+    const entId = intoEntityId(id);
+    const entIdStr = entId.toString();
+    this.#rawUnload(entIdStr);
+
+    for (const storage of this.#storages) {
+      if (storage.write !== false) {
+        await storage.manager.delete(id);
+      }
+    }
+  }
+
   /** Commit the entity, stop syncing it, and flush it to storage. */
-  close(id: Entity): Promise<void> {
+  close(id: IntoEntityId): Promise<void> {
     return new Promise((resolve) => {
       // NOTE: we queue a microtask here because if you have _just_ committed an entity, and then
       // you call this function, the change callbacks on the entity have not yet bent run, and the
@@ -570,12 +597,7 @@ export class Peer {
           entity.doc.commit();
         }
 
-        const unsubscribeStorage = this.#storageUnsubscribers.get(entIdStr);
-        if (unsubscribeStorage) unsubscribeStorage();
-        for (const syncer of this.#syncers) {
-          syncer.unsync(entIdStr);
-        }
-        this.#entities.delete(entIdStr);
+        this.#rawUnload(entIdStr);
 
         resolve();
       });

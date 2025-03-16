@@ -5,7 +5,7 @@
  */
 
 import { Frontiers } from "loro-crdt";
-import { EntityIdStr, Entity } from "./leaf.ts";
+import { EntityIdStr, Entity, IntoEntityId, intoEntityId } from "./leaf.ts";
 import { getOrDefault, sha256Base32 } from "./utils.ts";
 
 /** The key to a record in the {@linkcode StorageInterface}. */
@@ -97,6 +97,13 @@ export class StorageManager {
 
     // The do loaded
     return true;
+  }
+
+  /** Delete an Entity completely from storage. */
+  // TODO: add tests / examples 
+  async delete(id: IntoEntityId) {
+    const entId = intoEntityId(id);
+    await this.storage.removeRange([dataPrefix, entId.toString()]);
   }
 
   /**
