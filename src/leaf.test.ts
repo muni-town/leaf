@@ -1,6 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@1";
 
-import { EntityId } from "./leaf.ts";
+import { EntityId } from "./index.ts";
 
 Deno.test("entity ID encode-decode round trip", () => {
   const e = new EntityId();

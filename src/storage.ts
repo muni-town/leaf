@@ -5,7 +5,7 @@
  */
 
 import { Frontiers } from "loro-crdt";
-import { EntityIdStr, Entity, IntoEntityId, intoEntityId } from "./leaf.ts";
+import { EntityIdStr, Entity, IntoEntityId, intoEntityId } from "./index.ts";
 import { getOrDefault, sha256Base32 } from "./utils.ts";
 
 /** The key to a record in the {@linkcode StorageInterface}. */

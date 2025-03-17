@@ -4,7 +4,7 @@
     "GitHub": "https://github.com/muni-town/leaf"
   },
   "entryPoints": [
-    "../src/leaf.ts",
+    "../src/index.ts",
     "../src/storage.ts",
     "../src/sync1.ts",
     "../src/sync1/proto.ts",

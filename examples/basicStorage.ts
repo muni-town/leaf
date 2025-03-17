@@ -1,4 +1,4 @@
-import { Entity } from "../src/leaf.ts";
+import { Entity } from "../src/index.ts";
 import { StorageManager } from "../src/storage.ts";
 import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
 

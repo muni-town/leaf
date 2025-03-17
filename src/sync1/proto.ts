@@ -9,7 +9,7 @@
 
 import { encode, decode } from "@msgpack/msgpack";
 import { type } from "arktype";
-import { EntityIdStr } from "../leaf.ts";
+import { EntityIdStr } from "../index.ts";
 import { Subscriber, Sync1Interface, SuperPeer1 } from "../sync1.ts";
 import { getOrDefault } from "../utils.ts";
 

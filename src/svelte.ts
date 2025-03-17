@@ -4,7 +4,7 @@
  * @module
  */
 
-import { Entity, IntoEntityId, Peer, PeerOpenOptions } from "./leaf.ts";
+import { Entity, IntoEntityId, Peer, PeerOpenOptions } from "./index.ts";
 import { createSubscriber } from "svelte/reactivity";
 
 /**

@@ -1,4 +1,4 @@
-import { EntityId, EntityIdStr, Peer } from "../src/leaf.ts";
+import { EntityId, EntityIdStr, Peer } from "../src/index.ts";
 import { StorageManager } from "../src/storage.ts";
 import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
 import { Age, Name } from "./components.ts";

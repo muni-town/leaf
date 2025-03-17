@@ -5,7 +5,7 @@
  * @module
  */
 
-import { EntityId, EntityIdStr, Peer } from "../src/leaf.ts";
+import { EntityId, EntityIdStr, Peer } from "../src/index.ts";
 import { Age } from "./components.ts";
 import { webSocketSyncer } from "../src/sync1/ws-client.ts";
 

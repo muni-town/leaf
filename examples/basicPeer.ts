@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1/equals";
-import { EntityIdStr, Peer } from "../src/leaf.ts";
+import { EntityIdStr, Peer } from "../src/index.ts";
 import { StorageManager } from "../src/storage.ts";
 import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
 import { memorySync1Adapters, Syncer1 } from "../src/sync1.ts";

@@ -10,7 +10,7 @@
  * @module
  */
 
-import { Entity, EntityIdStr, LoroDoc, StorageConfig } from "./leaf.ts";
+import { Entity, EntityIdStr, LoroDoc, StorageConfig } from "./index.ts";
 import { StorageManager } from "./storage.ts";
 import { getOrDefault } from "./utils.ts";
 

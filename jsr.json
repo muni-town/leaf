@@ -2,7 +2,7 @@
   "name": "@muni-town/leaf",
   "version": "0.2.0-preview.9",
   "exports": {
-    ".": "./src/leaf.ts",
+    ".": "./src/index.ts",
     "./storage": "./src/storage.ts",
     "./sync1": "./src/sync1.ts",
     "./sync1/proto": "./src/sync1/proto.ts",

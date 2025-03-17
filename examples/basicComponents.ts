@@ -5,7 +5,7 @@ import {
   LoroCounter,
   Entity,
   Marker,
-} from "../src/leaf.ts";
+} from "../src/index.ts";
 
 // First we define our components
 
