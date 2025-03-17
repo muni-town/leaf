@@ -10,6 +10,7 @@
     "../src/sync1/proto.ts",
     "../src/sync1/ws-server.ts",
     "../src/sync1/ws-client.ts",
+    "../src/storage/indexed-db.ts",
     "../src/storage/deno-fs.ts",
     "../src/storage/deno-kv.ts",
     "../src/svelte.ts",

@@ -15,6 +15,7 @@
     "syncserver": "PORT=8095 DB_FILE=./data/syncserver.sqlite deno run -A --unstable-kv src/sync1/ws-server.ts"
   },
   "dependencies": {
+    "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
     "@msgpack/msgpack": "^3.1.1",
     "arktype": "^2.1.9",
     "base32-decode": "^1.0.0",
