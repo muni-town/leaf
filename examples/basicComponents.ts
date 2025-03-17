@@ -15,7 +15,7 @@ const Name = defComponent(
   "name:01JNVY76XPH6Q5AVA385HP04G7",
   // Components are defined in terms of a Loro type
   LoroMap<{ first: string; last?: string }>,
-  // We pass a function to initialize the component state to match it's type.
+  // We pass a function to initialize the component state to match its type.
   (map) => map.set("first", "unnamed")
 );
 
