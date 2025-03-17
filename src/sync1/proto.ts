@@ -3,7 +3,7 @@
  *
  * Basically encodes the {@linkcode Sync1Interface} in a way that can be sent over a bidirectional
  * network channel.
- *
+ * 
  * @module
  */
 
@@ -15,7 +15,7 @@ import { getOrDefault } from "../utils.ts";
 
 /**
  * Binary interface that can wrapped by a {@linkcode Sync1BinaryWrapper} to produce a
- * {@linkcode Sync1Interface} that can be given to {@linkcode Syncer1}.
+ * {@linkcode Sync1Interface} that can be given to {@linkcode sync1!Syncer1}.
  * */
 export interface Sync1BinaryInterface {
   /** Send a message to the server. */
@@ -26,7 +26,7 @@ export interface Sync1BinaryInterface {
 
 /**
  * Wraps a {@linkcode Sync1BinaryInterface} that implements the {@linkcode Sync1Interface} needed
- * by {@linkcode Syncer1}.
+ * by {@linkcode sync1!Syncer1}.
  * */
 export class Sync1BinaryWrapper implements Sync1Interface {
   #binaryInterface: Sync1BinaryInterface;

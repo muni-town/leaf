@@ -1,0 +1,25 @@
+{
+  "name": "@muni-town/leaf",
+  "navigationLinks": {
+    "GitHub": "https://github.com/muni-town/leaf"
+  },
+  "entryPoints": [
+    "../src/leaf.ts",
+    "../src/storage.ts",
+    "../src/sync1.ts",
+    "../src/sync1/proto.ts",
+    "../src/sync1/ws-server.ts",
+    "../src/sync1/ws-client.ts",
+    "../src/storage/deno-fs.ts",
+    "../src/storage/deno-kv.ts",
+    "../src/svelte.ts",
+  ],
+  "projectDocuments": [
+    "./examples.md"
+  ],
+  "searchInComments": true,
+  "searchInDocuments": true,
+  "cleanOutputDir": true,
+  "readme": "./README.md",
+  "out": "../docs-dist"
+}

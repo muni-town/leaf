@@ -10,8 +10,8 @@
     "server/deno-websocket-atproto": "./src/server/deno-websocket-atproto.ts"
   },
   "scripts": {
-    "docs:build": "cd src && typedoc",
-    "docs:dev": "cd src && typedoc --watch",
+    "docs:build": "cd docs && typedoc",
+    "docs:dev": "cd docs && typedoc --watch",
     "syncserver": "PORT=8095 DB_FILE=./data/syncserver.sqlite deno run -A --unstable-kv src/sync1/ws-server.ts"
   },
   "dependencies": {

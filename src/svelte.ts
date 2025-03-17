@@ -1,3 +1,9 @@
+/**
+ * A svelte reactivity integration for Leaf. See {@linkcode SveltePeer} for usage.
+ * 
+ * @module
+ */
+
 import { Entity, IntoEntityId, Peer, PeerOpenOptions } from "./leaf.ts";
 import { createSubscriber } from "svelte/reactivity";
 

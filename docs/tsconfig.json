@@ -15,10 +15,12 @@
       "./types/extra.d.ts",
       "./types/deno/lib.esnext",
       "./types/deno/lib",
+      "./types/deno/lib.deno.ns",
       "./types/deno/lib.deno.unstable",
     ]
   },
+  "include": ["../src"],
   "exclude": [
-    "*.test.ts",
+    "../src/*.test.ts",
   ]
 }

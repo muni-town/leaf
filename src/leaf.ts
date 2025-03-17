@@ -52,7 +52,7 @@ export type ComponentType =
 export type ComponentConstructor<T extends ComponentType> = new () => T;
 
 /**
- * A {@linkcode Componenttype} that doesn't have any data.
+ * A {@linkcode ComponentType} that doesn't have any data.
  *
  * This is useful for making "marker" components where you only care whether or not the component is
  * added to an entity and there is no other data to store in the component itself.
