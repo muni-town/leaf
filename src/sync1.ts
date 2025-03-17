@@ -89,7 +89,7 @@ export class Syncer1 {
     const unsubscribeLoro = entity.doc.subscribeLocalUpdates((update) => {
       // NOTE: This queueMicrotask turns out important, interestingly. The `subscribeLocalUpdates`
       // callback is triggered by the Rust WASM module to trigger JS code, and it suspends the Rust
-      // code, waiting for this JS function to return, before resuming it's callstack ( or something
+      // code, waiting for this JS function to return, before resuming its callstack ( or something
       // like that ) in the Rust module.
       //
       // If we don't queue the handling of the update, then calling `this.inter.sendUpdate` may try

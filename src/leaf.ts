@@ -9,7 +9,7 @@
  * {@linkcode Entity} to get an idea of how things are put together. Finally you'll want to use a
  * {@linkcode Peer} in most cases to sync your entities with storage and sync interfaces.
  *
- * Leaf is currently built on [Loro](https://loro.dev) as it's underlying CRDT, and
+ * Leaf is currently built on [Loro](https://loro.dev) as its underlying CRDT, and
  * {@link Entity.doc} is in fact a {@linkcode LoroDoc}, so reading the Loro documentation will be
  * necessary to understand how to fully interact with the Leaf entity data.
  *
@@ -83,7 +83,7 @@ export type ComponentDef<T extends ComponentType> = {
  * All data in Leaf is made up of components. These components are meant to be small, re-usable, and
  * semantically meaningful pieces of data, such as a `Name`, `Image`, or `Description`.
  *
- * Before you can use a component you must define it, which sets its unique ID, it's type, and it's
+ * Before you can use a component you must define it, which sets its unique ID, its type, and its
  * initialization function.
  *
  * ## Example
@@ -227,7 +227,7 @@ export class EntityId {
   }
 }
 
-/** The key under which the list of components in an {@linkcode Entity} are stored in it's internal
+/** The key under which the list of components in an {@linkcode Entity} are stored in its internal
  * {@linkcode LoroDoc}.
  *
  * @internal
@@ -277,14 +277,14 @@ export class Entity {
    * it tries to read or write components.
    *
    * In the Loro doc the `Entity` stores one special container using the value in
-   * {@linkcode entityComponentsKey} as it's ID. It is important that no component use this key as
-   * it's ID.
+   * {@linkcode entityComponentsKey} as its ID. It is important that no component use this key as
+   * its ID.
    *
    * This container will be a map that contains an entry for each component ID on the entity. The
    * value will always be `true`. For every key in that map, the component is considered to be on
    * the entity.
    *
-   * Every other root container in the Loro document will be a component, and it's ID will be the
+   * Every other root container in the Loro document will be a component, and its ID will be the
    * component ID.
    */
   get doc(): EntityDoc {
@@ -352,7 +352,7 @@ export class Entity {
   }
 
   /**
-   * Initialize a component with it's default value and add it to the entity, if the entity does not
+   * Initialize a component with its default value and add it to the entity, if the entity does not
    * already have a component of that type.
    * */
   init<T extends ComponentType>(def: ComponentDef<T>): Entity {
@@ -365,7 +365,7 @@ export class Entity {
     return this;
   }
 
-  /** Get the component of the given type on the entity, initializing it with it's default value if
+  /** Get the component of the given type on the entity, initializing it with its default value if
    * it does not already exist on the entity. */
   getOrInit<T extends ComponentType>(def: ComponentDef<T>): T {
     const raw = this.#getRaw(def);
