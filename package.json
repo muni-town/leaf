@@ -3,11 +3,16 @@
   "version": "0.1.0-preview.1",
   "description": "The Leaf SDK — Entity-Component Data on Top of Synchronized CRDTs",
   "exports": {
-    "default": "./src/leaf.ts",
-    "client": "./src/client.ts",
-    "storage/deno-fs": "./src/storage/deno-fs.ts",
-    "storage/deno-kv": "./src/storage/deno-kv.ts",
-    "server/deno-websocket-atproto": "./src/server/deno-websocket-atproto.ts"
+    ".": "./src/index.ts",
+    "./storage": "./src/storage.ts",
+    "./sync1": "./src/sync1.ts",
+    "./sync1/proto": "./src/sync1/proto.ts",
+    "./sync1/ws-server": "./src/sync1/ws-server.ts",
+    "./sync1/ws-client": "./src/sync1/ws-client.ts",
+    "./storage/deno-fs": "./src/storage/deno-fs.ts",
+    "./storage/deno-kv": "./src/storage/deno-kv.ts",
+    "./storage/indexed-db": "./src/storage/indexed-db.ts",
+    "./svelte": "./src/svelte.ts"
   },
   "scripts": {
     "docs:build": "cd docs && typedoc",
