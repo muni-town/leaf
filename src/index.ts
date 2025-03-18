@@ -525,19 +525,17 @@ export class Peer {
 
       // Finish with the first to complete
       await Promise.race([
-        // Wait for doc change
+        // Wait until all syncers have responded with their latest data for the entity
+        (async () => {
+          await Promise.all(
+            this.#syncers.map(
+              (syncer) => syncer.syncing.get(entIdStr)?.awaitInitialLoad
+            )
+          );
+          stopTimeout();
+        })(),
 
-        // TODO: sync we are intending to wait for a _network sync_ not just a doc change,
-        // we should probably modify this to look for network requests, not doc changes.
-        new Promise((r) => {
-          const unsubscribe = entity.doc.subscribe(() => {
-            r(undefined);
-            stopTimeout();
-            unsubscribe();
-          });
-        }),
-
-        // Just timeout if we don't get a doc update
+        // Just timeout if we don't get a response in time
         new Promise((r) => {
           const n = setTimeout(r, options.awaitSyncTimeout);
           stopTimeout = () => {

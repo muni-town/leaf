@@ -58,6 +58,7 @@ export class Syncer1 {
     EntityIdStr,
     {
       entity: Entity;
+      awaitInitialLoad: Promise<void>;
       unsubscribe: () => void;
     }
   >;
@@ -77,9 +78,15 @@ export class Syncer1 {
 
     if (this.syncing.has(id)) return;
 
+    let initialLoaded = () => {};
+    const awaitInitialLoad = new Promise<void>(
+      (r) => (initialLoaded = r as () => void)
+    );
+
     let earlyUnsubscribe = false;
     this.syncing.set(id, {
       entity,
+      awaitInitialLoad,
       unsubscribe: () => {
         earlyUnsubscribe = true;
       },
@@ -115,6 +122,7 @@ export class Syncer1 {
       id,
       entity.doc.export({ mode: "snapshot" }),
       (_id, update) => {
+        initialLoaded();
         entity.doc.import(update);
       }
     );
