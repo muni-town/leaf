@@ -166,7 +166,7 @@ export function decodeClientMessage(
 ): ClientMessage | undefined {
   const data = clientMessage(decode(msg));
   if (data instanceof type.errors) {
-    console.error(data);
+    console.error(data.summary);
     return;
   }
   return data;
