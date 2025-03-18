@@ -388,6 +388,14 @@ export class Entity {
     this.doc.commit(options);
   }
 
+  /**
+   * Register a callback that will be run when the entity is committed.
+   * @returns A function that may be called to unregister the callback.
+   */
+  subscribe(listener: () => void): () => void {
+    return this.doc.subscribe(() => listener());
+  }
+
   #getRaw<T extends ComponentType>({ id, constructor }: ComponentDef<T>): T {
     if (constructor === LoroCounter) {
       return this.#doc.getCounter(id) as T;
