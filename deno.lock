@@ -11,7 +11,7 @@
     "npm:arktype@^2.1.9": "2.1.9",
     "npm:base32-decode@1": "1.0.0",
     "npm:base32-encode@2": "2.0.0",
-    "npm:loro-crdt@^1.4.6": "1.4.6",
+    "npm:loro-crdt@^1.5.1": "1.5.1",
     "npm:svelte@^5.23.0": "5.23.0_acorn@8.14.1",
     "npm:typedoc@~0.27.9": "0.27.9_typescript@5.7.3"
   },
@@ -332,8 +332,8 @@
     "locate-character@3.0.0": {
       "integrity": "sha512-SW13ws7BjaeJ6p7Q6CO2nchbYEc3X3J6WrmTTDto7yMPqVSZTUyY5Tjbid+Ab8gLnATtygYtiDIJGQRRn2ZOiA=="
     },
-    "loro-crdt@1.4.6": {
-      "integrity": "sha512-9YvKzoNE1CpDR/DNSUMolaSkhXdHnChP8uVkfORE3iREKOILUc5OZNipMMMhsnHQesL8HxM8D+2Z3vdXlV48Ew=="
+    "loro-crdt@1.5.1": {
+      "integrity": "sha512-Q7KEuzx/nS/pr8+pjyaz5xBxR7eUGAn42keoQ3j3JmgSW1APgWyjLFUbiahBjNm16+HQrde8By/0jCker7XBYQ=="
     },
     "lunr@2.3.9": {
       "integrity": "sha512-zTU3DaZaF3Rt9rhN3uBMGQD3dD2/vFQqnvZCDv4dl5iOzq2IZQqTxu90r4E5J+nP70J3ilqVCrbho2eWaeW8Ow=="
@@ -471,7 +471,7 @@
         "npm:arktype@^2.1.9",
         "npm:base32-decode@1",
         "npm:base32-encode@2",
-        "npm:loro-crdt@^1.4.6",
+        "npm:loro-crdt@^1.5.1",
         "npm:svelte@^5.23.0",
         "npm:typedoc@~0.27.9"
       ]

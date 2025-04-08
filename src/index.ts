@@ -241,6 +241,7 @@ export type EntityDoc = LoroDoc<
   }
 >;
 
+const entityRegistry = new FinalizationRegistry<EntityDoc>((doc) => doc.free());
 /**
  * An entity.
  *
@@ -308,6 +309,16 @@ export class Entity {
   constructor(id?: IntoEntityId) {
     this.#id = id ? intoEntityId(id) : new EntityId();
     this.#doc = new LoroDoc();
+    entityRegistry.register(this, this.#doc, this);
+  }
+
+  /**
+   * Manually garbage collect this entity. Shouldn't usually be necessary to call this but can be
+   * used to free memory more quickly instead of waiting for the periodic collector to come clean it
+   * up. */
+  free() {
+    entityRegistry.unregister(this);
+    this.#doc.free();
   }
 
   /**
@@ -318,31 +329,45 @@ export class Entity {
    * ```
    * */
   has<T extends ComponentType>(def: ComponentDef<T>): boolean {
-    return this.#doc.getMap(entityComponentsKey).get(def.id) === true;
+    const components = this.#doc.getMap(entityComponentsKey);
+    const result = components.get(def.id) === true;
+    components.free();
+    return result;
   }
 
   /** Delete a component from the entity. */
   delete<T extends ComponentType>(def: ComponentDef<T>) {
     const { constructor, id } = def;
-    this.#doc.getMap(entityComponentsKey).delete(def.id);
+    const components = this.#doc.getMap(entityComponentsKey);
+    components.delete(def.id);
+    components.free();
 
     if (constructor === LoroCounter) {
       const counter = this.#doc.getCounter(id);
       counter.decrement(counter.value);
+      counter.free();
     } else if (constructor === LoroList) {
-      this.#doc.getList(id).clear();
+      const list = this.#doc.getList(id);
+      list.clear();
+      list.free();
     } else if (constructor === LoroMap) {
-      this.#doc.getMap(id).clear();
+      const map = this.#doc.getMap(id);
+      map.clear();
+      map.free();
     } else if (constructor === LoroMovableList) {
-      this.#doc.getMovableList(id).clear();
+      const list = this.#doc.getMovableList(id);
+      list.clear();
+      list.free();
     } else if (constructor === LoroText) {
       const t = this.#doc.getText(id);
       t.splice(0, t.length, "");
+      t.free();
     } else if (constructor === LoroTree) {
       const t = this.#doc.getTree(id);
       for (const root of t.roots()) {
         t.delete(root.id);
       }
+      t.free();
     } else if (constructor === Marker) {
       // We don't need to do anything since we already removed the component from the components
       // list.
@@ -362,26 +387,47 @@ export class Entity {
       def.init(raw);
       components.set(def.id, true);
     }
+    components.free();
     return this;
   }
 
-  /** Get the component of the given type on the entity, initializing it with its default value if
-   * it does not already exist on the entity. */
-  getOrInit<T extends ComponentType>(def: ComponentDef<T>): T {
+  /**
+   * Get the component of the given type on the entity, initializing it with its default value if it
+   * does not already exist on the entity.
+   *
+   * The `handler` function will be immediately called with the retrieved component and the return
+   * value of that handler will be returned from by this function.
+   *
+   * This allows us to automatically reclaim the component accessor memory without waiting for the
+   * garbage collector.
+   * */
+  getOrInit<T extends ComponentType, R>(
+    def: ComponentDef<T>,
+    handler: (component: T) => R
+  ): R {
     const raw = this.#getRaw(def);
     const components = this.#doc.getMap(entityComponentsKey);
     if (components.get(def.id) !== true) {
       def.init(raw);
       components.set(def.id, true);
     }
-    return raw;
+    components.free();
+    const ret = handler(raw);
+    if (!(raw instanceof Marker)) raw.free();
+    return ret;
   }
 
   /** Get the component of the given type from the entity, or `undefined` if the component is not on
    * the entity. */
-  get<T extends ComponentType>(def: ComponentDef<T>): T | undefined {
+  get<T extends ComponentType, R>(
+    def: ComponentDef<T>,
+    handler: (component: T) => R
+  ): R | undefined {
     if (!this.has(def)) return undefined;
-    return this.#getRaw(def);
+    const raw = this.#getRaw(def);
+    const ret = handler(raw);
+    if (!(raw instanceof Marker)) raw.free();
+    return ret;
   }
 
   commit(options?: Parameters<typeof this.doc.commit>[0]) {
@@ -461,9 +507,11 @@ export class Peer {
   #syncers: Syncer1[] = [];
   #storages: StorageConfig[] = [];
   #storageUnsubscribers: Map<EntityIdStr, () => void> = new Map();
-  #entities: Map<EntityIdStr, Entity> = new Map();
+  #entities: Map<EntityIdStr, WeakRef<Entity>> = new Map();
+  #finalizationRegistry: FinalizationRegistry<EntityIdStr>;
 
   constructor(...options: PeerOption[]) {
+    this.#finalizationRegistry = new FinalizationRegistry(this.close);
     for (const option of options) {
       if (option instanceof StorageManager) {
         this.#storages.push({
@@ -493,19 +541,22 @@ export class Peer {
     const entId = id ? intoEntityId(id) : new EntityId();
     const entIdStr = entId.toString();
 
-    const existingEnt = this.#entities.get(entIdStr);
+    const existingEnt = this.#entities.get(entIdStr)?.deref();
     if (existingEnt) return existingEnt;
 
     const entity = new Entity(entId);
-    this.#entities.set(entIdStr, entity);
+    const weakEntity = new WeakRef(entity);
+    this.#finalizationRegistry.register(entity, entIdStr, weakEntity);
+    this.#entities.set(entIdStr, weakEntity);
     for (const storage of this.#storages) {
       if (storage.read !== false) {
         await storage.manager.load(entity);
       }
     }
     for (const syncer of this.#syncers) {
-      // TODO: allow optionally awaiting on initial snapshot sync.
-      syncer.sync(entity);
+      // TODO: We need to make sure the syncer only holds a weak reference to the entity so that we
+      // can detect when it's no longer needed and can be closed.
+      syncer.sync(weakEntity);
     }
 
     // Sync to storages on doc change.
@@ -514,7 +565,8 @@ export class Peer {
         for (const storage of this.#storages) {
           if (storage.write !== false) {
             const save = () => {
-              storage.manager.save(entity);
+              const e = weakEntity.deref();
+              if (e) storage.manager.save(e);
             };
 
             if (storage.writeThrottle) {
@@ -563,6 +615,8 @@ export class Peer {
     for (const syncer of this.#syncers) {
       syncer.unsync(entIdStr);
     }
+    const entity = this.#entities.get(entIdStr);
+    if (entity) this.#finalizationRegistry.unregister(entity);
     this.#entities.delete(entIdStr);
   }
 
@@ -586,6 +640,7 @@ export class Peer {
 
   /** Commit the entity, stop syncing it, and flush it to storage. */
   close(id: IntoEntityId): Promise<void> {
+    // console.log('close');
     return new Promise((resolve) => {
       // NOTE: we queue a microtask here because if you have _just_ committed an entity, and then
       // you call this function, the change callbacks on the entity have not yet bent run, and the
@@ -593,17 +648,20 @@ export class Peer {
       // of the entity until _after_ the other callbacks have run, with queueMicrotask, so that the
       // caller can wait for the entity to actually finish getting persisted.
       queueMicrotask(() => {
-        const entId = id ? intoEntityId(id) : new EntityId();
-        const entIdStr = entId.toString();
+        if (this) {
+          const entId = id ? intoEntityId(id) : new EntityId();
+          const entIdStr = entId.toString();
 
-        const entity = this.#entities.get(entIdStr);
+          const entity = this.#entities.get(entIdStr)?.deref();
 
-        if (entity) {
-          // This will trigger a write to storage
-          entity.doc.commit();
+          if (entity) {
+            // This will trigger a write to storage
+            entity.doc.commit();
+            entity.free();
+          }
+
+          this.#rawUnload(entIdStr);
         }
-
-        this.#rawUnload(entIdStr);
 
         resolve();
       });

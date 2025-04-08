@@ -19,7 +19,7 @@ console.log(`${ent1.id.toString()}`);
 
 console.log("initial value", ent1.doc.toJSON());
 
-ent1.getOrInit(Age).increment(1);
+ent1.getOrInit(Age, age => age.increment(1));
 ent1.commit();
 
 console.log("updated value", ent1.doc.toJSON());

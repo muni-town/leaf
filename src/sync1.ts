@@ -47,6 +47,17 @@ export interface Sync1Interface {
   sendUpdate(entityId: EntityIdStr, update: Uint8Array): void;
 }
 
+type MaybeWeakEntity = { deref(): Entity | undefined };
+function maybeWeakEntity(ent: Entity | WeakRef<Entity>): MaybeWeakEntity {
+  return ent instanceof WeakRef
+    ? ent
+    : {
+        deref() {
+          return ent;
+        },
+      };
+}
+
 /**
  * A syncer that can be used to keep {@linkcode Entity}s up-to-date with other peers across a sync
  * interface.
@@ -57,7 +68,7 @@ export class Syncer1 {
   syncing: Map<
     EntityIdStr,
     {
-      entity: Entity;
+      entity: MaybeWeakEntity;
       awaitInitialLoad: Promise<void>;
       unsubscribe: () => void;
     }
@@ -72,9 +83,17 @@ export class Syncer1 {
   /**
    * Start syncing an entity. All local updates will be pushed to peers, and incoming changes will
    * be automatically merged into the entity.
+   *
+   * @param entity The entity or weak ref to an entity that should be synced. If the entity is a
+   * weak ref it will allow the entity to be garbage collected and will automatically stop being
+   * synced when it is, if it is not used elsewhere in the app.
    * */
-  sync(entity: Entity): void {
-    const id = entity.id.toString();
+  sync(entityRef: Entity | WeakRef<Entity>): void {
+    const entity = maybeWeakEntity(entityRef);
+    const ent = entity.deref();
+    if (!ent) return;
+
+    const id = ent.id.toString();
 
     if (this.syncing.has(id)) return;
 
@@ -93,7 +112,7 @@ export class Syncer1 {
     });
 
     // Subscribe to Loro changes and send them to peers
-    const unsubscribeLoro = entity.doc.subscribeLocalUpdates((update) => {
+    const unsubscribeLoro = ent.doc.subscribeLocalUpdates((update) => {
       // NOTE: This queueMicrotask turns out important, interestingly. The `subscribeLocalUpdates`
       // callback is triggered by the Rust WASM module to trigger JS code, and it suspends the Rust
       // code, waiting for this JS function to return, before resuming its callstack ( or something
@@ -120,10 +139,15 @@ export class Syncer1 {
     // Subscribe to updates from the network and send our latest snapshot
     const unsubscribeNet = this.inter.subscribe(
       id,
-      entity.doc.export({ mode: "snapshot" }),
+      ent.doc.export({ mode: "snapshot" }),
       (_id, update) => {
         initialLoaded();
-        entity.doc.import(update);
+        const ent = entity.deref();
+        if (ent) {
+          ent.doc.import(update);
+        } else {
+          this.unsync(id);
+        }
       }
     );
     // Record unsubscribe functions for later
@@ -275,6 +299,8 @@ export class SuperPeer1 implements Sync1Interface {
           entityId,
           ent.doc.export({ mode: "update", from: incomingEnt.doc.version() })
         );
+        ent.free();
+        incomingEnt.free();
       } catch (e) {
         console.error(new Error(`Error syncing snapshots: ${e}`));
       }
@@ -322,6 +348,7 @@ export class SuperPeer1 implements Sync1Interface {
             sub(entityId, update);
           }
         }
+        ent.free();
       } catch (e) {
         console.error(new Error(`Error syncing snapshots: ${e}`));
       }

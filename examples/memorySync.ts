@@ -30,18 +30,18 @@ const log = () => {
 };
 log();
 
-ent1.getOrInit(Name).set("first", "John");
+ent1.getOrInit(Name, name => name.set("first", "John"));
 ent1.commit();
-ent2.getOrInit(Name).set("last", "Lawry");
+ent2.getOrInit(Name, name => name.set("last", "Lawry"));
 ent1.commit();
 
 setTimeout(() => {
   log();
   assertEquals(ent1.doc.toJSON(), ent2.doc.toJSON());
 
-  ent1.getOrInit(Age).increment(6);
+  ent1.getOrInit(Age, age => age.increment(6));
   ent1.commit();
-  ent2.getOrInit(Age).decrement(4);
+  ent2.getOrInit(Age, age => age.decrement(4));
   ent2.commit();
 
   setTimeout(() => {

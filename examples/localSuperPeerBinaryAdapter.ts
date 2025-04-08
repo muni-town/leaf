@@ -41,13 +41,13 @@ const ent1 = await peer1.open(entityId);
 const ent2 = await peer2.open(entityId);
 const ent3 = await peer3.open(entityId);
 
-ent1.getOrInit(Age).increment(1);
+ent1.getOrInit(Age, age => age.increment(1));
 ent1.commit();
 
-ent2.getOrInit(Age).increment(1);
+ent2.getOrInit(Age, age => age.increment(1));
 ent2.commit();
 
-ent3.getOrInit(Age).increment(1);
+ent3.getOrInit(Age, age => age.increment(1));
 ent3.commit();
 
 setTimeout(() => {

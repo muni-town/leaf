@@ -28,11 +28,11 @@ console.log("Value1", ent1.doc.toJSON());
 const ent2 = await peer2.open(ent1.id);
 console.log("Value2", ent2.doc.toJSON());
 
-ent1.getOrInit(Name).set("first", "John");
+ent1.getOrInit(Name, (name) => name.set("first", "John"));
 // Don't forget to commit if you want to force changes to sync.
 ent1.commit();
 
-ent2.getOrInit(Age).increment(1);
+ent2.getOrInit(Age, (age) => age.increment(1));
 ent2.commit();
 
 setTimeout(() => {

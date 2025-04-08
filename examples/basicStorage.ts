@@ -23,12 +23,13 @@ if (await storage.load(ent)) {
   console.log("entity not in storage");
 }
 
-const name = ent.getOrInit(Name);
-name.set("first", "Charlie");
-name.set("last", "Browny");
+ent.getOrInit(Name, (name) => {
+  name.set("first", "Charlie");
+  name.set("last", "Browny");
+});
 
 // He ain't getting any younger
-ent.getOrInit(Age).increment(1);
+ent.getOrInit(Age, (age) => age.increment(1));
 
 await storage.save(ent);
 

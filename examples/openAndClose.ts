@@ -14,6 +14,6 @@ console.log("ID", id.toString());
 
 const ent = await peer.open(id);
 console.log(ent.doc.toJSON());
-ent.getOrInit(Name).set("first", "open");
-ent.getOrInit(Age).increment(1);
+ent.getOrInit(Name, name => name.set("first", "open"));
+ent.getOrInit(Age, age => age.increment(1));
 peer.close(ent);
