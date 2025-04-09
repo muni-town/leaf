@@ -1,6 +1,6 @@
 {
   "name": "@muni-town/leaf",
-  "version": "0.2.0-preview.13",
+  "version": "0.2.0-preview.14",
   "exports": {
     ".": "./src/index.ts",
     "./storage": "./src/storage.ts",
