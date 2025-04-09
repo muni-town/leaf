@@ -1,6 +1,6 @@
 {
   "name": "@muni-town/leaf",
-  "version": "0.2.0-preview.14",
+  "version": "0.2.0-preview.15",
   "exports": {
     ".": "./src/index.ts",
     "./storage": "./src/storage.ts",
@@ -10,6 +10,7 @@
     "./sync1/ws-client": "./src/sync1/ws-client.ts",
     "./storage/deno-fs": "./src/storage/deno-fs.ts",
     "./storage/deno-kv": "./src/storage/deno-kv.ts",
+    "./storage/deno-kv-toolbox": "./src/storage/deno-kv-toolbox.ts",
     "./storage/indexed-db": "./src/storage/indexed-db.ts",
     "./svelte": "./src/svelte.ts"
   },
