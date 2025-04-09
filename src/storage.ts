@@ -100,7 +100,7 @@ export class StorageManager {
   }
 
   /** Delete an Entity completely from storage. */
-  // TODO: add tests / examples 
+  // TODO: add tests / examples
   async delete(id: IntoEntityId) {
     const entId = intoEntityId(id);
     await this.storage.removeRange([dataPrefix, entId.toString()]);

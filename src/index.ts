@@ -413,7 +413,7 @@ export class Entity {
     }
     components.free();
     const ret = handler(raw);
-    if (!(raw instanceof Marker)) raw.free();
+    if (!(raw instanceof Marker) && raw !== (ret as any)) raw.free();
     return ret;
   }
 
@@ -426,7 +426,7 @@ export class Entity {
     if (!this.has(def)) return undefined;
     const raw = this.#getRaw(def);
     const ret = handler(raw);
-    if (!(raw instanceof Marker)) raw.free();
+    if (!(raw instanceof Marker) && raw != (ret as any)) raw.free();
     return ret;
   }
 
@@ -561,18 +561,18 @@ export class Peer {
 
     // Sync to storages on doc change.
     const unsubscribeStorage = entity.doc.subscribe(() => {
-      queueMicrotask(() => {
+      queueMicrotask(async () => {
         for (const storage of this.#storages) {
           if (storage.write !== false) {
-            const save = () => {
+            const save = async () => {
               const e = weakEntity.deref();
-              if (e) storage.manager.save(e);
+              if (e) await storage.manager.save(e);
             };
 
             if (storage.writeThrottle) {
               storage.writeThrottle(save);
             } else {
-              save();
+              await save();
             }
           }
         }

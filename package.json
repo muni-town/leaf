@@ -20,6 +20,7 @@
     "syncserver": "PORT=8095 DB_FILE=./data/syncserver.sqlite deno run -A --unstable-kv src/sync1/ws-server.ts"
   },
   "dependencies": {
+    "@kitsonk/kv-toolbox": "npm:@jsr/kitsonk__kv-toolbox@0.27.4",
     "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
     "@msgpack/msgpack": "^3.1.1",
     "arktype": "^2.1.9",

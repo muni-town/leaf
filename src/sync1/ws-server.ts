@@ -24,7 +24,7 @@
  */
 
 import { StorageManager } from "../storage.ts";
-import { denoKvStorageAdapter } from "../storage/deno-kv.ts";
+import { denoKvToolboxStorageAdapter } from "../storage/deno-kv-toolbox.ts";
 import { SuperPeer1 } from "../sync1.ts";
 import { SuperPeer1BinaryWrapper } from "./proto.ts";
 
@@ -68,7 +68,9 @@ export function handleRequest(
 /** Start a websocket sync server */
 export async function startServer(opts: { port: number; dbFile: string }) {
   const superPeer = new SuperPeer1(
-    new StorageManager(denoKvStorageAdapter(await Deno.openKv(opts.dbFile)))
+    new StorageManager(
+      denoKvToolboxStorageAdapter(await Deno.openKv(opts.dbFile))
+    )
   );
 
   Deno.serve({ port: opts.port }, (req) => {

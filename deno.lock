@@ -7,6 +7,7 @@
     "jsr:@std/path@*": "1.0.8",
     "jsr:@std/path@^1.0.8": "1.0.8",
     "npm:@automerge/automerge-repo-storage-indexeddb@^1.2.1": "1.2.1",
+    "npm:@jsr/kitsonk__kv-toolbox@0.27.4": "0.27.4",
     "npm:@msgpack/msgpack@^3.1.1": "3.1.1",
     "npm:arktype@^2.1.9": "2.1.9",
     "npm:base32-decode@1": "1.0.0",
@@ -141,6 +142,45 @@
         "@jridgewell/resolve-uri",
         "@jridgewell/sourcemap-codec"
       ]
+    },
+    "@jsr/deno__kv-utils@0.1.3": {
+      "integrity": "sha512-H1kFktioYs15mNu+l+uDKJe7qi/wq/6BHm9ubRyAGgiplELGZYX+i2dvrJ2+I7CptbPJYMVHDccrWHg81jJoeg==",
+      "dependencies": [
+        "@jsr/std__bytes",
+        "@jsr/std__encoding"
+      ]
+    },
+    "@jsr/kitsonk__kv-toolbox@0.27.4": {
+      "integrity": "sha512-6GDsczA22cieX733yazDIUxPyWzd2PatvgHQfer4mVdSWk8n6WHRdiFo0z23GbSlXT3P5eaGOoP0lIaEy9LBuA==",
+      "dependencies": [
+        "@jsr/deno__kv-utils",
+        "@jsr/std__assert",
+        "@jsr/std__bytes",
+        "@jsr/std__crypto",
+        "@jsr/std__encoding",
+        "@jsr/std__media-types"
+      ]
+    },
+    "@jsr/std__assert@1.0.12": {
+      "integrity": "sha512-9pmgjJhuljZCmLlbvsRV6aLT5+YCmhX/yIjaWYav7R7Vup2DOLAgpUOs4JkzRbwn7fdKYrwHT8+DjqPr7Ti8mg==",
+      "dependencies": [
+        "@jsr/std__internal"
+      ]
+    },
+    "@jsr/std__bytes@1.0.5": {
+      "integrity": "sha512-jcyXQSy5zAh2/6NLMWUkhJuQ0HihY5RwWF5RvpZyEmpmBaokkTwPkev0sqHzNJJvNusDUMznVBIclTT9augCkg=="
+    },
+    "@jsr/std__crypto@1.0.4": {
+      "integrity": "sha512-qtfyxcQbfhqTEOYRel8h6vssKpT2yD4kC39mzzwN1KsH53+nbiQZfXC5lmBxcfyihH7V2EibbP/MvSsYMmv6ZA=="
+    },
+    "@jsr/std__encoding@1.0.8": {
+      "integrity": "sha512-66VCtyqfxHO1kJiRyRYs19cCnYtfcCjqvYSfseFa0sn71tpYMK5C3Bs8m4eTb2QKjfwD4Imwm2+DSN1WHH6XRw=="
+    },
+    "@jsr/std__internal@1.0.6": {
+      "integrity": "sha512-1NLtCx9XAL44nt56gzmRSCgXjIthHVzK62fTkJdq8/XsP7eN9a21AZDpc0EGJ/cgvmmOB52UGh46OuKrrY7eVg=="
+    },
+    "@jsr/std__media-types@1.1.0": {
+      "integrity": "sha512-dHvaxHL7ENWnltgL653uo3KnKFse3ZbopZop2gqsT7yrscx7irZEClu5Cba7gMPPRk4Lg1FbriNcaBViM2RSBw=="
     },
     "@msgpack/msgpack@3.1.1": {
       "integrity": "sha512-DnBpqkMOUGayNVKyTLlkM6ILmU/m/+VUxGkuQlPQVAcvreLz5jn1OlQnWd8uHKL/ZSiljpM12rjRhr51VtvJUQ=="
@@ -467,6 +507,7 @@
     "packageJson": {
       "dependencies": [
         "npm:@automerge/automerge-repo-storage-indexeddb@^1.2.1",
+        "npm:@jsr/kitsonk__kv-toolbox@0.27.4",
         "npm:@msgpack/msgpack@^3.1.1",
         "npm:arktype@^2.1.9",
         "npm:base32-decode@1",

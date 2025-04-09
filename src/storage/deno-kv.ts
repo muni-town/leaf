@@ -14,7 +14,7 @@ export function denoKvStorageAdapter(kv: Deno.Kv): StorageInterface {
       const chunks: Awaited<ReturnType<typeof this.loadRange>> = [];
       for await (const entry of kv.list({ prefix: ["repo", ...prefix] })) {
         chunks.push({
-          key: entry.key as string[],
+          key: entry.key.slice(1) as string[],
           data: entry.value as Uint8Array | undefined,
         });
       }

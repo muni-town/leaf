@@ -1,7 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1/equals";
 import { EntityId, EntityIdStr, Peer } from "../src/index.ts";
 import { StorageManager } from "../src/storage.ts";
-import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
+import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
 import { Syncer1, SuperPeer1 } from "../src/sync1.ts";
 import { Age } from "./components.ts";
 
@@ -11,7 +11,7 @@ import { Age } from "./components.ts";
  */
 const superPeer = new SuperPeer1(
   new StorageManager(
-    denoKvStorageAdapter(await Deno.openKv("./data/superPeer.sqlite"))
+    denoKvToolboxStorageAdapter(await Deno.openKv("./data/superPeer.sqlite"))
   )
 );
 
@@ -31,13 +31,13 @@ const ent1 = await peer1.open(entityId);
 const ent2 = await peer2.open(entityId);
 const ent3 = await peer3.open(entityId);
 
-ent1.getOrInit(Age, age => age.increment(1));
+ent1.getOrInit(Age, (age) => age.increment(1));
 ent1.commit();
 
-ent2.getOrInit(Age, age => age.increment(1));
+ent2.getOrInit(Age, (age) => age.increment(1));
 ent2.commit();
 
-ent3.getOrInit(Age, age => age.increment(1));
+ent3.getOrInit(Age, (age) => age.increment(1));
 ent3.commit();
 
 setTimeout(() => {

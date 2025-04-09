@@ -1,7 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1/equals";
 import { EntityIdStr, Peer } from "../src/index.ts";
 import { StorageManager } from "../src/storage.ts";
-import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
+import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
 import { memorySync1Adapters, Syncer1 } from "../src/sync1.ts";
 import { Age, Name } from "./components.ts";
 
@@ -10,13 +10,13 @@ const [syncAdapter1, syncAdapter2] = memorySync1Adapters();
 
 const peer1 = new Peer(
   new StorageManager(
-    denoKvStorageAdapter(await Deno.openKv("data/peer1.sqlite"))
+    denoKvToolboxStorageAdapter(await Deno.openKv("data/peer1.sqlite"))
   ),
   new Syncer1(syncAdapter1)
 );
 const peer2 = new Peer(
   new StorageManager(
-    denoKvStorageAdapter(await Deno.openKv("data/peer2.sqlite"))
+    denoKvToolboxStorageAdapter(await Deno.openKv("data/peer2.sqlite"))
   ),
   new Syncer1(syncAdapter2)
 );

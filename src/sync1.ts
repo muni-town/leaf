@@ -280,7 +280,13 @@ export class SuperPeer1 implements Sync1Interface {
           // Update storage
           for (const storage of this.#storages) {
             if (storage.write !== false) {
-              storage.manager.save(ent);
+              // TODO: consider **not** awaiting this.
+              // If we don't we need to catch possible exceptions and prevent it from
+              // crashing the runtime if there's an error. Awaiting it allows the caller
+              // to handle the exception which is probably desirable, but not awaiting it
+              // allows us to move on and not wait for storage to finish before syncing
+              // to subscribers which may be desirable.
+              await storage.manager.save(ent);
             }
           }
 
@@ -339,7 +345,8 @@ export class SuperPeer1 implements Sync1Interface {
           // Save to storage
           for (const storage of this.#storages) {
             if (storage.write !== false) {
-              storage.manager.save(ent);
+              // TODO: consider **not** awaiting this.
+              await storage.manager.save(ent);
             }
           }
 
