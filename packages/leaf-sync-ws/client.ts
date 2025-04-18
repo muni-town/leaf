@@ -2,11 +2,7 @@
  * @module @muni-town/leaf-sync-ws
  */
 
-import { Syncer1 } from "@muni-town/leaf";
-import {
-  type Sync1BinaryInterface,
-  Sync1BinaryWrapper,
-} from "../leaf/sync-proto.ts";
+import { Syncer1, type Sync1BinaryInterface, Sync1BinaryWrapper } from "@muni-town/leaf";
 
 /**
  * A {@linkcode Sync1BinaryInterface} implementation on top of a {@linkcode WebSocket}.
