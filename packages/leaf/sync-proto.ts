@@ -3,15 +3,15 @@
  *
  * Basically encodes the {@linkcode Sync1Interface} in a way that can be sent over a bidirectional
  * network channel.
- * 
+ *
  * @module
  */
 
 import { encode, decode } from "@msgpack/msgpack";
 import { type } from "arktype";
-import { EntityIdStr } from "../index.ts";
-import { Subscriber, Sync1Interface, SuperPeer1 } from "../sync1.ts";
-import { getOrDefault } from "../utils.ts";
+import type { EntityIdStr } from "./index.ts";
+import type { Subscriber, Sync1Interface, SuperPeer1 } from "./sync1.ts";
+import { getOrDefault } from "./utils.ts";
 
 /**
  * Binary interface that can wrapped by a {@linkcode Sync1BinaryWrapper} to produce a

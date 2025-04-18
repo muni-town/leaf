@@ -20,13 +20,15 @@
  * This whole module is tiny and meant to stay simple and serve as a useful reference. Most people
  * will probably want to use it as an example and make something custom.
  *
- * @module
+ * @module @muni-town/leaf-sync-ws/server
  */
 
-import { StorageManager } from "../storage.ts";
-import { denoKvToolboxStorageAdapter } from "../storage/deno-kv-toolbox.ts";
-import { SuperPeer1 } from "../sync1.ts";
-import { SuperPeer1BinaryWrapper } from "./proto.ts";
+import {
+  StorageManager,
+  SuperPeer1,
+  SuperPeer1BinaryWrapper,
+} from "@muni-town/leaf";
+import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
 
 /**
  * Handle an HTTP request, upgrading it to a websocket connection, and hosting the super peer binary
@@ -68,9 +70,7 @@ export function handleRequest(
 /** Start a websocket sync server */
 export async function startServer(opts: { port: number; dbFile: string }) {
   const superPeer = new SuperPeer1(
-    new StorageManager(
-      denoKvToolboxStorageAdapter(await Deno.openKv(opts.dbFile))
-    )
+    new StorageManager(denoKvBlobStorageAdapter(await Deno.openKv(opts.dbFile)))
   );
 
   Deno.serve({ port: opts.port }, (req) => {

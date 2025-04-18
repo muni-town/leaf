@@ -1,4 +1,9 @@
-import { StorageInterface } from "../storage.ts";
+/**
+ * @module @muni-town/leaf-storage-deno-indexeddb
+ */
+
+
+import type { StorageInterface } from "@muni-town/leaf";
 import { IndexedDBStorageAdapter } from "@automerge/automerge-repo-storage-indexeddb";
 
 export function indexedDBStorageAdapter(

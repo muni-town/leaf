@@ -13,15 +13,18 @@
  * {@link Entity.doc} is in fact a {@linkcode LoroDoc}, so reading the Loro documentation will be
  * necessary to understand how to fully interact with the Leaf entity data.
  *
- * @module
+ * @module @muni-town/leaf
  */
 
 import decodeBase32 from "base32-decode";
 import encodeBase32 from "base32-encode";
 
 export * from "loro-crdt";
+export * from "./sync1.ts";
+export * from "./storage.ts";
+export * from "./sync-proto.ts";
 import {
-  Container,
+  type Container,
   LoroCounter,
   LoroDoc,
   LoroList,

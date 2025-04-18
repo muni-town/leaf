@@ -1,11 +1,10 @@
-import { EntityId, EntityIdStr, Peer } from "../src/index.ts";
-import { StorageManager } from "../src/storage.ts";
-import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
+import { EntityId, EntityIdStr, Peer, StorageManager } from "@muni-town/leaf";
+import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
 import { Age, Name } from "./components.ts";
 
 const peer = new Peer(
   new StorageManager(
-    denoKvToolboxStorageAdapter(await Deno.openKv("./data/openAndClose.sqlite"))
+    denoKvBlobStorageAdapter(await Deno.openKv("./data/openAndClose.sqlite"))
   )
 );
 

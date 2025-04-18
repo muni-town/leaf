@@ -1,5 +1,4 @@
-import { Peer } from "../src/index.ts";
-import { SuperPeer1, Syncer1 } from "../src/sync1.ts";
+import { Peer, SuperPeer1, Syncer1 } from "@muni-town/leaf";
 import { Name } from "./components.ts";
 
 const superPeer = new SuperPeer1();
@@ -13,7 +12,7 @@ for (let i = 0; i < 100 * 1000; i++) {
     name.set("first", "Entity");
     name.set("last", i.toString());
   });
-  await peer.close(ent)
+  await peer.close(ent);
 
   if (i % 1000 == 0)
     await new Promise((r) => {

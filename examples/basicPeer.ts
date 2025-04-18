@@ -1,8 +1,12 @@
 import { assertEquals } from "jsr:@std/assert@1/equals";
-import { EntityIdStr, Peer } from "../src/index.ts";
-import { StorageManager } from "../src/storage.ts";
-import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
-import { memorySync1Adapters, Syncer1 } from "../src/sync1.ts";
+import {
+  EntityIdStr,
+  Peer,
+  StorageManager,
+  memorySync1Adapters,
+  Syncer1,
+} from "@muni-town/leaf";
+import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
 import { Age, Name } from "./components.ts";
 
 // Create in-memory sync adapters
@@ -10,13 +14,13 @@ const [syncAdapter1, syncAdapter2] = memorySync1Adapters();
 
 const peer1 = new Peer(
   new StorageManager(
-    denoKvToolboxStorageAdapter(await Deno.openKv("data/peer1.sqlite"))
+    denoKvBlobStorageAdapter(await Deno.openKv("data/peer1.sqlite"))
   ),
   new Syncer1(syncAdapter1)
 );
 const peer2 = new Peer(
   new StorageManager(
-    denoKvToolboxStorageAdapter(await Deno.openKv("data/peer2.sqlite"))
+    denoKvBlobStorageAdapter(await Deno.openKv("data/peer2.sqlite"))
   ),
   new Syncer1(syncAdapter2)
 );

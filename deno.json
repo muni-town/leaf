@@ -1,0 +1,17 @@
+{
+  "workspace": ["./packages/*"],
+  "tasks": {
+    "docs:build": "cd docs && deno install && typedoc",
+    "docs:watch": "cd docs && deno install && typedoc --watch",
+    "syncserver": "PORT=8095 DB_FILE=./data/syncserver.sqlite deno run -A --unstable-kv packages/leaf-sync-deno-ws/server.ts"
+  },
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "strictNullChecks": true
+  },
+  "lint": {
+    "rules": {
+      "exclude": ["no-explicit-any"]
+    }
+  }
+}

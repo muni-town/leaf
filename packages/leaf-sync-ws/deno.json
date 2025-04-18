@@ -1,0 +1,8 @@
+{
+  "name": "@muni-town/leaf-sync-ws",
+  "version": "0.1.0-preview.1",
+  "exports": {
+    ".": "./client.ts",
+    "./deno-server": "./deno-server.ts"
+  }
+}

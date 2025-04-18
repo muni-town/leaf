@@ -17,10 +17,17 @@
       "./types/deno/lib",
       "./types/deno/lib.deno.ns",
       "./types/deno/lib.deno.unstable",
-    ]
+    ],
+    "paths": {
+      "@muni-town/*": [
+        "../packages/*"
+      ],
+    }
   },
-  "include": ["../src"],
+  "include": [
+    "../packages"
+  ],
   "exclude": [
-    "../src/*.test.ts",
+    "../**/*.test.ts",
   ]
 }

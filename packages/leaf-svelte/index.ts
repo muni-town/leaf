@@ -1,10 +1,10 @@
 /**
  * A svelte reactivity integration for Leaf. See {@linkcode SveltePeer} for usage.
  * 
- * @module
+ * @module @muni-town/leaf-svelte
  */
 
-import { Entity, IntoEntityId, Peer, PeerOpenOptions } from "./index.ts";
+import { type Entity, type IntoEntityId, Peer, type PeerOpenOptions } from "@muni-town/leaf";
 import { createSubscriber } from "svelte/reactivity";
 
 /**

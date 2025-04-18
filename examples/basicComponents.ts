@@ -5,7 +5,7 @@ import {
   LoroCounter,
   Entity,
   Marker,
-} from "../src/index.ts";
+} from "@muni-town/leaf";
 
 // First we define our components
 
@@ -40,15 +40,15 @@ const ent = new Entity();
 ent.has(Name); // false
 
 // We can get a component, initializing it if it doesn't exist.
-const name = ent.getOrInit(Name);
-
-// We get then get fields on the component
-name.get("first"); // unnamed
-// And set them too!
-name.set("last", "person");
+ent.getOrInit(Name, (name) => {
+  // We get then get fields on the component
+  name.get("first"); // unnamed
+  // And set them too!
+  name.set("last", "person");
+});
 
 // Happy birthday 🥳 🎂
-ent.getOrInit(Age).increment(1);
+ent.getOrInit(Age, (age) => age.increment(1));
 
 // We don't have the marker component on the entity now
 assertEquals(ent.has(SoftDelete), false);

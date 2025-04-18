@@ -1,11 +1,10 @@
-import { Entity } from "../src/index.ts";
-import { StorageManager } from "../src/storage.ts";
-import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
+import { Entity, StorageManager } from "@muni-town/leaf";
+import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
 
 import { Age, Name } from "./components.ts";
 
 const storage = new StorageManager(
-  denoKvToolboxStorageAdapter(await Deno.openKv("data/basicStorage.sqlite"))
+  denoKvBlobStorageAdapter(await Deno.openKv("data/basicStorage.sqlite"))
 );
 
 // We could use a the filesystem storage adapter, or even a custom adapter alternatively.

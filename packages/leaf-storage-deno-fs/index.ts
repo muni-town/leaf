@@ -1,10 +1,14 @@
-import { StorageInterface, StorageKey } from "../storage.ts";
+/**
+ * @module @muni-town/leaf-storage-deno-fs
+ */
+
+import type { StorageInterface, StorageKey } from "@muni-town/leaf";
 import { join, parse, relative } from "jsr:@std/path@1.0.8";
 import { walk } from "jsr:@std/fs@1.0.10";
 
 /**
  * Storage adapter that stores each snapshot in its own file on the filesystem.
- * 
+ *
  * This is probably not the most efficient adapter when you have many small entities.
  */
 export const denoFsStorageAdapter = (directory: string): StorageInterface => ({

@@ -1,4 +1,4 @@
-import { defComponent, LoroCounter, LoroMap } from "../src/index.ts";
+import { defComponent, LoroCounter, LoroMap } from "@muni-town/leaf";
 
 export const Name = defComponent(
   "name:01JNVY76XPH6Q5AVA385HP04G7",

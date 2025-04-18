@@ -1,1 +1,1 @@
-Welcome to the documentation for the Leaf SDK! Start by continuing to the {@linkcode index | leaf} module.
+Welcome to the documentation for the Leaf SDK! Start by continuing to the {@linkcode @muni-town/leaf! | @muni-town/leaf} module.

@@ -1,13 +1,18 @@
 import { assertEquals } from "jsr:@std/assert@1/equals";
-import { EntityId, EntityIdStr, Peer } from "../src/index.ts";
-import { StorageManager } from "../src/storage.ts";
-import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
-import { Syncer1, SuperPeer1 } from "../src/sync1.ts";
+import {
+  EntityId,
+  EntityIdStr,
+  Peer,
+  StorageManager,
+  Syncer1,
+  SuperPeer1,
+} from "@muni-town/leaf";
+import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
 import { Age } from "./components.ts";
 import {
   SuperPeer1BinaryWrapper,
   Sync1BinaryWrapper,
-} from "../src/sync1/proto.ts";
+} from "../packages/leaf/sync-proto.ts";
 
 /**
  * First we create a super peer to act as our "sync server". In this case it's local, but it would
@@ -15,7 +20,7 @@ import {
  */
 const superPeer = new SuperPeer1(
   new StorageManager(
-    denoKvToolboxStorageAdapter(await Deno.openKv("./data/superPeer.sqlite"))
+    denoKvBlobStorageAdapter(await Deno.openKv("./data/superPeer.sqlite"))
   )
 );
 

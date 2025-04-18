@@ -1,8 +1,13 @@
 import { assertEquals } from "jsr:@std/assert@1/equals";
-import { EntityId, EntityIdStr, Peer } from "../src/index.ts";
-import { StorageManager } from "../src/storage.ts";
-import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
-import { Syncer1, SuperPeer1 } from "../src/sync1.ts";
+import {
+  EntityId,
+  EntityIdStr,
+  Peer,
+  SuperPeer1,
+  StorageManager,
+  Syncer1,
+} from "@muni-town/leaf";
+import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
 import { Age } from "./components.ts";
 
 /**
@@ -11,7 +16,7 @@ import { Age } from "./components.ts";
  */
 const superPeer = new SuperPeer1(
   new StorageManager(
-    denoKvToolboxStorageAdapter(await Deno.openKv("./data/superPeer.sqlite"))
+    denoKvBlobStorageAdapter(await Deno.openKv("./data/superPeer.sqlite"))
   )
 );
 

@@ -1,13 +1,15 @@
-import { denoKvToolboxStorageAdapter } from "../src/storage/deno-kv-toolbox.ts";
-import { denoKvStorageAdapter } from "../src/storage/deno-kv.ts";
+import {
+  denoKvBlobStorageAdapter,
+  denoKvSmallStorageAdapter,
+} from "@muni-town/leaf-storage-deno-kv";
 
 const denoKvPath = Deno.args[0];
 const denoKvToolboxPath = Deno.args[1];
 if (!denoKvPath || !denoKvToolboxPath)
   throw "Usage: deno run --unsable-kv migrateDenoKvToDenoKvToolbox <denoKvPath> <denoKvToolboxPath>";
 
-const fromAdapter = denoKvStorageAdapter(await Deno.openKv(denoKvPath));
-const toAdapter = denoKvToolboxStorageAdapter(
+const fromAdapter = denoKvSmallStorageAdapter(await Deno.openKv(denoKvPath));
+const toAdapter = denoKvBlobStorageAdapter(
   await Deno.openKv(denoKvToolboxPath)
 );
 

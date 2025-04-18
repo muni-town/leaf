@@ -4,8 +4,13 @@
  * @module
  */
 
-import { Frontiers } from "loro-crdt";
-import { EntityIdStr, Entity, IntoEntityId, intoEntityId } from "./index.ts";
+import type { Frontiers } from "loro-crdt";
+import {
+  type EntityIdStr,
+  type Entity,
+  type IntoEntityId,
+  intoEntityId,
+} from "./index.ts";
 import { getOrDefault, sha256Base32 } from "./utils.ts";
 
 /** The key to a record in the {@linkcode StorageInterface}. */

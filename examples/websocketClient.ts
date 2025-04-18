@@ -5,9 +5,9 @@
  * @module
  */
 
-import { EntityId, EntityIdStr, Peer } from "../src/index.ts";
+import { EntityId, EntityIdStr, Peer } from "@muni-town/leaf";
 import { Age } from "./components.ts";
-import { webSocketSyncer } from "../src/sync1/ws-client.ts";
+import { webSocketSyncer } from "../packages/leaf-sync-deno-ws/client.ts";
 
 const websocket = new WebSocket("ws://localhost:8095");
 const peer1 = new Peer(await webSocketSyncer(websocket));
@@ -19,7 +19,7 @@ console.log(`${ent1.id.toString()}`);
 
 console.log("initial value", ent1.doc.toJSON());
 
-ent1.getOrInit(Age, age => age.increment(1));
+ent1.getOrInit(Age, (age) => age.increment(1));
 ent1.commit();
 
 console.log("updated value", ent1.doc.toJSON());
