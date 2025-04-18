@@ -15,6 +15,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno install
+      - run: npm i -g typedoc
       - run: deno run docs:build
       - name: Upload static files as artifact
         id: deployment
