@@ -1,6 +1,7 @@
 {
   "name": "@muni-town/leaf",
   "version": "0.2.0-preview.16",
+  "license": "MIT or Apache-2.0",
   "exports": {
     ".": "./index.ts"
   },

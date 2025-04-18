@@ -1,6 +1,7 @@
 {
   "name": "@muni-town/leaf-storage-deno-fs",
   "version": "0.1.0-preview.1",
+  "license": "MIT or Apache-2.0",
   "exports": {
     ".": "./index.ts"
   }
