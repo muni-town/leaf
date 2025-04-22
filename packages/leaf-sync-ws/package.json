@@ -1,0 +1,6 @@
+{
+  "exports": {
+    ".": "./client.ts",
+    "./deno-server": "./deno-server.ts"
+  }
+}
