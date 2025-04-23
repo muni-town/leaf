@@ -10,7 +10,9 @@
     "../packages/leaf-storage-indexeddb/index.ts",
     "../packages/leaf-sync-ws/client.ts",
     "../packages/leaf-sync-ws/deno-server.ts",
-    "../packages/leaf-svelte/index.ts"
+    "../packages/leaf-svelte/index.ts",
+    "../packages/leaf-sync-socket-io-client/index.ts",
+    "../packages/leaf-sync-socket-io-server/index.ts"
   ],
   "projectDocuments": [
     "./examples.md"

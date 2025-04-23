@@ -41,7 +41,7 @@ export function attachServer(
   socketIoServer.attach(httpServer);
 }
 
-/** Start a websocket sync server */
+/** Start a Socket.io sync server */
 export async function startServer(opts: { port: number; dbFile: string }) {
   const superPeer = new SuperPeer1(
     new StorageManager(denoKvBlobStorageAdapter(await Deno.openKv(opts.dbFile)))
