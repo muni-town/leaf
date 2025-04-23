@@ -1,11 +1,11 @@
 {
-  "name": "@muni-town/leaf-sync-socket-io-server-deno",
+  "name": "@muni-town/leaf-sync-socket-io-server",
   "version": "0.1.0-preview.1",
   "license": "MIT or Apache-2.0",
   "exports": {
     ".": "./index.ts"
   },
   "imports": {
-    "socket-io-server": "https://deno.land/x/socket_io@0.2.1/mod.ts"
+    "socket.io": "npm:socket.io@4.8.1"
   }
 }
