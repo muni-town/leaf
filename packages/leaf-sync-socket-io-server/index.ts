@@ -2,14 +2,11 @@
  * @module @muni-town/leaf-sync-socket-io-server-deno
  */
 
-import { createServer, type Server as HttpServer } from "node:http";
-import {
-  StorageManager,
-  SuperPeer1,
-  SuperPeer1BinaryWrapper,
-} from "@muni-town/leaf";
-import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
-import { Server as SocketIoServer } from "socket.io";
+import type { Server as HttpServer } from "node:http";
+import { type SuperPeer1, SuperPeer1BinaryWrapper } from "@muni-town/leaf";
+
+import type * as io from "socket.io";
+export * as io from "socket.io";
 
 /**
  * Attach a super peer, socket IO server instance, and an http server, so that http requests will be
@@ -17,7 +14,7 @@ import { Server as SocketIoServer } from "socket.io";
  */
 export function attachServer(
   superPeer: SuperPeer1,
-  socketIoServer: SocketIoServer<
+  socketIoServer: io.Server<
     { data: (data: ArrayBuffer) => void },
     { data: (data: Uint8Array) => void }
   >,
@@ -39,29 +36,4 @@ export function attachServer(
   });
 
   socketIoServer.attach(httpServer);
-}
-
-/** Start a Socket.io sync server */
-export async function startServer(opts: { port: number; dbFile: string }) {
-  const superPeer = new SuperPeer1(
-    new StorageManager(denoKvBlobStorageAdapter(await Deno.openKv(opts.dbFile)))
-  );
-
-  const httpServer = createServer();
-  const socketIoServer = new SocketIoServer({
-    cors: {
-      allowedHeaders: "*",
-      origin: "*",
-    },
-  });
-  attachServer(superPeer, socketIoServer, httpServer);
-  httpServer.listen(opts.port);
-  console.log(`Listening on http://0.0.0.0:${opts.port}`);
-}
-
-if (import.meta.main) {
-  const port = parseInt(Deno.env.get("PORT") || "8000");
-  const dbFile = Deno.env.get("DB_FILE") || "./data.sqlite";
-
-  startServer({ port, dbFile });
 }

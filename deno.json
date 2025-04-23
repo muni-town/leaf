@@ -3,7 +3,7 @@
   "tasks": {
     "docs:build": "cd docs && deno install && typedoc",
     "docs:watch": "cd docs && deno install && typedoc --watch",
-    "syncserver": "PORT=8095 DB_FILE=./data/syncserver.sqlite deno run -A --unstable-kv packages/leaf-sync-socket-io-server/index.ts"
+    "syncserver": "PORT=8095 DB_FILE=./data/syncserver.sqlite deno run -A --unstable-kv packages/leaf-sync-socket-io-server/example-server.ts"
   },
   "nodeModulesDir": "auto",
   "compilerOptions": {
