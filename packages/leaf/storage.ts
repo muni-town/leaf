@@ -77,11 +77,11 @@ export class StorageManager {
 
     // Load chunks from storage
     const chunks: Chunk[] = (await this.storage.loadRange([dataPrefix, id]))
-      .filter((x) => !!x.data)
+      .filter((x) => !!x.data && x.key.length >= 2)
       .map(({ key, data }) => {
         return {
           kind: key[key.length - 2] == "snapshot" ? "snapshot" : "incremental",
-          hash: key[key.length - 1],
+          hash: key[key.length - 1]!,
           size: data!.length,
           data: data!,
         };

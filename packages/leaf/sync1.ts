@@ -188,7 +188,7 @@ export const memorySync1Adapters = (count = 2): MemorySync1Adapter[] => {
         if (entity) entity.doc.import(update);
         for (let j = 0; j < count; j++) {
           if (j !== i) {
-            const subs = getOrDefault(interfaces[j].subscribers, id, []);
+            const subs = getOrDefault(interfaces[j]!.subscribers, id, []);
             for (const notify of subs) {
               notify(id, update);
             }
