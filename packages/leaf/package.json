@@ -1,1 +1,22 @@
-{ "exports": { ".": "./index.ts" } }
+{
+  "name": "@muni-town/leaf",
+  "version": "0.2.0-preview.17",
+  "license": "MIT or Apache-2.0",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "tsup": {
+    "format": "esm",
+    "target": "es2022",
+    "legacy-output": true
+  },
+  "scripts": {
+    "build": "pkgroll --minify --clean-dist --sourcemap && tsc"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "npm:@msgpack/msgpack@^3.1.1",
+    "arktype": "npm:arktype@^2.1.9",
+    "base32-decode": "npm:base32-decode@^1.0.0",
+    "base32-encode": "npm:base32-encode@^2.0.0",
+    "loro-crdt": "npm:loro-crdt@^1.5.1"
+  }
+}

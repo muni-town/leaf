@@ -1,0 +1,7 @@
+{
+  "type": "prerelease",
+  "comment": "refactor: update repo to use normal npm packages.",
+  "packageName": "@muni-town/leaf-storage-deno-kv",
+  "email": "zicklag@katharostech.com",
+  "dependentChangeType": "patch"
+}

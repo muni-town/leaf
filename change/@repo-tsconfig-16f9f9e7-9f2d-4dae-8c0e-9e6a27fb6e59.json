@@ -1,0 +1,7 @@
+{
+  "type": "patch",
+  "comment": "refactor: update repo to use normal npm packages.",
+  "packageName": "@repo/tsconfig",
+  "email": "zicklag@katharostech.com",
+  "dependentChangeType": "patch"
+}

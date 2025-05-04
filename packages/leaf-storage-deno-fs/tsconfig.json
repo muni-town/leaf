@@ -1,0 +1,12 @@
+{
+  "extends": "@repo/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "types": [
+      "../../types/deno/lib.deno.ns"
+    ]
+  },
+  "files": [
+    "src/index.ts"
+  ]
+}

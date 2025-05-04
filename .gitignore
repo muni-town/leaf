@@ -2,3 +2,5 @@ node_modules
 docs-dist/
 data/*
 !data/.placeholder
+.turbo
+packages/*/dist

@@ -3,8 +3,8 @@
  */
 
 import type { StorageInterface, StorageKey } from "@muni-town/leaf";
-import { join, parse, relative } from "jsr:@std/path@1.0.8";
-import { walk } from "jsr:@std/fs@1.0.10";
+import { join, parse, relative } from "@std/path";
+import { walk } from "@std/fs";
 
 /**
  * Storage adapter that stores each snapshot in its own file on the filesystem.

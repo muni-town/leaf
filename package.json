@@ -1,0 +1,12 @@
+{
+  "packageManager": "pnpm@10.10.0",
+  "repository": {
+    "url": "https://github.com/muni-town/leaf"
+  },
+  "devDependencies": {
+    "@repo/tsconfig": "workspace:*",
+    "pkgroll": "^2.12.2",
+    "turbo": "^2.5.2",
+    "typescript": "^5.8.3"
+  }
+}
