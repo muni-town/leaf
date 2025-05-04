@@ -1,7 +1,0 @@
-{
-  "type": "prerelease",
-  "comment": "refactor: update repo to use normal npm packages.",
-  "packageName": "@muni-town/leaf-svelte",
-  "email": "zicklag@katharostech.com",
-  "dependentChangeType": "prerelease"
-}

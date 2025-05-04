@@ -1,6 +1,6 @@
 {
   "name": "@muni-town/leaf",
-  "version": "0.2.0-preview.17",
+  "version": "0.2.0-preview.18",
   "private": false,
   "license": "MIT or Apache-2.0",
   "module": "./dist/index.js",
