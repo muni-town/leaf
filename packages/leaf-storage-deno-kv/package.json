@@ -1,1 +1,15 @@
-{ "exports": { ".": "./index.ts" } }
+{
+  "name": "@muni-town/leaf-storage-deno-kv",
+  "version": "0.1.0-preview.2",
+  "private": false,
+  "license": "MIT or Apache-2.0",
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "scripts": {
+    "build": "pkgroll --minify --clean-dist --sourcemap && tsc"
+  },
+  "dependencies": {
+    "@muni-town/leaf": "workspace:*",
+    "@kitsonk/kv-toolbox": "jsr:@kitsonk/kv-toolbox@0.27.4"
+  }
+}

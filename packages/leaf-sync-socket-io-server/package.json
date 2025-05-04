@@ -1,5 +1,15 @@
 {
-  "exports": {
-    ".": "./index.ts"
+  "name": "@muni-town/leaf-sync-socket-io-server",
+  "version": "0.1.0-preview.3",
+  "private": false,
+  "license": "MIT or Apache-2.0",
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "scripts": {
+    "build": "pkgroll --minify --clean-dist --sourcemap && tsc"
+  },
+  "dependencies": {
+    "@muni-town/leaf": "workspace:*",
+    "socket.io": "npm:socket.io@4.8.1"
   }
 }

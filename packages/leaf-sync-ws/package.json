@@ -1,6 +1,24 @@
 {
+  "name": "@muni-town/leaf-sync-ws",
+  "version": "0.1.0-preview.2",
+  "private": false,
+  "license": "MIT or Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "pkgroll --minify --clean-dist --sourcemap && tsc"
+  },
   "exports": {
-    ".": "./client.ts",
-    "./deno-server": "./deno-server.ts"
+    ".": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./deno-server": {
+      "types": "./dist/deno-server.d.ts",
+      "default": "./dist/deno-server.js"
+    }
+  },
+  "dependencies": {
+    "@muni-town/leaf": "workspace:*",
+    "@muni-town/leaf-storage-deno-kv": "workspace:*"
   }
 }
