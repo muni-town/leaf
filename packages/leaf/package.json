@@ -5,11 +5,6 @@
   "license": "MIT or Apache-2.0",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "tsup": {
-    "format": "esm",
-    "target": "es2022",
-    "legacy-output": true
-  },
   "scripts": {
     "build": "pkgroll --minify --clean-dist --sourcemap && tsc"
   },
