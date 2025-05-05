@@ -4,7 +4,7 @@
     "url": "https://github.com/muni-town/leaf"
   },
   "scripts": {
-    "publish-packages": "turbo build && beachball publish --verbose -m 'chore: publish packages.'"
+    "publish-packages": "turbo build && beachball --yes -m 'chore: publish packages.'"
   },
   "devDependencies": {
     "@repo/tsconfig": "workspace:*",
