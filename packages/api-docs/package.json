@@ -1,0 +1,23 @@
+{
+  "name": "@repo/api-docs",
+  "private": true,
+  "scripts": {
+    "build-api-docs": "typedoc"
+  },
+  "beachball": {
+    "shouldPublish": false
+  },
+  "dependencies": {
+    "@muni-town/leaf": "workspace:*",
+    "@muni-town/leaf-storage-deno-fs": "workspace:*",
+    "@muni-town/leaf-storage-deno-kv": "workspace:*",
+    "@muni-town/leaf-storage-indexeddb": "workspace:*",
+    "@muni-town/leaf-svelte": "workspace:*",
+    "@muni-town/leaf-sync-socket-io-client": "workspace:*",
+    "@muni-town/leaf-sync-socket-io-server": "workspace:*",
+    "@muni-town/leaf-sync-ws": "workspace:*"
+  },
+  "devDependencies": {
+    "typedoc": "^0.28.4"
+  }
+}

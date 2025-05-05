@@ -5,4 +5,4 @@ group: Examples
 
 ## Basic Components
 
-{@includeCode ../../examples/basicComponents.ts}
+{@includeCode ../../../examples/basicComponents.ts}
