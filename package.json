@@ -3,8 +3,12 @@
   "repository": {
     "url": "https://github.com/muni-town/leaf"
   },
+  "scripts": {
+    "publish-packages": "turbo build && beachball publish --verbose -m 'chore: publish packages.'"
+  },
   "devDependencies": {
     "@repo/tsconfig": "workspace:*",
+    "beachball": "^2.54.0",
     "pkgroll": "^2.12.2",
     "turbo": "^2.5.2",
     "typescript": "^5.8.3"
