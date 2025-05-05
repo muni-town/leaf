@@ -1,6 +1,6 @@
 {
   "name": "@muni-town/leaf-sync-socket-io-server",
-  "version": "0.1.0-preview.4",
+  "version": "0.1.0-preview.5",
   "private": false,
   "license": "MIT or Apache-2.0",
   "types": "./dist/index.d.ts",

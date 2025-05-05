@@ -1,7 +1,0 @@
-{
-  "type": "prerelease",
-  "comment": "chore: bump package versions since last release was missing compiled JS.",
-  "packageName": "@muni-town/leaf-storage-deno-fs",
-  "email": "zicklag@katharostech.com",
-  "dependentChangeType": "prerelease"
-}
