@@ -14,6 +14,9 @@ importers:
       beachball:
         specifier: ^2.54.0
         version: 2.54.0(typescript@5.8.3)
+      deno:
+        specifier: ^2.3.1
+        version: 2.3.1
       pkgroll:
         specifier: ^2.12.2
         version: 2.12.2(typescript@5.8.3)
@@ -218,6 +221,36 @@ packages:
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
+
+  '@deno/darwin-arm64@2.3.1':
+    resolution: {integrity: sha512-lKUfHFvtygPNajIUY7QTjpGyIetOSRD+NCsZjiWlyXVPzZQLSXYtqRSDth31N9ORs5dP9tj0/rnho0yoF08lyg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@deno/darwin-x64@2.3.1':
+    resolution: {integrity: sha512-NoKA2HLnlCk/oVTE+YJr0zYtT0hGdLd9fM09RAXNHQmgn572NoK2Mbs+maZJxHRw30QOXqoheOwi+S8Z9turzQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@deno/linux-arm64-glibc@2.3.1':
+    resolution: {integrity: sha512-/sc7tDVZHmjfNO5ghuIQINlHugyBhqMr6/tCtSdi/3rWA3lfP2OV3gh4myVjOurR0kaB5HjrLpxXVUq5hD5Vag==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@deno/linux-x64-glibc@2.3.1':
+    resolution: {integrity: sha512-ipQqXDtjc3Lln1q1TuPG7SygWrxJga1RODofP/pNwozc14wwZEeCNE4z7z4jDqes6eH5XL8ZH+qZa5beS7118Q==}
+    cpu: [x64]
+    os: [linux]
+
+  '@deno/win32-arm64@2.3.1':
+    resolution: {integrity: sha512-UKwl7uqmuP4qcTR210ZlwozFqH5eb7o3cgNgp5eXZSdFbejKxz+dTKsiSOMjoxTbbKZHofVdp/Dc7jVUvlwShQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@deno/win32-x64@2.3.1':
+    resolution: {integrity: sha512-vbnSEXjL3+dz6EwvV8qUFrDvtluQQdYxEJo+FaSkUu9x2Hws5YpLln4l0tT/KS58RXI9DpWS9dxwMIPbe5kQQQ==}
+    cpu: [x64]
+    os: [win32]
 
   '@esbuild/aix-ppc64@0.25.3':
     resolution: {integrity: sha512-W8bFfPA8DowP8l//sxjJLSLkD8iEjMc7cBVyP+u4cEv9sM7mdUCkgsj+t0n/BWPFtv7WWCN5Yzj0N6FJNUUqBQ==}
@@ -801,6 +834,10 @@ packages:
   deepmerge@4.3.1:
     resolution: {integrity: sha512-3sUqbMEc77XqpdNO7FRyRog+eW3ph+GYCbj+rK+uYyRMuwsVy0rMiVtPn+QJlKFvWP/1PYpapqYn0Me2knFn+A==}
     engines: {node: '>=0.10.0'}
+
+  deno@2.3.1:
+    resolution: {integrity: sha512-ZkXW3Th3BvfhSz2XjVdlFIQby8+jimiG1NdEOa5dadxMMNCPlvSgMzTwhFgFQIal7w12F5QQSf82i2ruHq0n6w==}
+    hasBin: true
 
   detect-libc@2.0.4:
     resolution: {integrity: sha512-3UDv+G9CsCKO1WKMGw9fwq/SWJYbI0c5Y7LU1AXYoDdbhE2AHQ6N6Nb34sG8Fj7T5APy8qXDCKuuIHd1BR0tVA==}
@@ -1429,6 +1466,24 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
+  '@deno/darwin-arm64@2.3.1':
+    optional: true
+
+  '@deno/darwin-x64@2.3.1':
+    optional: true
+
+  '@deno/linux-arm64-glibc@2.3.1':
+    optional: true
+
+  '@deno/linux-x64-glibc@2.3.1':
+    optional: true
+
+  '@deno/win32-arm64@2.3.1':
+    optional: true
+
+  '@deno/win32-x64@2.3.1':
+    optional: true
+
   '@esbuild/aix-ppc64@0.25.3':
     optional: true
 
@@ -1892,6 +1947,15 @@ snapshots:
       ms: 2.1.3
 
   deepmerge@4.3.1: {}
+
+  deno@2.3.1:
+    optionalDependencies:
+      '@deno/darwin-arm64': 2.3.1
+      '@deno/darwin-x64': 2.3.1
+      '@deno/linux-arm64-glibc': 2.3.1
+      '@deno/linux-x64-glibc': 2.3.1
+      '@deno/win32-arm64': 2.3.1
+      '@deno/win32-x64': 2.3.1
 
   detect-libc@2.0.4:
     optional: true

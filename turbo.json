@@ -12,6 +12,10 @@
     "check-types": {
       "dependsOn": ["^check-types"]
     },
+    "syncserver": {
+      "dependsOn": ["build"],
+      "persistent": true
+    },
     "dev": {
       "persistent": true,
       "cache": false

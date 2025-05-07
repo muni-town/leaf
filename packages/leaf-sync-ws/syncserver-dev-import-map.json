@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@muni-town/leaf": "../leaf/dist/index.js",
+    "@muni-town/leaf-storage-deno-kv": "../leaf-storage-deno-kv/dist/index.js"
+  }
+}
