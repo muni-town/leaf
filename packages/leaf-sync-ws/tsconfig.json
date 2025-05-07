@@ -3,9 +3,8 @@
   "compilerOptions": {
     "outDir": "./dist",
     "types": [
-      "../../types/deno/lib",
-      "../../types/deno/lib.deno.ns",
-      "../../types/deno/lib.deno.unstable"
+      "deno",
+      "./env.d.ts"
     ]
   },
   "files": [

@@ -11,5 +11,8 @@
   "dependencies": {
     "@muni-town/leaf": "workspace:*",
     "@kitsonk/kv-toolbox": "jsr:@kitsonk/kv-toolbox@0.27.4"
+  },
+  "devDependencies": {
+    "@types/deno": "^2.3.0"
   }
 }

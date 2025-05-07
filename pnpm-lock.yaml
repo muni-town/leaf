@@ -51,6 +51,9 @@ importers:
         specifier: workspace:*
         version: link:../leaf-sync-ws
     devDependencies:
+      '@types/deno':
+        specifier: ^2.3.0
+        version: 2.3.0
       typedoc:
         specifier: ^0.28.4
         version: 0.28.4(typescript@5.8.3)
@@ -84,6 +87,10 @@ importers:
       '@std/path':
         specifier: jsr:@std/path@1.0.8
         version: '@jsr/std__path@1.0.8'
+    devDependencies:
+      '@types/deno':
+        specifier: ^2.3.0
+        version: 2.3.0
 
   packages/leaf-storage-deno-kv:
     dependencies:
@@ -93,6 +100,10 @@ importers:
       '@muni-town/leaf':
         specifier: workspace:*
         version: link:../leaf
+    devDependencies:
+      '@types/deno':
+        specifier: ^2.3.0
+        version: 2.3.0
 
   packages/leaf-storage-indexeddb:
     dependencies:
@@ -138,6 +149,10 @@ importers:
       '@muni-town/leaf-storage-deno-kv':
         specifier: workspace:*
         version: link:../leaf-storage-deno-kv
+    devDependencies:
+      '@types/deno':
+        specifier: ^2.3.0
+        version: 2.3.0
 
   packages/tsconfig: {}
 
@@ -628,6 +643,9 @@ packages:
 
   '@types/cors@2.8.17':
     resolution: {integrity: sha512-8CGDvrBj1zgo2qE+oS3pOCyYNqCPryMWY2bGfwA0dcfopWGgxs+78df0Rs3rc9THP4JkOhLsAa+15VdpAqkcUA==}
+
+  '@types/deno@2.3.0':
+    resolution: {integrity: sha512-/4SyefQpKjwNKGkq9qG3Ln7MazfbWKvydyVFBnXzP5OQA4u1paoFtaOe1iHKycIWHHkhYag0lPxyheThV1ijzw==}
 
   '@types/estree@1.0.7':
     resolution: {integrity: sha512-w28IoSUCJpidD/TGviZwwMJckNESJZXFu7NBZ5YJ4mEUnNraUn9Pm8HSZm/jDF1pDWYKspWE7oVphigUPRakIQ==}
@@ -1721,6 +1739,8 @@ snapshots:
   '@types/cors@2.8.17':
     dependencies:
       '@types/node': 22.15.3
+
+  '@types/deno@2.3.0': {}
 
   '@types/estree@1.0.7': {}
 

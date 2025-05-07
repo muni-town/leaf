@@ -20,5 +20,8 @@
   "dependencies": {
     "@muni-town/leaf": "workspace:*",
     "@muni-town/leaf-storage-deno-kv": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/deno": "^2.3.0"
   }
 }

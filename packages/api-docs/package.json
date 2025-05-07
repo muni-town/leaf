@@ -18,6 +18,7 @@
     "@muni-town/leaf-sync-ws": "workspace:*"
   },
   "devDependencies": {
-    "typedoc": "^0.28.4"
+    "typedoc": "^0.28.4",
+    "@types/deno": "^2.3.0"
   }
 }
