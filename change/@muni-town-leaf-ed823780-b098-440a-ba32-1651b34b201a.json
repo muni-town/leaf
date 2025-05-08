@@ -1,7 +1,0 @@
-{
-  "type": "prerelease",
-  "comment": "fix memory error when closing entities.",
-  "packageName": "@muni-town/leaf",
-  "email": "zicklag@katharostech.com",
-  "dependentChangeType": "prerelease"
-}
