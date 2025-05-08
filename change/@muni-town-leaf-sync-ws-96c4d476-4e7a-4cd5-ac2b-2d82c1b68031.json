@@ -1,7 +1,0 @@
-{
-  "type": "prerelease",
-  "comment": "fix package including files that should be ignored.",
-  "packageName": "@muni-town/leaf-sync-ws",
-  "email": "zicklag@katharostech.com",
-  "dependentChangeType": "prerelease"
-}
