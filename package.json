@@ -4,6 +4,8 @@
     "url": "https://github.com/muni-town/leaf"
   },
   "scripts": {
+    "change": "npx beachball change --no-commit",
+    "bump": "npx beachball bump",
     "build-api-docs": "turbo build-api-docs",
     "syncserver": "PORT=8095 DB_FILE=./data/data.sqlite turbo syncserver",
     "publish-packages": "turbo build && beachball publish -m 'chore: publish packages.'"

@@ -643,7 +643,6 @@ export class Peer {
 
   /** Commit the entity, stop syncing it, and flush it to storage. */
   close(id: IntoEntityId): Promise<void> {
-    // console.log('close');
     return new Promise((resolve) => {
       // NOTE: we queue a microtask here because if you have _just_ committed an entity, and then
       // you call this function, the change callbacks on the entity have not yet bent run, and the
@@ -660,7 +659,11 @@ export class Peer {
           if (entity) {
             // This will trigger a write to storage
             entity.doc.commit();
-            entity.free();
+            // For the same reason mentioned in the nte above, we have to wait until the next tick
+            // to actually free the entity after the commit.
+            queueMicrotask(() => {
+              entity.free();
+            });
           }
 
           this.#rawUnload(entIdStr);

@@ -7,7 +7,7 @@ We use [beachball](https://microsoft.github.io/beachball/) for relase management
 When changes are made it's good to create a changeset by running:
 
 ```
-npx beachball change
+pnpm change
 ```
 
 ## Publishing
