@@ -8,6 +8,11 @@
     "build": "pkgroll --minify --clean-dist --sourcemap && tsc",
     "syncserver": "PORT=8095 DB_FILE=./data/data.sqlite npx deno run --import-map syncserver-dev-import-map.json -A --unstable-kv src/deno-server.ts"
   },
+  "files": [
+    "src",
+    "dist",
+    "tsconfig.json"
+  ],
   "exports": {
     ".": {
       "types": "./dist/client.d.ts",
