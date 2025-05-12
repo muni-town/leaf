@@ -1,6 +1,7 @@
 node_modules
 docs-dist/
 packages/*/data
+data/
 !data/.placeholder
 .turbo
 packages/*/dist

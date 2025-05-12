@@ -1,5 +1,5 @@
 import { Peer, SuperPeer1, Syncer1 } from "@muni-town/leaf";
-import { Name } from "./components.ts";
+import { Name } from "./components";
 
 const superPeer = new SuperPeer1();
 

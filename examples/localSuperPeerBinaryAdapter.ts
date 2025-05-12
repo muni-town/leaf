@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1/equals";
+import assert from "node:assert";
 import {
   EntityId,
   EntityIdStr,
@@ -6,22 +6,18 @@ import {
   StorageManager,
   Syncer1,
   SuperPeer1,
-} from "@muni-town/leaf";
-import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
-import { Age } from "./components.ts";
-import {
   SuperPeer1BinaryWrapper,
   Sync1BinaryWrapper,
-} from "../packages/leaf/sync-proto.ts";
+} from "@muni-town/leaf";
+import { Age } from "./components";
+import { nodeFsStorageAdapter } from "@muni-town/leaf-storage-node-fs";
 
 /**
  * First we create a super peer to act as our "sync server". In this case it's local, but it would
  * be access over websockets or something similar most of the time.
  */
 const superPeer = new SuperPeer1(
-  new StorageManager(
-    denoKvBlobStorageAdapter(await Deno.openKv("./data/superPeer.sqlite"))
-  )
+  new StorageManager(nodeFsStorageAdapter("./data/superPeer"))
 );
 
 /**
@@ -40,7 +36,7 @@ const peer3 = new Peer(
   new Syncer1(new Sync1BinaryWrapper(new SuperPeer1BinaryWrapper(superPeer)))
 );
 
-const entityId = new EntityId((Deno.args[0] as EntityIdStr) || undefined);
+const entityId = new EntityId((process.argv[2] as EntityIdStr) || undefined);
 
 const ent1 = await peer1.open(entityId);
 const ent2 = await peer2.open(entityId);
@@ -60,6 +56,6 @@ setTimeout(() => {
   console.log("Value1", ent1.doc.toJSON());
   console.log("Value2", ent2.doc.toJSON());
   console.log("Value3", ent3.doc.toJSON());
-  assertEquals(ent1.doc.toJSON(), ent2.doc.toJSON());
-  assertEquals(ent2.doc.toJSON(), ent3.doc.toJSON());
+  assert.deepEqual(ent1.doc.toJSON(), ent2.doc.toJSON());
+  assert.deepEqual(ent2.doc.toJSON(), ent3.doc.toJSON());
 }, 100);

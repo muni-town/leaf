@@ -1,14 +1,14 @@
 import { EntityId, EntityIdStr, Peer, StorageManager } from "@muni-town/leaf";
-import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
-import { Age, Name } from "./components.ts";
+import { Age, Name } from "./components";
+import { nodeFsStorageAdapter } from "@muni-town/leaf-storage-node-fs";
 
 const peer = new Peer(
   new StorageManager(
-    denoKvBlobStorageAdapter(await Deno.openKv("./data/openAndClose.sqlite"))
+    nodeFsStorageAdapter("./data/openAndClose")
   )
 );
 
-const id = new EntityId((Deno.args[0] as EntityIdStr) || undefined);
+const id = new EntityId((process.argv[0] as EntityIdStr) || undefined);
 console.log("ID", id.toString());
 
 const ent = await peer.open(id);

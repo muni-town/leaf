@@ -1,0 +1,12 @@
+{
+  "extends": "@repo/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "types": [
+      "node"
+    ]
+  },
+  "files": [
+    "src/index.ts"
+  ]
+}

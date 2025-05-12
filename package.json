@@ -3,7 +3,9 @@
   "repository": {
     "url": "https://github.com/muni-town/leaf"
   },
+  "type": "module",
   "scripts": {
+    "build": "turbo build",
     "change": "npx beachball change --no-commit",
     "bump": "npx beachball bump",
     "build-api-docs": "turbo build-api-docs",
@@ -11,10 +13,14 @@
     "publish-packages": "turbo build && beachball publish -m 'chore: publish packages.'"
   },
   "devDependencies": {
+    "@muni-town/leaf": "workspace:*",
+    "@muni-town/leaf-storage-node-fs": "workspace:*",
     "@repo/tsconfig": "workspace:*",
+    "@types/node": "^22.15.17",
     "beachball": "^2.54.0",
     "deno": "^2.3.1",
     "pkgroll": "^2.12.2",
+    "tsx": "^4.19.4",
     "turbo": "^2.5.2",
     "typescript": "^5.8.3"
   }

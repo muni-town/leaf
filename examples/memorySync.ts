@@ -1,6 +1,6 @@
 import { Entity, memorySync1Adapters, Syncer1 } from "@muni-town/leaf";
-import { Age, Name } from "./components.ts";
-import { assertEquals } from "jsr:@std/assert@1/equals";
+import { Age, Name } from "./components";
+import assert from "node:assert"
 
 // NOTE: usually you'll use a Peer to do this instead of manually using syncers.
 
@@ -36,7 +36,7 @@ ent1.commit();
 
 setTimeout(() => {
   log();
-  assertEquals(ent1.doc.toJSON(), ent2.doc.toJSON());
+  assert.deepEqual(ent1.doc.toJSON(), ent2.doc.toJSON());
 
   ent1.getOrInit(Age, (age) => age.increment(6));
   ent1.commit();
@@ -45,6 +45,6 @@ setTimeout(() => {
 
   setTimeout(() => {
     log();
-    assertEquals(ent1.doc.toJSON(), ent2.doc.toJSON());
+    assert.deepEqual(ent1.doc.toJSON(), ent2.doc.toJSON());
   }, 0);
 }, 0);

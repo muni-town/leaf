@@ -1,4 +1,5 @@
-import { assertEquals } from "jsr:@std/assert@1/equals";
+import assert from "node:assert";
+import process from "node:process";
 import {
   EntityIdStr,
   Peer,
@@ -6,26 +7,23 @@ import {
   memorySync1Adapters,
   Syncer1,
 } from "@muni-town/leaf";
-import { denoKvBlobStorageAdapter } from "@muni-town/leaf-storage-deno-kv";
-import { Age, Name } from "./components.ts";
+import { nodeFsStorageAdapter } from "@muni-town/leaf-storage-node-fs";
+import { Age, Name } from "./components";
 
 // Create in-memory sync adapters
 const [syncAdapter1, syncAdapter2] = memorySync1Adapters();
 
 const peer1 = new Peer(
-  new StorageManager(
-    denoKvBlobStorageAdapter(await Deno.openKv("data/peer1.sqlite"))
-  ),
+  new StorageManager(nodeFsStorageAdapter("data/peer1")),
   new Syncer1(syncAdapter1)
 );
 const peer2 = new Peer(
-  new StorageManager(
-    denoKvBlobStorageAdapter(await Deno.openKv("data/peer2.sqlite"))
-  ),
+  new StorageManager(nodeFsStorageAdapter("data/peer2")),
   new Syncer1(syncAdapter2)
 );
 
-const ent1 = await peer1.open((Deno.args[0] as EntityIdStr) || undefined);
+const id = (process.argv[2] as EntityIdStr) || undefined;
+const ent1 = await peer1.open(id);
 console.log("ID", ent1.id.toString());
 console.log("Value1", ent1.doc.toJSON());
 
@@ -43,5 +41,5 @@ setTimeout(() => {
   console.log("====");
   console.log("Value1", ent1.doc.toJSON());
   console.log("Value2", ent2.doc.toJSON());
-  assertEquals(ent1.doc.toJSON(), ent2.doc.toJSON());
+  assert.deepEqual(ent1.doc.toJSON(), ent2.doc.toJSON());
 });
