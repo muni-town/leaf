@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "moduleDetection": "force",
+    "target": "es2020",
+    "module": "Preserve",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+}

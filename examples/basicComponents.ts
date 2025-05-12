@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1/equals";
+import assert from "node:assert";
 import {
   defComponent,
   LoroMap,
@@ -51,12 +51,12 @@ ent.getOrInit(Name, (name) => {
 ent.getOrInit(Age, (age) => age.increment(1));
 
 // We don't have the marker component on the entity now
-assertEquals(ent.has(SoftDelete), false);
+assert.equal(ent.has(SoftDelete), false);
 
 // But we can add it by using the `init` function.
 ent.init(SoftDelete);
-assertEquals(ent.has(SoftDelete), true);
+assert.equal(ent.has(SoftDelete), true);
 
 // And we can delete it to remove it.
 ent.delete(SoftDelete);
-assertEquals(ent.has(SoftDelete), false);
+assert.equal(ent.has(SoftDelete), false);

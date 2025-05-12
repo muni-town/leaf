@@ -5,6 +5,10 @@
   "license": "MIT or Apache-2.0",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "scripts": {
     "build": "pkgroll --minify --clean-dist --sourcemap && tsc"
   },

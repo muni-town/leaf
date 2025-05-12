@@ -1,6 +1,6 @@
 {
-  "name": "@muni-town/leaf-storage-deno-fs",
-  "version": "0.1.0-preview.5",
+  "name": "@muni-town/leaf-storage-node-fs",
+  "version": "0.1.0-preview.1",
   "private": false,
   "license": "MIT or Apache-2.0",
   "types": "./dist/index.d.ts",
@@ -13,11 +13,6 @@
     "build": "pkgroll --minify --clean-dist --sourcemap && tsc"
   },
   "dependencies": {
-    "@muni-town/leaf": "workspace:*",
-    "@std/fs": "jsr:@std/fs@1.0.10",
-    "@std/path": "jsr:@std/path@1.0.8"
-  },
-  "devDependencies": {
-    "@types/deno": "^2.3.0"
+    "@muni-town/leaf": "workspace:*"
   }
 }

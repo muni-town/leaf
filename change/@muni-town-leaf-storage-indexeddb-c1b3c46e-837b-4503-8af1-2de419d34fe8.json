@@ -1,0 +1,7 @@
+{
+  "type": "prerelease",
+  "comment": "fix: fix examples and setup what's necessary to run them with node.js.",
+  "packageName": "@muni-town/leaf-storage-indexeddb",
+  "email": "zicklag@katharostech.com",
+  "dependentChangeType": "prerelease"
+}
