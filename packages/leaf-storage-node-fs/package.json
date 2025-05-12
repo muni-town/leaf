@@ -1,6 +1,6 @@
 {
   "name": "@muni-town/leaf-storage-node-fs",
-  "version": "0.1.0-preview.1",
+  "version": "0.1.0-preview.2",
   "private": false,
   "license": "MIT or Apache-2.0",
   "types": "./dist/index.d.ts",

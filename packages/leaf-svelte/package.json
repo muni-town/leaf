@@ -1,6 +1,6 @@
 {
   "name": "@muni-town/leaf-svelte",
-  "version": "0.1.0-preview.5",
+  "version": "0.1.0-preview.6",
   "private": false,
   "license": "MIT or Apache-2.0",
   "types": "./dist/index.d.ts",
