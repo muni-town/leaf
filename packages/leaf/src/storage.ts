@@ -10,8 +10,23 @@ import {
   type Entity,
   type IntoEntityId,
   intoEntityId,
-} from "./index.ts";
+} from "./entity.ts";
 import { getOrDefault, sha256Base32 } from "./utils.ts";
+
+/** A policy describing how to  */
+export type StorageConfig = {
+  /** Whether this storage should be read from when loading documents. Defaults to `true`. */
+  read?: boolean;
+  /** Whether this storage should be written to when documents change. Defaults to `true`. */
+  write?: boolean;
+  /**
+   * Custom throttle function that can be used to debounce or throttle writes to this storage. The
+   * function should call `write()` when it wants to actually trigger the pending write to storage.
+   */
+  writeThrottle?: (write: () => void) => void;
+  /** The storage manager to use. */
+  manager: StorageManager;
+};
 
 /** The key to a record in the {@linkcode StorageInterface}. */
 export type StorageKey = string[];
