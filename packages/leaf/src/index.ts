@@ -484,22 +484,15 @@ export type StorageConfig = {
 export type PeerOption = StorageManager | Syncer1 | StorageConfig;
 
 /**
- * Options for configuring {@linkcode Peer.open}.
- *
- * @see defaultPeerOpenOptions;
+ * Options for configuring {@linkcode Peer["open"]}.
  */
 export type PeerOpenOptions = {
-  /** Whether when opening the entity we should wait to return until we have gotten an update from
-   * one of our syncers, or else the `awaitSyncTimeout` passes. */
-  awaitSync: boolean;
-  /** The amount of time we should wait for a peer to sync us an update before just continuing when
-   * `awaitSync` is `true`. */
-  awaitSyncTimeout: number;
-};
-/** Default {@linkcode PeerOpenOptions}. */
-export const defaultPeerOpenOptions = {
-  awaitSync: true,
-  awaitSyncTimeout: 1000,
+  /**
+   * If set, when opening an entity that does not exist locally, and cannot be synced from a peer,
+   * the function will wait the specified number of milliseconds before creating the entity and
+   * returning the newly created entity.
+   * */
+  createAfterTimeout: number;
 };
 
 /**
@@ -510,7 +503,7 @@ export class Peer {
   #syncers: Syncer1[] = [];
   #storages: StorageConfig[] = [];
   #storageUnsubscribers: Map<EntityIdStr, () => void> = new Map();
-  #entities: Map<EntityIdStr, WeakRef<Entity>> = new Map();
+  #entities: Map<EntityIdStr, Promise<WeakRef<Entity>>> = new Map();
   #finalizationRegistry: FinalizationRegistry<EntityIdStr>;
 
   constructor(...options: PeerOption[]) {
@@ -533,29 +526,60 @@ export class Peer {
    *
    * This will try to load the entity from all read storages and await on that before returning.
    *
+   * If the entity is not found the promise will remain pending.
+   *
    * It will also start syncing the entity with all of the peer's syncers.
    * */
   async open(
+    id: IntoEntityId,
+    options?: Partial<PeerOpenOptions>
+  ): Promise<Entity> {
+    // console.debug("calling open", intoEntityId(id).toString(), options);
+    return this.#open_raw(id, options);
+  }
+
+  async create(): Promise<Entity> {
+    // console.debug("calling create");
+    const entity = this.#open_raw();
+    // console.debug("created", (await entity).id.toString());
+    return entity;
+  }
+
+  async #open_raw(
     id?: IntoEntityId,
     opts?: Partial<PeerOpenOptions>
   ): Promise<Entity> {
-    const options = { ...defaultPeerOpenOptions, ...(opts || {}) };
+    const options = { ...(opts || {}) };
 
     const entId = id ? intoEntityId(id) : new EntityId();
+    // console.debug("opening raw", entId.toString(), options);
     const entIdStr = entId.toString();
 
-    const existingEnt = this.#entities.get(entIdStr)?.deref();
-    if (existingEnt) return existingEnt;
+    const existingEntPromise = this.#entities.get(entIdStr);
+    if (existingEntPromise) {
+      const weakExistingEnt = await existingEntPromise;
+      const existingEnt = weakExistingEnt.deref();
+      if (existingEnt) {
+        // console.debug("Already open", entId.toString());
+        return existingEnt;
+      } else {
+        this.#entities.delete(entIdStr);
+      }
+    }
 
     const entity = new Entity(entId);
     const weakEntity = new WeakRef(entity);
     this.#finalizationRegistry.register(entity, entIdStr, weakEntity);
-    this.#entities.set(entIdStr, weakEntity);
+    let resolveWeakEntity: (e: WeakRef<Entity>) => void = () => {};
+    this.#entities.set(entIdStr, new Promise((r) => (resolveWeakEntity = r)));
+
+    let loadedLocal = id ? false : true; // We've already "loaded" the entity locally if we just created it
     for (const storage of this.#storages) {
       if (storage.read !== false) {
-        await storage.manager.load(entity);
+        loadedLocal = loadedLocal || (await storage.manager.load(entity));
       }
     }
+
     for (const syncer of this.#syncers) {
       // TODO: We need to make sure the syncer only holds a weak reference to the entity so that we
       // can detect when it's no longer needed and can be closed.
@@ -583,32 +607,49 @@ export class Peer {
     });
     this.#storageUnsubscribers.set(entIdStr, unsubscribeStorage);
 
-    if (options.awaitSync) {
+    if (!loadedLocal) {
       let stopTimeout: () => void = () => {};
 
-      // Finish with the first to complete
-      await Promise.race([
-        // Wait until all syncers have responded with their latest data for the entity
-        (async () => {
-          await Promise.all(
-            this.#syncers.map(
-              (syncer) => syncer.syncing.get(entIdStr)?.awaitInitialLoad
-            )
-          );
-          stopTimeout();
-        })(),
-
-        // Just timeout if we don't get a response in time
-        new Promise((r) => {
-          const n = setTimeout(r, options.awaitSyncTimeout);
+      // Just timeout if we don't get a response in time
+      const timeoutPromise =
+        options.createAfterTimeout &&
+        new Promise<void>((r) => {
+          const n = setTimeout(r, options.createAfterTimeout);
           stopTimeout = () => {
             r(undefined);
             clearTimeout(n);
           };
-        }),
-      ]);
+        });
+
+      const race = [
+        // Wait until a syncer has responded with their latest data for the entity
+        (async () => {
+          const promises = this.#syncers.map((syncer) =>
+            (async () => {
+              // console.log("staring sync", entId.toString());
+              await syncer.syncing.get(entIdStr)?.awaitInitialLoad;
+              // console.log("done syncing", entId);
+              return;
+            })()
+          );
+          await Promise.race(promises);
+          stopTimeout();
+        })(),
+      ];
+      if (timeoutPromise) race.push(timeoutPromise);
+
+      // Finish with the first to complete
+      await Promise.race(race);
+    } else {
+      // console.debug("loaded local", entId.toString());
     }
 
+    resolveWeakEntity(weakEntity);
+    // console.debug(
+    //   "returning entity ",
+    //   entId.toString(),
+    //   entity.doc.changeCount()
+    // );
     return entity;
   }
 
@@ -649,12 +690,12 @@ export class Peer {
       // network / storage synchronization has not been finished yet. So we queue the actual cleanup
       // of the entity until _after_ the other callbacks have run, with queueMicrotask, so that the
       // caller can wait for the entity to actually finish getting persisted.
-      queueMicrotask(() => {
+      queueMicrotask(async () => {
         if (this) {
           const entId = id ? intoEntityId(id) : new EntityId();
           const entIdStr = entId.toString();
 
-          const entity = this.#entities.get(entIdStr)?.deref();
+          const entity = (await this.#entities.get(entIdStr))?.deref();
 
           if (entity) {
             // This will trigger a write to storage
