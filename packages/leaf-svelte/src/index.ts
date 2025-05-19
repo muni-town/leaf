@@ -1,10 +1,10 @@
 /**
  * A svelte reactivity integration for Leaf. See {@linkcode SveltePeer} for usage.
- * 
+ *
  * @module @muni-town/leaf-svelte
  */
 
-import { type Entity, type IntoEntityId, Peer, type PeerOpenOptions } from "@muni-town/leaf";
+import { type Entity, type IntoEntityId, Peer, PeerOpenOptions } from "@muni-town/leaf";
 import { createSubscriber } from "svelte/reactivity";
 
 /**
@@ -19,11 +19,17 @@ import { createSubscriber } from "svelte/reactivity";
 export class SveltePeer extends Peer {
   // Override the entity open function
   override async open(
-    id?: IntoEntityId,
-    opts?: Partial<PeerOpenOptions>
+    id: IntoEntityId,
+    options?: Partial<PeerOpenOptions>,
   ): Promise<Entity> {
     // Get the entity like normal
-    const entity = await super.open(id, opts);
+    const entity = await super.open(id, options);
+    // And wrap it in a reactive entity
+    return reactiveEntity(entity);
+  }
+  override async create(): Promise<Entity> {
+    // Get the entity like normal
+    const entity = await super.create();
     // And wrap it in a reactive entity
     return reactiveEntity(entity);
   }

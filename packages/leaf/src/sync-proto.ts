@@ -48,7 +48,7 @@ export class Sync1BinaryWrapper implements Sync1Interface {
 
   subscribe(
     entityId: EntityIdStr,
-    snapshot: Uint8Array,
+    versionVector: Uint8Array,
     handleUpdate: Subscriber
   ): () => void {
     const subs = getOrDefault(this.#subscribers, entityId, []);
@@ -57,7 +57,7 @@ export class Sync1BinaryWrapper implements Sync1Interface {
     this.#binaryInterface.send(
       encodeClientMessage({
         type: "subscribe",
-        snapshot,
+        versionVector,
         entityId,
       })
     );
@@ -106,7 +106,7 @@ export class SuperPeer1BinaryWrapper implements Sync1BinaryInterface {
     } else if (data.type == "subscribe") {
       const unsubscribe = this.#superPeer.subscribe(
         data.entityId,
-        data.snapshot,
+        data.versionVector,
         (entityId, update) => {
           this.#receiver(
             encodeServerResponse({
@@ -146,7 +146,7 @@ export const clientMessage = type({
   .or({
     type: "'subscribe'",
     entityId: "string" as type.cast<EntityIdStr>,
-    snapshot: type.instanceOf(Uint8Array<ArrayBufferLike>),
+    versionVector: type.instanceOf(Uint8Array<ArrayBufferLike>),
   })
   .or({
     type: "'sendUpdate'",

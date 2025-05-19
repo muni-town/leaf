@@ -1,0 +1,7 @@
+{
+  "type": "prerelease",
+  "comment": "feat!: improve synchornization bandwidth and entity open logic.",
+  "packageName": "@muni-town/leaf",
+  "email": "zicklag@katharostech.com",
+  "dependentChangeType": "prerelease"
+}

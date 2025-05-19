@@ -11,10 +11,12 @@
  */
 
 import {
+  decodeImportBlobMeta,
   Entity,
   type EntityIdStr,
   LoroDoc,
   type StorageConfig,
+  VersionVector,
 } from "./index.ts";
 import { StorageManager } from "./storage.ts";
 import { getOrDefault } from "./utils.ts";
@@ -144,12 +146,24 @@ export class Syncer1 {
     // Subscribe to updates from the network and send our latest snapshot
     const unsubscribeNet = this.inter.subscribe(
       id,
-      ent.doc.export({ mode: "snapshot" }),
+      ent.doc.version().encode(),
       (_id, update) => {
-        initialLoaded();
         const ent = entity.deref();
         if (ent) {
           ent.doc.import(update);
+          initialLoaded();
+
+          // Check to see if we have versions that aren't present on the sync peer
+          const newVersionVector = ent.doc.version();
+          const { partialEndVersionVector: importVersionVector } =
+            decodeImportBlobMeta(update, false);
+          if (importVersionVector.compare(newVersionVector) !== 0) {
+            // Send an update with the commits we have that they don't have
+            this.inter.sendUpdate(
+              id,
+              ent.doc.export({ mode: "update", from: importVersionVector })
+            );
+          }
         } else {
           this.unsync(id);
         }
@@ -261,71 +275,80 @@ export class SuperPeer1 implements Sync1Interface {
 
   subscribe(
     entityId: EntityIdStr,
-    snapshot: Uint8Array,
+    versionVector: Uint8Array | undefined,
     handleUpdate: Subscriber
   ): () => void {
+    // Trigger an async task
     (async () => {
       try {
-        const incomingEnt = new Entity(entityId);
-        incomingEnt.doc.import(snapshot);
-
-        const ent = new Entity(entityId);
-        for (const storage of this.#storages) {
-          if (storage.read !== false) {
-            await storage.manager.load(ent);
-          }
+        // Try to parse the incoming entity version if specified
+        let incomingVersion: VersionVector | undefined;
+        try {
+          incomingVersion =
+            versionVector && VersionVector.decode(versionVector);
+        } catch (e) {
+          console.trace(
+            "Invalid version vector provided when subscribing to entity.",
+            e
+          );
         }
-        const currentFrontiers = ent.doc.frontiers();
-        ent.doc.import(snapshot);
-        const newFrontiers = ent.doc.frontiers();
 
-        // If the sync gave us new data
-        const cmp = ent.doc.cmpFrontiers(currentFrontiers, newFrontiers);
-        if (cmp === -1 || cmp === undefined) {
-          // Update storage
+        // Load the requested entity from local storage
+        const ent = new Entity(entityId);
+        let loaded = false;
+
+        try {
           for (const storage of this.#storages) {
-            if (storage.write !== false) {
-              // TODO: consider **not** awaiting this.
-              // If we don't we need to catch possible exceptions and prevent it from
-              // crashing the runtime if there's an error. Awaiting it allows the caller
-              // to handle the exception which is probably desirable, but not awaiting it
-              // allows us to move on and not wait for storage to finish before syncing
-              // to subscribers which may be desirable.
-              await storage.manager.save(ent);
+            if (storage.read !== false) {
+              loaded = (await storage.manager.load(ent)) || loaded;
             }
           }
+        } catch (e) {
+          console.trace("Error loading entity from storage", e);
+        }
 
-          // And sync it to all subscribers
-          const subscriberUpdate = ent.doc.export({
-            mode: "update",
-            from: ent.doc.frontiersToVV(currentFrontiers),
-          });
-          for (const sub of getOrDefault(this.#subscribers, entityId, [])) {
-            sub(entityId, subscriberUpdate);
+        // If we had the entity locally
+        if (loaded) {
+          // If the client specified a version of the entity that they currently have locally
+          if (incomingVersion) {
+            // Return the updates that the peer didn't already have.
+            handleUpdate(
+              entityId,
+              ent.doc.export({
+                mode: "update",
+                from: incomingVersion,
+              })
+            );
+
+            // If the client doesn't have any data for this entity yet
+          } else {
+            // Return a complete snapshot of the entity
+            handleUpdate(entityId, ent.doc.export({ mode: "snapshot" }));
           }
         }
 
-        // Return the updates that the peer didn't already have.
-        handleUpdate(
-          entityId,
-          ent.doc.export({ mode: "update", from: incomingEnt.doc.version() })
-        );
+        // Free memory
         ent.free();
-        incomingEnt.free();
+        incomingVersion && incomingVersion.free();
       } catch (e) {
         console.error(new Error(`Error syncing snapshots: ${e}`));
       }
     })();
 
+    // Add the client's `handleUpdate` function to our list of subscribers
     const subs = getOrDefault(this.#subscribers, entityId, []);
     subs.push(handleUpdate);
 
+    // Return the unsubscribe function that can be used to stop us from calling the client's
+    // `handleUpdate` function every time the entity changes.
     return () => {
       const subs = getOrDefault(this.#subscribers, entityId, []);
-      this.#subscribers.set(
-        entityId,
-        subs.filter((x) => x !== handleUpdate)
-      );
+      const newSubs = subs.filter((x) => x !== handleUpdate);
+      if (newSubs.length > 0) {
+        this.#subscribers.set(entityId, newSubs);
+      } else {
+        this.#subscribers.delete(entityId);
+      }
     };
   }
 
@@ -333,12 +356,10 @@ export class SuperPeer1 implements Sync1Interface {
     (async () => {
       try {
         const ent = new Entity(entityId);
-        let n = 0;
         // Load ent from storage
         for (const storage of this.#storages) {
           if (storage.read !== false) {
             await storage.manager.load(ent);
-            n += 1;
           }
         }
         const currentFrontiers = ent.doc.frontiers();
