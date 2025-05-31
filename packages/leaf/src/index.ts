@@ -16,6 +16,9 @@
  * @module @muni-town/leaf
  */
 
+import encodeBase32 from "base32-encode";
+import decodeBase32 from "base32-decode";
+
 export * from "loro-crdt";
 export * from "./sync1.ts";
 export * from "./storage.ts";
@@ -618,25 +621,29 @@ export class Peer {
           };
         });
 
-      const race = [
-        // Wait until a syncer has responded with their latest data for the entity
-        (async () => {
-          const promises = this.#syncers.map((syncer) =>
-            (async () => {
-              // console.log("staring sync", entId.toString());
-              await syncer.syncing.get(entIdStr)?.awaitInitialLoad;
-              // console.log("done syncing", entId);
-              return;
-            })()
-          );
-          await Promise.race(promises);
-          stopTimeout();
-        })(),
-      ];
-      if (timeoutPromise) race.push(timeoutPromise);
+      if (this.#syncers.length > 0) {
+        const syncPromises = this.#syncers
+          .map((syncer) => syncer.syncing.get(entIdStr)?.awaitInitialLoad)
+          .filter((p): p is Promise<void> => !!p);
 
-      // Finish with the first to complete
-      await Promise.race(race);
+        const race = [];
+
+        if (syncPromises.length > 0) {
+          race.push(Promise.race(syncPromises).then(stopTimeout));
+        }
+
+        if (timeoutPromise) {
+          race.push(timeoutPromise);
+        }
+
+        // Only wait if there's something to wait on
+        if (race.length > 0) {
+          await Promise.race(race);
+        }
+      } else if (timeoutPromise) {
+        // No syncers, but a timeout is specified—wait for it to expire before continuing
+        await timeoutPromise;
+      }
     } else {
       // console.debug("loaded local", entId.toString());
     }
