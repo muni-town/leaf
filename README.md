@@ -25,23 +25,23 @@ We don't want to invent anything that we don't have to; we are going to try buil
 
 ## Entity-Component Model
 
-A core part of our strategy for interoperability is the use of an Entity-Component data model. The concept is that every atomic, sharable "thing", from the perspective of the capability / permissions system, is called an "entity", and all the data for that entity is made up of a set of "components". Each component has it's own schema that defines the expected / valid data for that component.
+A core part of our strategy for interoperability is the use of an Entity-Component data model. The concept is that every atomic, sharable "thing", from the perspective of the capability / permissions system, is called an "entity", and all the data for that entity is made up of a set of "components". Each component has its own schema that defines the expected / valid data for that component.
 
 By breaking the data for entities into components such `Name`, `Description`, and `Image`, we allow apps to _incrementally understand_ an entity, based on the components that it understands. Whether an entity is a blog post, a wiki page, or even a user profile, website, or organization, all those entities will most-likely have a `Name`, `Description`, and maybe an `Image`. This allows applications to display a preview for that entity, regardless of the fact that it may not know how to edit the entity, or display a richer view of it.
 
-By allowing applications to unerstand entities through components we allow for a level of interoperability that is very extensible, since every app can make it's own components when necessary, but at the same time a component ecosystem can develop where many apps use the same standard components for certain things like `Name` and `Description`, so that the apps can have at least a minimal level of inter-operability, and the more apps that converge on the same components, the better they inter-op with each-other.
+By allowing applications to unerstand entities through components we allow for a level of interoperability that is very extensible, since every app can make its own components when necessary, but at the same time a component ecosystem can develop where many apps use the same standard components for certain things like `Name` and `Description`, so that the apps can have at least a minimal level of inter-operability, and the more apps that converge on the same components, the better they inter-op with each-other.
 
 ## Planned Applications
 
 Leaf is the culmination of our core stack for building our own applications. We are splitting it out from our applications so that we can more easily build more applications with it and allow other people to use it, too. We aren't just focusing on building a framework, we are allowing the framework to grow out of the real-world needs of our applications.
 
-We at the Muni Town org are currently planning on buiding the [Roomy](https://github.com/muni-town/roomy) and [Weird](https://github.com/muni-town/weird) applications on top of Leaf, but since the applications are in development now and Leaf and it's core technology like Keyhive are not read for use yet, Roomy and Weird are being developed on temporary alternatives.
+We at the Muni Town org are currently planning on buiding the [Roomy](https://github.com/muni-town/roomy) and [Weird](https://github.com/muni-town/weird) applications on top of Leaf, but since the applications are in development now and Leaf and its core technology like Keyhive are not read for use yet, Roomy and Weird are being developed on temporary alternatives.
 
 The plan is to migrate both apps to Leaf as soon as it is ready to take the load.
 
 ## Further Reading
 
-The ideas for Leaf have developed and changed a lot since it's initial conception. It will probably continue to change a lot, but it can be helpful to have some more background on where it's come from and how it's developed. The following articles were written as we worked on Leaf. Most are out-of-date in some way but many of the ideas and motivation remain, and some of the ideas are sitll a part of future plans. These are ordered roughly by current relevance, not chronologically.
+The ideas for Leaf have developed and changed a lot since its initial conception. It will probably continue to change a lot, but it can be helpful to have some more background on where it's come from and how it's developed. The following articles were written as we worked on Leaf. Most are out-of-date in some way but many of the ideas and motivation remain, and some of the ideas are sitll a part of future plans. These are ordered roughly by current relevance, not chronologically.
 
 Most of these were written before Keyhive was a part of the plan, and we were thinking of building on top of [Willow](https://willowprotocol.org/) instead.
 
