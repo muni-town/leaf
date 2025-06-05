@@ -10,10 +10,9 @@
  * @module
  */
 
+import { Entity, EntityIdStr } from "./entity.ts";
 import {
   decodeImportBlobMeta,
-  Entity,
-  type EntityIdStr,
   LoroDoc,
   type StorageConfig,
   VersionVector,

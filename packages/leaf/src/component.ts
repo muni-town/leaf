@@ -6,7 +6,6 @@ import {
   LoroText,
   LoroTree,
 } from "loro-crdt";
-
 /** A Loro CRDT type that may be used as the type of a {@link defComponent|component}. */
 export type ComponentType =
   | LoroCounter
