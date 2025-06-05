@@ -60,6 +60,8 @@ Getting started:
 pnpm build # Compile the packages
 ```
 
+This repository uses pnpm with [JSR packages](https://jsr.io/docs/with/node), which work best with pnpm version 10.9 or higher.
+
 ### Running the Example
 
 The examples are written in TypeScript and can be run like:
