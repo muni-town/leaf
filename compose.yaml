@@ -1,0 +1,83 @@
+services:
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    environment:
+      ZO_ROOT_USER_EMAIL: root@example.com
+      ZO_ROOT_USER_PASSWORD: password
+      ZO_ROOT_USER_TOKEN: password
+      ZO_DATA_DIR: /data
+    ports:
+      - 5080:5080
+      - 5081:5081
+    volumes:
+      - openobserve:/data
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: --config=env:CONFIG
+    ports:
+      - 4317:4317
+      - 4318:4318
+      - 55679:55679
+    environment:
+      CONFIG: |
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+              http:
+                endpoint: 0.0.0.0:4318
+
+        exporters:
+          otlp/openobserve:
+            endpoint: openobserve:5081
+            headers:
+              Authorization: Basic cm9vdEBleGFtcGxlLmNvbTpwYXNzd29yZA==
+              organization: default
+              stream-name: default
+            tls:
+              insecure: true
+        extensions:
+          zpages:
+            endpoint: 0.0.0.0:55679
+        service:
+          extensions: [zpages]
+          pipelines:
+            logs:
+              receivers: [otlp]
+              exporters: [otlp/openobserve]
+            traces:
+              receivers: [otlp]
+              exporters: [otlp/openobserve]
+            metrics:
+              receivers: [otlp]
+              exporters: [otlp/openobserve]
+
+  iggy:
+    image: iggyrs/iggy:latest
+    environment:
+      IGGY_SYSTEM_LOGGING_SYSINFO_PRINT_INTERVAL: '0s'
+      IGGY_ROOT_USERNAME: iggy
+      IGGY_ROOT_PASSWORD: password
+      IGGY_TELEMETRY_ENABLED: true
+      IGGY_TELEMETRY_LOGS_TRANSPORT: http
+      IGGY_TELEMETRY_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
+      IGGY_TELEMETRY_TRACES_TRANSPORT: http
+      IGGY_TELEMETRY_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+    ports:
+      - "8090:8090" # TCP API
+      - "3100:3000" # HTTP API
+    volumes:
+      - iggy:/iggy/local_data
+
+  iggy-web-ui:
+    image: iggyrs/iggy-web-ui:latest
+    environment:
+      - PUBLIC_IGGY_API_URL=http://iggy:3000
+    ports:
+      - "3050:3050"
+
+volumes:
+  openobserve:
+  iggy:
