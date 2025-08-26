@@ -1,15 +1,31 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use clap::Parser;
 use futures_util::StreamExt;
+use tokio::sync::Notify;
 
 use crate::cli::Args;
 
 mod cli;
+mod http;
 mod iggy;
 mod otel;
 
+#[derive(Default)]
+struct ExitSignal(Arc<Notify>);
+
+impl ExitSignal {
+    async fn wait_for_exit_signal(&self) {
+        self.0.notified().await;
+    }
+
+    fn trigger_exit_signal(&self) {
+        self.0.notify_waiters();
+    }
+}
+
 static ARGS: LazyLock<Args> = LazyLock::new(Args::parse);
+static EXIT_SIGNAL: LazyLock<ExitSignal> = LazyLock::new(ExitSignal::default);
 
 #[tokio::main]
 #[tracing::instrument]
@@ -18,29 +34,17 @@ async fn main() {
     let _ = &*ARGS;
 
     // Initialize logging & telemetry
-    let g = otel::init();
+    let _g = otel::init();
 
-    let meter = g.meter_provider.clone();
-    let tracer = g.tracer_provider.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.unwrap();
-        if let Err(e) = meter.force_flush() {
-            eprintln!("Error shutting down otel meter: {e}");
-        }
-        if let Err(e) = tracer.force_flush() {
-            eprintln!("Error shutting down otel tracer: {e}");
-        }
-        if let Err(e) = meter.shutdown() {
-            eprintln!("Error shutting down otel meter: {e}");
-        }
-        if let Err(e) = tracer.shutdown() {
-            eprintln!("Error shutting down otel tracer: {e}");
-        }
-        std::process::exit(0);
+        EXIT_SIGNAL.trigger_exit_signal();
     });
 
     let result: anyhow::Result<()> = async {
         start_server().await?;
+
+        wait_for_shutdown().await;
 
         Ok(())
     }
@@ -57,28 +61,13 @@ async fn start_server() -> anyhow::Result<()> {
 
     let iggy = self::iggy::build_client().await?;
 
-    let mut consumer = iggy
-        .consumer("leaf-server-test", "leaf", "test", 1)?
-        .create_consumer_group_if_not_exists()
-        .auto_join_consumer_group()
-        .build();
-
-    consumer.init().await?;
-
-    tokio::spawn(async move {
-        while let Some(message) = consumer.next().await {
-            match message {
-                Ok(message) => {
-                    let message = message
-                        .message
-                        .payload_as_string()
-                        .unwrap_or_else(|_| "[binary]".to_string());
-                    tracing::info!(?message, "Recieved message from Iggy")
-                }
-                Err(e) => tracing::error!("Error getting message from Iggy: {e}"),
-            }
-        }
-    });
+    http::start_api(iggy).await?;
 
     Ok(())
+}
+
+#[tracing::instrument]
+async fn wait_for_shutdown() {
+    EXIT_SIGNAL.wait_for_exit_signal().await;
+    tracing::info!("Received exit signal, shutting down.");
 }
