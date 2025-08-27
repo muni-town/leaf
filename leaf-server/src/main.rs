@@ -1,7 +1,6 @@
 use std::sync::{Arc, LazyLock};
 
 use clap::Parser;
-use futures_util::StreamExt;
 use tokio::sync::Notify;
 
 use crate::cli::Args;
@@ -59,7 +58,7 @@ async fn main() {
 async fn start_server() -> anyhow::Result<()> {
     tracing::info!(args=?&*ARGS, "Starting Leaf server");
 
-    let iggy = self::iggy::build_client().await?;
+    let iggy = self::iggy::connect().await?;
 
     http::start_api(iggy).await?;
 

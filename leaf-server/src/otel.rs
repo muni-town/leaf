@@ -56,7 +56,7 @@ fn init_tracer_provider() -> SdkTracerProvider {
         .build()
         .unwrap();
 
-    SdkTracerProvider::builder()
+    let provider = SdkTracerProvider::builder()
         // Customize sampling strategy
         .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
             1.0,
@@ -65,7 +65,11 @@ fn init_tracer_provider() -> SdkTracerProvider {
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(resource())
         .with_batch_exporter(exporter)
-        .build()
+        .build();
+
+    global::set_tracer_provider(provider.clone());
+
+    provider
 }
 
 // Initialize tracing-subscriber and return OtelGuard for opentelemetry-related termination processing
