@@ -1,18 +1,14 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use iggy::prelude::IggyClient;
-use opentelemetry::{
-    Context,
-    global::{self, ObjectSafeSpan},
-    trace::{FutureExt, Tracer, get_active_span, mark_span_as_active},
-};
 use rmpv::Value;
 use salvo::prelude::*;
 use socketioxide::{
     SocketIo,
     extract::{AckSender, Data, SocketRef},
 };
-use tracing::instrument;
+use tokio::sync::Notify;
+use tracing::{Span, instrument};
 
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
@@ -80,31 +76,37 @@ async fn index() -> &'static str {
 
 #[instrument(skip(socket))]
 async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
-    let ctx = Context::current();
-    dbg!(&ctx);
-
-    tracing::info!(ns = socket.ns(), ?socket.id, "Socket.IO connected");
+    let span = Span::current();
     socket.emit("auth", &data).ok();
 
-    let ctx_ = ctx.clone();
+    let span_ = span.clone();
     socket.on(
         "message",
         async move |socket: SocketRef, Data::<Value>(data)| {
-            let _c = ctx_.attach();
+            let _s = tracing::info_span!(parent: &span_, "handle event", %data).entered();
 
-            tracing::info!(?data, "Received event");
-            socket.emit("message-back", &data).ok();
+            if data.as_str() == Some("err") {
+                tracing::error!("got an error")
+            } else {
+                socket.emit("message-back", &data).ok();
+            }
         },
     );
 
-    let ctx_ = ctx.clone();
     socket.on(
         "message-with-ack",
         async |Data::<Value>(data), ack: AckSender| {
-            let _c = ctx_.attach();
-
             tracing::info!(?data, "Received event");
             ack.send(&data).ok();
         },
     );
+
+    // Wait for disconnect, this is important to make sure the socket_io_connection tracing span
+    // lasts longer than it's children and is recorded as such.
+    let notify = Arc::new(Notify::new());
+    let notify_ = notify.clone();
+    socket.on_disconnect(move || {
+        notify_.notify_one();
+    });
+    notify.notified().await;
 }
