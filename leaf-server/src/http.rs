@@ -149,6 +149,8 @@ fn get_token(data: &Value) -> anyhow::Result<&str> {
         .ok_or_else(|| anyhow::format_err!("Auth token not found in socket.io connection"))
 }
 
+/// Validate that an ATProto JWT auth token is valid.
+#[instrument(skip(token))]
 async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
     let claims_base64 = token
         .split('.')
