@@ -2,6 +2,7 @@
 name = "leaf"
 version = "0.1.0"
 edition = "2024"
+license = "MPL-2.0"
 
 [dependencies]
 # Event Streaming
@@ -34,10 +35,11 @@ tower = { version = "0.5.2", default-features = false }
 tower-http = { version = "0.6.6", features = ["cors"] }
 rmpv = { version = "1.3.0", features = ["with-serde"] }
 sea-query = "0.32.7"
-# libsql = "0.9.21"
+libsql = "0.9.21"
 atproto-oauth = "0.11.2"
 atproto-identity = "0.11.2"
 reqwest = { version = "0.12.23", features = [
     "rustls-tls-native-roots",
     "system-proxy",
 ], default-features = false }
+wasmer = "6.0.1"
