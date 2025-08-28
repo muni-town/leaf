@@ -1,9 +1,9 @@
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use libsql::Connection;
-use tracing::Instrument;
+use tracing::instrument;
 
-use crate::{ARGS, EXIT_SIGNAL};
+use crate::ARGS;
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
@@ -23,54 +23,31 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub async fn initialize(&self) {
-        let result = async move {
-            tokio::fs::create_dir_all(&ARGS.data_dir).await?;
-            let database = libsql::Builder::new_local(ARGS.data_dir.join("leaf.db"))
-                .build()
-                .await?;
-            let c = database.connect()?;
-            tracing::info!("database connected");
+    #[instrument(skip(self), err)]
+    pub async fn initialize(&self) -> anyhow::Result<()> {
+        tokio::fs::create_dir_all(&ARGS.data_dir).await?;
+        let database = libsql::Builder::new_local(ARGS.data_dir.join("leaf.db"))
+            .build()
+            .await?;
+        let c = database.connect()?;
+        tracing::info!("database connected");
 
-            sql::init_database_schema(&c).await?;
+        sql::init_database_schema(&c).await?;
 
-            self.conn.0.get_or_init(|| c);
+        self.conn.0.get_or_init(|| c);
 
-            Ok::<_, anyhow::Error>(())
-        }
-        .instrument(tracing::info_span!("connect_to_database"))
-        .await;
-
-        if let Err(e) = result {
-            tracing::error!("Error connecting to database: {e}");
-            EXIT_SIGNAL.trigger_exit_signal();
-        }
+        Ok(())
     }
 }
 
 mod sql {
     use libsql::Connection;
-    // use sea_query::*;
     use tracing::instrument;
 
     #[instrument(skip(db))]
     pub async fn init_database_schema(db: &Connection) -> anyhow::Result<()> {
-        // let sql = Table::create()
-        //     .table(Test::Table)
-        //     .if_not_exists()
-        //     .col(ColumnDef::new(Test::Id).uuid().not_null().primary_key())
-        //     .col(ColumnDef::new(Test::Name).string().not_null())
-        //     .to_string(SqliteQueryBuilder);
-
-        // db.execute(&sql, ()).await?;
-
+        db.execute_transactional_batch(include_str!("schema/schema_00.sql"))
+            .await?;
         Ok(())
     }
-
-    // #[derive(Iden)]
-    // enum Test {
-    //     Table,
-    //     Id,
-    //     Name,
-    // }
 }

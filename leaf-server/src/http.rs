@@ -83,7 +83,6 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
     let did = match did {
         Ok(did) => did,
         Err(error) => {
-            tracing::error!(%error, "Error validating auth token");
             socket
                 .emit("error", &format!("Error validating auth token: {error}"))
                 .ok();
@@ -150,7 +149,7 @@ fn get_token(data: &Value) -> anyhow::Result<&str> {
 }
 
 /// Validate that an ATProto JWT auth token is valid.
-#[instrument(skip(token))]
+#[instrument(skip(token), err)]
 async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
     let claims_base64 = token
         .split('.')
@@ -160,6 +159,7 @@ async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
     let Some(did) = claims.jose.issuer else {
         anyhow::bail!("JWT token issuer is missing")
     };
+    Span::current().set_attribute("did", did.clone());
 
     let doc = atproto_identity::plc::query(&CLIENT, "plc.directory", &did).await?;
 

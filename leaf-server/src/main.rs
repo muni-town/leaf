@@ -65,7 +65,7 @@ async fn start_server() -> anyhow::Result<()> {
     tracing::info!(args=?&*ARGS, "Starting Leaf server");
 
     // Initialize storage
-    STORAGE.initialize().await;
+    STORAGE.initialize().await?;
 
     // Connect to Iggy
     let iggy = self::iggy::connect().await?;
