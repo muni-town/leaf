@@ -65,8 +65,7 @@ async fn start_server() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tracing::instrument]
 async fn wait_for_shutdown() {
     EXIT_SIGNAL.wait_for_exit_signal().await;
-    tracing::info!("Received exit signal, shutting down.");
+    let _span = tracing::info_span!("server shutdown").entered();
 }

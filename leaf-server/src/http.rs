@@ -27,9 +27,12 @@ pub async fn start_api(_iggy: IggyClient) -> anyhow::Result<()> {
         .layer(CorsLayer::permissive()) // Enable CORS policy
         .layer(layer); // Mount Socket.IO
 
+    // TODO: add richer request information to tracing.
     let router = Router::new()
         .push(Router::with_path("/socket.io").goal(layer.compat()))
-        .push(Router::new().get(index));
+        .push(Router::with_path("/xrpc/space.roomy.token.v0").post(token_endpoint))
+        .push(Router::new().get(http_index))
+        .hoop(Logger::new());
 
     let server = Server::new(acceptor);
     let handle = server.handle();
@@ -43,35 +46,19 @@ pub async fn start_api(_iggy: IggyClient) -> anyhow::Result<()> {
 
     tokio::spawn(server.serve(router));
 
-    // let mut consumer = iggy
-    //     .consumer("leaf-server-test", "leaf", "test", 1)?
-    //     .create_consumer_group_if_not_exists()
-    //     .auto_join_consumer_group()
-    //     .build();
-
-    // consumer.init().await?;
-
-    // tokio::spawn(async move {
-    //     while let Some(message) = consumer.next().await {
-    //         match message {
-    //             Ok(message) => {
-    //                 let message = message
-    //                     .message
-    //                     .payload_as_string()
-    //                     .unwrap_or_else(|_| "[binary]".to_string());
-    //                 tracing::info!(?message, "Recieved message from Iggy")
-    //             }
-    //             Err(e) => tracing::error!("Error getting message from Iggy: {e}"),
-    //         }
-    //     }
-    // });
-
     Ok(())
 }
 
 #[handler]
-async fn index() -> &'static str {
+#[instrument]
+async fn http_index() -> &'static str {
     "Leaf Server API"
+}
+
+#[handler]
+#[instrument]
+async fn token_endpoint() -> &'static str {
+    "token"
 }
 
 #[instrument(skip(socket))]
