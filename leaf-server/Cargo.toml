@@ -43,3 +43,4 @@ reqwest = { version = "0.12.23", features = [
     "system-proxy",
 ], default-features = false }
 wasmer = "6.0.1"
+serde_json = "1.0.143"

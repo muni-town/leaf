@@ -1,5 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
+use atproto_identity::model::VerificationMethod;
+use atproto_oauth::{encoding::FromBase64, jwt::Claims};
 use iggy::prelude::IggyClient;
 use rmpv::Value;
 use salvo::prelude::*;
@@ -12,6 +17,7 @@ use tracing::{Span, instrument};
 
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{ARGS, EXIT_SIGNAL};
 
@@ -61,10 +67,43 @@ async fn token_endpoint() -> &'static str {
     "token"
 }
 
-#[instrument(skip(socket))]
+pub static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+#[instrument(skip(socket, data))]
 async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
     let span = Span::current();
-    socket.emit("auth", &data).ok();
+
+    // Get the auth token from incomming connection
+    let did = async move {
+        let token = get_token(&data)?;
+        let did = verify_auth_token(token).await?;
+        anyhow::Ok(did)
+    }
+    .await;
+    let did = match did {
+        Ok(did) => did,
+        Err(error) => {
+            tracing::error!(%error, "Error validating auth token");
+            socket
+                .emit("error", &format!("Error validating auth token: {error}"))
+                .ok();
+            if let Err(error) = socket.disconnect() {
+                tracing::error!(%error, "Error disconnecting socket");
+            }
+            return;
+        }
+    };
+
+    tracing::info!(%did, "Successfully authenticated user");
+    span.set_attribute("did", did.clone());
+    socket
+        .emit(
+            "autenticated",
+            &serde_json::json!({
+                "did": did,
+            }),
+        )
+        .ok();
 
     let span_ = span.clone();
     socket.on(
@@ -96,4 +135,47 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
         notify_.notify_one();
     });
     notify.notified().await;
+}
+
+/// Extract the auth token from the incomming socket.io connection data
+fn get_token(data: &Value) -> anyhow::Result<&str> {
+    data.as_map()
+        .and_then(|m| {
+            m.iter().find_map(|x| match (x.0.as_str(), x.1.as_str()) {
+                (Some("token"), Some(value)) => Some(value),
+                _ => None,
+            })
+        })
+        .ok_or_else(|| anyhow::format_err!("Auth token not found in socket.io connection"))
+}
+
+async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
+    let claims_base64 = token
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| anyhow::format_err!("Invalid format for JWT auth token"))?;
+    let claims = Claims::from_base64(claims_base64)?;
+    let Some(did) = claims.jose.issuer else {
+        anyhow::bail!("JWT token issuer is missing")
+    };
+
+    let doc = atproto_identity::plc::query(&CLIENT, "plc.directory", &did).await?;
+
+    let public_key_multibase = doc
+        .verification_method
+        .into_iter()
+        .find_map(|x| match x {
+            VerificationMethod::Multikey {
+                public_key_multibase,
+                ..
+            } => Some(public_key_multibase),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::format_err!("Could not find signing key for DID: {did}"))?;
+
+    let key_data = atproto_identity::key::identify_key(&public_key_multibase)?;
+
+    atproto_oauth::jwt::verify(token, &key_data)?;
+
+    Ok(did)
 }

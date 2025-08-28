@@ -2907,6 +2907,7 @@ dependencies = [
  "rmpv",
  "salvo",
  "sea-query",
+ "serde_json",
  "socketioxide",
  "tokio",
  "tower 0.5.2",
