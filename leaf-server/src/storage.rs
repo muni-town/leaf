@@ -10,7 +10,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 pub use conv::*;
 mod conv;
 
-use crate::ARGS;
+use crate::{ARGS, wasm::validate_wasm};
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
@@ -57,12 +57,32 @@ impl Storage {
     }
 
     #[instrument(skip(self), err)]
+    pub async fn upload_wasm(&self, owner: &str, blob: Vec<u8>) -> anyhow::Result<()> {
+        validate_wasm(&blob)?;
+        let trans = self.conn.transaction().await?;
+        let hash = blake3::hash(&blob);
+        trans
+            .execute(
+                r#"insert into wasm_blobs (hash, blob) values (:hash, :blob)"#,
+                ((":hash", hash.as_bytes().to_vec()), (":blob", blob)),
+            )
+            .await?;
+        trans
+            .execute(
+                r#"insert into staged_wasm (owner, hash) values (:owner, :hash)"#,
+                ((":owner", owner), (":hash", hash.as_bytes().to_vec())),
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[instrument(skip(self), err)]
     pub async fn garbage_collect_wasm(&self) -> anyhow::Result<()> {
         let mut deleted = self
             .conn
             .execute_batch(
                 r#"
-                delete from staged_wasm where (unixepoch() - timestamp) > 5 returning owner, hash;
+                delete from staged_wasm where (unixepoch() - timestamp) > 500 returning owner, hash;
                 delete from wasm_blobs where not exists (
                     select 1 from staged_wasm s where s.hash=wasm_blobs.hash
                         union
@@ -113,7 +133,7 @@ pub fn start_background_tasks() {
     // Garbage collect WASM files periodically
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(500)).await;
             STORAGE.garbage_collect_wasm().await.ok();
         }
     });

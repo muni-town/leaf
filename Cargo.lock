@@ -2920,6 +2920,7 @@ dependencies = [
  "atproto-identity",
  "atproto-oauth",
  "blake3",
+ "bytes",
  "clap",
  "futures-util",
  "hex",

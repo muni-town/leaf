@@ -10,7 +10,7 @@ use rmpv::Value;
 use salvo::prelude::*;
 use socketioxide::{
     SocketIo,
-    extract::{AckSender, Data, SocketRef},
+    extract::{Data, SocketRef},
 };
 use tokio::sync::Notify;
 use tracing::{Span, instrument};
@@ -18,6 +18,8 @@ use tracing::{Span, instrument};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+mod connection;
 
 use crate::{ARGS, EXIT_SIGNAL};
 
@@ -71,8 +73,6 @@ pub static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::ne
 
 #[instrument(skip(socket, data))]
 async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
-    let span = Span::current();
-
     // Get the auth token from incomming connection
     let did = async move {
         let token = get_token(&data)?;
@@ -94,37 +94,20 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
     };
 
     tracing::info!(%did, "Successfully authenticated user");
+    let span = Span::current();
     span.set_attribute("did", did.clone());
+
+    // Send authenticated message to client
     socket
         .emit(
-            "autenticated",
+            "authenticated",
             &serde_json::json!({
                 "did": did,
             }),
         )
         .ok();
 
-    let span_ = span.clone();
-    socket.on(
-        "message",
-        async move |socket: SocketRef, Data::<Value>(data)| {
-            let _s = tracing::info_span!(parent: &span_, "handle event", %data).entered();
-
-            if data.as_str() == Some("err") {
-                tracing::error!("got an error")
-            } else {
-                socket.emit("message-back", &data).ok();
-            }
-        },
-    );
-
-    socket.on(
-        "message-with-ack",
-        async |Data::<Value>(data), ack: AckSender| {
-            tracing::info!(?data, "Received event");
-            ack.send(&data).ok();
-        },
-    );
+    connection::setup_socket_handlers(&socket, did);
 
     // Wait for disconnect, this is important to make sure the socket_io_connection tracing span
     // lasts longer than it's children and is recorded as such.

@@ -10,6 +10,7 @@ mod http;
 mod iggy;
 mod otel;
 mod storage;
+mod wasm;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);
