@@ -1,7 +1,7 @@
 use rmpv::Value;
 use serde_json::json;
 use socketioxide::extract::{AckSender, Data, SocketRef, TryData};
-use tracing::Span;
+use tracing::{Instrument, Span};
 
 use crate::storage::STORAGE;
 
@@ -9,6 +9,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span = Span::current();
 
     let did_ = did.clone();
+    let span_ = span.clone();
     socket.on(
         "wasm/upload",
         async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
@@ -17,25 +18,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 STORAGE.upload_wasm(&did_, data.to_vec()).await?;
                 anyhow::Ok(())
             }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/upload"))
             .await;
             match result {
                 Ok(_) => ack.send(&json!({ "ok": true })).ok(),
                 Err(e) => ack.send(&json!({ "error": e.to_string()})).ok(),
             };
-        },
-    );
-
-    let span_ = span.clone();
-    socket.on(
-        "message",
-        async move |socket: SocketRef, Data::<Value>(data)| {
-            let _s = tracing::info_span!(parent: &span_, "handle event", %data).entered();
-
-            if data.as_str() == Some("err") {
-                tracing::error!("got an error")
-            } else {
-                socket.emit("message-back", &data).ok();
-            }
         },
     );
 

@@ -56,15 +56,15 @@ impl Storage {
         Ok(())
     }
 
-    #[instrument(skip(self), err)]
-    pub async fn upload_wasm(&self, owner: &str, blob: Vec<u8>) -> anyhow::Result<()> {
-        validate_wasm(&blob)?;
+    #[instrument(skip(self, data), err)]
+    pub async fn upload_wasm(&self, owner: &str, data: Vec<u8>) -> anyhow::Result<()> {
+        validate_wasm(&data)?;
         let trans = self.conn.transaction().await?;
-        let hash = blake3::hash(&blob);
+        let hash = blake3::hash(&data);
         trans
             .execute(
-                r#"insert into wasm_blobs (hash, blob) values (:hash, :blob)"#,
-                ((":hash", hash.as_bytes().to_vec()), (":blob", blob)),
+                r#"insert or ignore into wasm_blobs (hash, data) values (:hash, :data)"#,
+                ((":hash", hash.as_bytes().to_vec()), (":data", data)),
             )
             .await?;
         trans
@@ -73,6 +73,7 @@ impl Storage {
                 ((":owner", owner), (":hash", hash.as_bytes().to_vec())),
             )
             .await?;
+        trans.commit().await?;
         Ok(())
     }
 
