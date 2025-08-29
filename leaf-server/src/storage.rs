@@ -134,8 +134,8 @@ pub fn start_background_tasks() {
     // Garbage collect WASM files periodically
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(500)).await;
             STORAGE.garbage_collect_wasm().await.ok();
+            tokio::time::sleep(Duration::from_secs(500)).await;
         }
     });
 }
