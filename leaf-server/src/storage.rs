@@ -7,6 +7,9 @@ use libsql::Connection;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+pub use conv::*;
+mod conv;
+
 use crate::ARGS;
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
@@ -68,38 +71,21 @@ impl Storage {
                 "#,
             )
             .await?;
-        let mut deleted_staged: Vec<(String, String)> = Vec::new();
+        let mut deleted_staged: Vec<(String, StringOrBinaryAsHex)> = Vec::new();
         let mut deleted_blobs: Vec<String> = Vec::new();
-        async {
-            if let Some(mut staged) = deleted.next_stmt_row().flatten() {
-                while let Ok(Some(row)) = staged.next().await {
-                    let owner = row.get_str(0)?;
-                    let hash = if let Some(hash) = row.get_value(1)?.as_blob() {
-                        hex::encode(hash)
-                    } else if let Ok(text) = row.get_str(1) {
-                        text.to_owned()
-                    } else {
-                        break;
-                    };
-                    deleted_staged.push((owner.to_string(), hash));
-                }
+        let r = async {
+            if let Some(rows) = deleted.next_stmt_row().flatten() {
+                deleted_staged = Vec::from_rows(rows).await?;
             }
-            if let Some(mut staged) = deleted.next_stmt_row().flatten() {
-                while let Ok(Some(row)) = staged.next().await {
-                    let hash = if let Some(hash) = row.get_value(0)?.as_blob() {
-                        hex::encode(hash)
-                    } else if let Ok(hash) = row.get_str(0) {
-                        hash.to_owned()
-                    } else {
-                        break;
-                    };
-                    deleted_blobs.push(hash);
-                }
+            if let Some(rows) = deleted.next_stmt_row().flatten() {
+                deleted_blobs = Vec::from_rows(rows).await?;
             }
             anyhow::Ok(())
         }
-        .await
-        .ok();
+        .await;
+        if let Err(error) = r {
+            tracing::warn!(%error, "Error parsing deleted WASM blobs")
+        }
 
         if !deleted_staged.is_empty() || !deleted_blobs.is_empty() {
             tracing::info!(
