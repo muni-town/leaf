@@ -2922,6 +2922,7 @@ dependencies = [
  "blake3",
  "clap",
  "futures-util",
+ "hex",
  "iggy",
  "libsql",
  "opentelemetry",

@@ -1,7 +1,11 @@
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::{
+    sync::{Arc, LazyLock, OnceLock},
+    time::Duration,
+};
 
 use libsql::Connection;
-use tracing::instrument;
+use tracing::{Span, instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::ARGS;
 
@@ -25,6 +29,12 @@ pub struct Storage {
 impl Storage {
     #[instrument(skip(self), err)]
     pub async fn initialize(&self) -> anyhow::Result<()> {
+        if self.conn.0.get().is_some() {
+            tracing::warn!("Database already initialized.");
+            return Ok(());
+        }
+
+        // Open database file
         tokio::fs::create_dir_all(&ARGS.data_dir).await?;
         let database = libsql::Builder::new_local(ARGS.data_dir.join("leaf.db"))
             .build()
@@ -32,22 +42,93 @@ impl Storage {
         let c = database.connect()?;
         tracing::info!("database connected");
 
-        sql::init_database_schema(&c).await?;
+        // Run migrations
+        run_database_migrations(&c).await?;
+
+        // Start the background storage tasks
+        start_background_tasks();
 
         self.conn.0.get_or_init(|| c);
 
         Ok(())
     }
-}
 
-mod sql {
-    use libsql::Connection;
-    use tracing::instrument;
-
-    #[instrument(skip(db))]
-    pub async fn init_database_schema(db: &Connection) -> anyhow::Result<()> {
-        db.execute_transactional_batch(include_str!("schema/schema_00.sql"))
+    #[instrument(skip(self), err)]
+    pub async fn garbage_collect_wasm(&self) -> anyhow::Result<()> {
+        let mut deleted = self
+            .conn
+            .execute_batch(
+                r#"
+                delete from staged_wasm where (unixepoch() - timestamp) > 5 returning owner, hash;
+                delete from wasm_blobs where not exists (
+                    select 1 from staged_wasm s where s.hash=wasm_blobs.hash
+                        union
+                    select 1 from streams_wasm_blobs s where s.blob_hash=wasm_blobs.hash
+                ) returning hash;
+                "#,
+            )
             .await?;
+        let mut deleted_staged: Vec<(String, String)> = Vec::new();
+        let mut deleted_blobs: Vec<String> = Vec::new();
+        async {
+            if let Some(mut staged) = deleted.next_stmt_row().flatten() {
+                while let Ok(Some(row)) = staged.next().await {
+                    let owner = row.get_str(0)?;
+                    let hash = if let Some(hash) = row.get_value(1)?.as_blob() {
+                        hex::encode(hash)
+                    } else if let Ok(text) = row.get_str(1) {
+                        text.to_owned()
+                    } else {
+                        break;
+                    };
+                    deleted_staged.push((owner.to_string(), hash));
+                }
+            }
+            if let Some(mut staged) = deleted.next_stmt_row().flatten() {
+                while let Ok(Some(row)) = staged.next().await {
+                    let hash = if let Some(hash) = row.get_value(0)?.as_blob() {
+                        hex::encode(hash)
+                    } else if let Ok(hash) = row.get_str(0) {
+                        hash.to_owned()
+                    } else {
+                        break;
+                    };
+                    deleted_blobs.push(hash);
+                }
+            }
+            anyhow::Ok(())
+        }
+        .await
+        .ok();
+
+        if !deleted_staged.is_empty() || !deleted_blobs.is_empty() {
+            tracing::info!(
+                deleted_staged_wasm_modules=?deleted_staged,
+                deleted_wasm_blobs=?deleted_blobs,
+                "Garbage collected WASM records"
+            );
+        }
+        let span = Span::current();
+        span.set_attribute("wasm_blobs_deleted", deleted_staged.len() as i64);
+        span.set_attribute("staged_wasm_modules_deleted", deleted_blobs.len() as i64);
+
         Ok(())
     }
+}
+
+#[instrument(skip(db))]
+pub async fn run_database_migrations(db: &Connection) -> anyhow::Result<()> {
+    db.execute_transactional_batch(include_str!("schema/schema_00.sql"))
+        .await?;
+    Ok(())
+}
+
+pub fn start_background_tasks() {
+    // Garbage collect WASM files periodically
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            STORAGE.garbage_collect_wasm().await.ok();
+        }
+    });
 }
