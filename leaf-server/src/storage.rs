@@ -1,11 +1,11 @@
-use std::{
-    sync::{Arc, LazyLock, OnceLock},
-    time::Duration,
-};
+use std::{sync::LazyLock, time::Duration};
 
 use libsql::Connection;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+use conn_lock::Conn;
+mod conn_lock;
 
 pub use conv::*;
 mod conv;
@@ -13,16 +13,6 @@ mod conv;
 use crate::{ARGS, wasm::validate_wasm};
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
-
-#[derive(Default, Clone)]
-struct Conn(Arc<OnceLock<Connection>>);
-
-impl std::ops::Deref for Conn {
-    type Target = Connection;
-    fn deref(&self) -> &Self::Target {
-        self.0.get().unwrap()
-    }
-}
 
 #[derive(Default)]
 pub struct Storage {
@@ -32,7 +22,7 @@ pub struct Storage {
 impl Storage {
     #[instrument(skip(self), err)]
     pub async fn initialize(&self) -> anyhow::Result<()> {
-        if self.conn.0.get().is_some() {
+        if self.conn.has_initialized() {
             tracing::warn!("Database already initialized.");
             return Ok(());
         }
@@ -51,7 +41,7 @@ impl Storage {
         // Start the background storage tasks
         start_background_tasks();
 
-        self.conn.0.get_or_init(|| c);
+        self.conn.set(c).ok();
 
         Ok(())
     }
@@ -62,7 +52,7 @@ impl Storage {
             anyhow::bail!("WASM module larger than 10MB maximum size.");
         }
         validate_wasm(&data)?;
-        let trans = self.conn.transaction().await?;
+        let trans = self.conn.get().await.transaction().await?;
         let hash = blake3::hash(&data);
         trans
             .execute(
@@ -84,6 +74,8 @@ impl Storage {
     pub async fn garbage_collect_wasm(&self) -> anyhow::Result<()> {
         let mut deleted = self
             .conn
+            .get()
+            .await
             .execute_batch(
                 r#"
                 delete from staged_wasm where (unixepoch() - timestamp) > 500 returning owner, hash;
