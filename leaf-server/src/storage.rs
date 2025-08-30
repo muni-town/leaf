@@ -5,19 +5,16 @@ use libsql::Connection;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use conn_lock::Conn;
-mod conn_lock;
-
 pub use convert::*;
 mod convert;
 
-use crate::{ARGS, wasm::validate_wasm};
+use crate::{ARGS, async_oncelock::AsyncOnceLock, wasm::validate_wasm};
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
 #[derive(Default)]
 pub struct Storage {
-    conn: Conn,
+    conn: AsyncOnceLock<libsql::Connection>,
 }
 
 impl Storage {

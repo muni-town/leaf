@@ -3,17 +3,18 @@ use std::sync::{Arc, LazyLock};
 use clap::Parser;
 use tokio::sync::Notify;
 
-use crate::{cli::Args, storage::STORAGE};
+use crate::{cli::Args, iggy::IGGY, storage::STORAGE};
 
+mod async_oncelock;
 mod cli;
+mod error;
 mod http;
 mod iggy;
 mod otel;
-mod storage;
-mod wasm;
-mod stream;
-mod error;
 mod serde;
+mod storage;
+mod stream;
+mod wasm;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);
@@ -71,11 +72,11 @@ async fn start_server() -> anyhow::Result<()> {
     // Initialize storage
     STORAGE.initialize().await?;
 
-    // Connect to Iggy
-    let iggy = self::iggy::connect().await?;
+    // Initialize iggy connection
+    IGGY.initialize().await?;
 
     // Start the web API
-    http::start_api(iggy).await?;
+    http::start_api().await?;
 
     Ok(())
 }

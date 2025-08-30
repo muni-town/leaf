@@ -5,14 +5,22 @@ use std::{
 };
 use tokio::sync::Notify;
 
-#[derive(Default, Clone)]
-pub struct Conn {
-    lock: Arc<OnceLock<libsql::Connection>>,
+#[derive(Clone)]
+pub struct AsyncOnceLock<T> {
+    lock: Arc<OnceLock<T>>,
     notify: Arc<Notify>,
 }
-impl Conn {
+impl<T> Default for AsyncOnceLock<T> {
+    fn default() -> Self {
+        Self {
+            lock: Default::default(),
+            notify: Default::default(),
+        }
+    }
+}
+impl<T> AsyncOnceLock<T> {
     pub fn new() -> Self {
-        Conn {
+        AsyncOnceLock {
             lock: Arc::new(OnceLock::new()),
             notify: Arc::new(Notify::new()),
         }
@@ -22,7 +30,7 @@ impl Conn {
         self.lock.get().is_some()
     }
 
-    pub fn set(&self, conn: libsql::Connection) -> Result<(), libsql::Connection> {
+    pub fn set(&self, conn: T) -> Result<(), T> {
         if !self.has_initialized() {
             self.lock.set(conn)
         } else {
@@ -31,14 +39,14 @@ impl Conn {
     }
 }
 
-impl<'a> Future for &'a Conn {
-    type Output = &'a libsql::Connection;
+impl<'a, T> Future for &'a AsyncOnceLock<T> {
+    type Output = &'a T;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let Conn { lock, notify } = &**self;
+        let AsyncOnceLock { lock, notify } = &**self;
 
         loop {
             if let Some(conn) = lock.get() {

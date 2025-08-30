@@ -5,7 +5,6 @@ use std::{
 
 use atproto_identity::model::VerificationMethod;
 use atproto_oauth::{encoding::FromBase64, jwt::Claims};
-use iggy::prelude::IggyClient;
 use rmpv::Value;
 use salvo::prelude::*;
 use socketioxide::{
@@ -23,8 +22,8 @@ mod connection;
 
 use crate::{ARGS, EXIT_SIGNAL};
 
-#[instrument(err, skip(_iggy))]
-pub async fn start_api(_iggy: IggyClient) -> anyhow::Result<()> {
+#[instrument(err)]
+pub async fn start_api() -> anyhow::Result<()> {
     let acceptor = TcpListener::new(&ARGS.listen_address).bind().await;
 
     let (layer, io) = SocketIo::new_layer();

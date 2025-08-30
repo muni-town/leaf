@@ -4,6 +4,7 @@ use crate::serde::{SerdeRawHash, SerdeUlid};
 
 /// A filter policy: either block or allow an event.
 #[derive(Encode, serde::Deserialize, Debug, Eq, PartialEq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum Policy {
     Block,
     Allow,
