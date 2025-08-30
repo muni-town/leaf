@@ -11,6 +11,7 @@ mod iggy;
 mod otel;
 mod storage;
 mod wasm;
+mod stream;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);

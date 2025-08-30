@@ -15,17 +15,19 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
         async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
             let result = async {
                 let data = data?;
-                STORAGE.upload_wasm(&did_, data.to_vec()).await?;
-                anyhow::Ok(())
+                let hash = STORAGE.upload_wasm(&did_, data.to_vec()).await?;
+                anyhow::Ok(hash)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/upload"))
             .await;
             match result {
-                Ok(_) => ack.send(&json!({ "ok": true })).ok(),
+                Ok(hash) => ack.send(&json!({ "hash": hash.to_hex().to_string() })).ok(),
                 Err(e) => ack.send(&json!({ "error": e.to_string()})).ok(),
             };
         },
     );
+
+    socket.on("stream/create", async move || {});
 
     socket.on(
         "message-with-ack",

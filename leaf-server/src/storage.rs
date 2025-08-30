@@ -57,7 +57,10 @@ impl Storage {
     }
 
     #[instrument(skip(self, data), err)]
-    pub async fn upload_wasm(&self, owner: &str, data: Vec<u8>) -> anyhow::Result<()> {
+    pub async fn upload_wasm(&self, owner: &str, data: Vec<u8>) -> anyhow::Result<blake3::Hash> {
+        if data.len() > 1024 * 1024 * 10 {
+            anyhow::bail!("WASM module larger than 10MB maximum size.");
+        }
         validate_wasm(&data)?;
         let trans = self.conn.transaction().await?;
         let hash = blake3::hash(&data);
@@ -74,7 +77,7 @@ impl Storage {
             )
             .await?;
         trans.commit().await?;
-        Ok(())
+        Ok(hash)
     }
 
     #[instrument(skip(self), err)]
@@ -93,7 +96,7 @@ impl Storage {
             )
             .await?;
         let mut deleted_staged: Vec<(String, StringOrBinaryAsHex)> = Vec::new();
-        let mut deleted_blobs: Vec<String> = Vec::new();
+        let mut deleted_blobs: Vec<StringOrBinaryAsHex> = Vec::new();
         let r = async {
             if let Some(rows) = deleted.next_stmt_row().flatten() {
                 deleted_staged = Vec::from_rows(rows).await?;
