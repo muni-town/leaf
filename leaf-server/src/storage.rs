@@ -8,8 +8,8 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use conn_lock::Conn;
 mod conn_lock;
 
-pub use conv::*;
-mod conv;
+pub use convert::*;
+mod convert;
 
 use crate::{ARGS, wasm::validate_wasm};
 
