@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use parity_scale_codec::Encode;
 
 use crate::serde::{SerdeRawHash, SerdeUlid};
@@ -18,23 +20,31 @@ pub struct GenesisStreamConfig {
     ///
     /// Note that this is not the stream ID, which is computed fro the hash of the
     /// [`GenesisStreamConfig`].
-    stamp: SerdeUlid,
+    pub stamp: SerdeUlid,
     /// User ID of the user that created the stream.
-    creator: String,
+    pub creator: String,
     /// The list of hashes of the WASM inbound filters that will be run on every event for this stream.
-    inbound_filters: Vec<SerdeRawHash>,
+    pub inbound_filters: Vec<SerdeRawHash>,
     /// The list of hashes of outbound WASM filters that will be run on every event for this stream.
-    outbound_filters: Vec<SerdeRawHash>,
+    pub outbound_filters: Vec<SerdeRawHash>,
     /// The default rule for inbound events.
-    default_inbound_policy: Policy,
+    pub default_inbound_policy: Policy,
     /// The default rule for outbound events.
-    default_outbound_policy: Policy,
+    pub default_outbound_policy: Policy,
 }
 
 impl GenesisStreamConfig {
     /// Compute the stream ID of this stream based on it's genesis config.
-    pub fn get_stream_id(&self) -> blake3::Hash {
+    pub fn get_stream_id_and_bytes(&self) -> (blake3::Hash, Vec<u8>) {
         let encoded = self.encode();
-        blake3::hash(&encoded)
+        (blake3::hash(&encoded), encoded)
+    }
+
+    pub fn wasm_blobs(&self) -> HashSet<blake3::Hash> {
+        self.inbound_filters
+            .iter()
+            .chain(self.outbound_filters.iter())
+            .map(|x| blake3::Hash::from_bytes(x.0))
+            .collect::<HashSet<_>>()
     }
 }

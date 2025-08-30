@@ -6,7 +6,7 @@ use serde_json::json;
 use socketioxide::extract::{AckSender, Data, SocketRef, TryData};
 use tracing::{Instrument, Span};
 
-use crate::{error::LogError, storage::STORAGE, stream::GenesisStreamConfig};
+use crate::{error::LogError, iggy::IGGY, storage::STORAGE, stream::GenesisStreamConfig};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span = Span::current();
@@ -64,13 +64,16 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     );
 
     let span_ = span.clone();
+    let did_ = did.clone();
     socket.on(
         "stream/create",
         async move |TryData::<GenesisStreamConfig>(data), ack: AckSender| {
             let result = async {
-                let data = data?;
-                tracing::warn!(?data, "Stream creation not implemented yet");
-                anyhow::Ok(data.get_stream_id())
+                let genesis = data?;
+                let blobs = genesis.wasm_blobs();
+                let hash = IGGY.create_stream(genesis).await?;
+                STORAGE.save_stream(hash, &did_, &blobs).await?;
+                anyhow::Ok(hash)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
             .await;

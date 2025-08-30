@@ -55,7 +55,7 @@ services:
               exporters: [otlp/openobserve]
 
   iggy:
-    image: iggyrs/iggy:latest
+    image: apache/iggy:edge
     environment:
       IGGY_SYSTEM_LOGGING_SYSINFO_PRINT_INTERVAL: '0s'
       IGGY_ROOT_USERNAME: iggy

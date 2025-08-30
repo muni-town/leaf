@@ -71,6 +71,35 @@ impl Storage {
         return Ok(found_hashes);
     }
 
+    #[instrument(skip(self), err)]
+    pub async fn save_stream(
+        &self,
+        id: Hash,
+        owner: &str,
+        blobs: &HashSet<Hash>,
+    ) -> anyhow::Result<()> {
+        let trans = self.conn().await.transaction().await?;
+        trans
+            .execute(
+                "insert into streams (id, owner) values (:id, :owner)",
+                ((":id", id.as_bytes().to_vec()), (":owner", owner)),
+            )
+            .await?;
+        for blob in blobs {
+            trans
+                .execute(
+                    "insert into streams_wasm_blobs (stream_id, blob_hash) values (:stream_id, :blob_hash)",
+                    (
+                        (":stream_id", id.as_bytes().to_vec()),
+                        (":blob_hash", blob.as_bytes().to_vec()),
+                    ),
+                )
+                .await?;
+        }
+        trans.commit().await?;
+        Ok(())
+    }
+
     #[instrument(skip(self, data), err)]
     pub async fn upload_wasm(&self, owner: &str, data: Vec<u8>) -> anyhow::Result<blake3::Hash> {
         if data.len() > 1024 * 1024 * 10 {

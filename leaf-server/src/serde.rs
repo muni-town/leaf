@@ -4,8 +4,13 @@ use ulid::Ulid;
 
 pub type RawHash = [u8; blake3::OUT_LEN];
 
-#[derive(Encode, Debug)]
+#[derive(Encode, Clone, Copy, Hash)]
 pub struct SerdeRawHash(pub RawHash);
+impl std::fmt::Debug for SerdeRawHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        blake3::Hash::from_bytes(self.0).fmt(f)
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct SerdeUlid(pub Ulid);
