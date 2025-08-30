@@ -29,10 +29,6 @@ impl Conn {
             Err(conn)
         }
     }
-
-    pub fn get(&self) -> &Self {
-        self
-    }
 }
 
 impl<'a> Future for &'a Conn {

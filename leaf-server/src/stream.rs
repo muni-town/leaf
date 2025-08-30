@@ -1,6 +1,6 @@
 use parity_scale_codec::Encode;
 
-pub type RawHash = [u8; blake3::OUT_LEN];
+use crate::serde::{SerdeRawHash, SerdeUlid};
 
 /// A filter policy: either block or allow an event.
 #[derive(Encode, serde::Deserialize, Debug, Eq, PartialEq, Hash)]
@@ -9,33 +9,21 @@ pub enum Policy {
     Allow,
 }
 
-#[derive(Encode, Debug)]
-pub struct SerdeHash(RawHash);
-
-impl<'de> serde::Deserialize<'de> for SerdeHash {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::Error;
-        let s = String::deserialize(deserializer)?;
-        let mut h: RawHash = [0; 32];
-        hex::decode_to_slice(s, &mut h).map_err(|e| D::Error::custom(format!("{e}")))?;
-        Ok(Self(h))
-    }
-}
-
 /// The genesis configuration of an event stream.
 #[derive(Encode, serde::Deserialize, Debug)]
 pub struct GenesisStreamConfig {
+    /// A ULID, which encompasses the timestamp and additional randomness, included in this stream
+    /// to make it's hash unique.
+    ///
+    /// Note that this is not the stream ID, which is computed fro the hash of the
+    /// [`GenesisStreamConfig`].
+    stamp: SerdeUlid,
     /// User ID of the user that created the stream.
     creator: String,
-    /// Unix timestamp of when the stream was created.
-    timestamp: i64,
     /// The list of hashes of the WASM inbound filters that will be run on every event for this stream.
-    inbound_filters: Vec<SerdeHash>,
+    inbound_filters: Vec<SerdeRawHash>,
     /// The list of hashes of outbound WASM filters that will be run on every event for this stream.
-    outbound_filters: Vec<SerdeHash>,
+    outbound_filters: Vec<SerdeRawHash>,
     /// The default rule for inbound events.
     default_inbound_policy: Policy,
     /// The default rule for outbound events.

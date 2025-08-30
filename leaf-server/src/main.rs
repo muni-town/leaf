@@ -12,6 +12,8 @@ mod otel;
 mod storage;
 mod wasm;
 mod stream;
+mod error;
+mod serde;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);

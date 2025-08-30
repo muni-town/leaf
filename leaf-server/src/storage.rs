@@ -1,5 +1,6 @@
-use std::{sync::LazyLock, time::Duration};
+use std::{collections::HashSet, sync::LazyLock, time::Duration};
 
+use blake3::Hash;
 use libsql::Connection;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -20,6 +21,10 @@ pub struct Storage {
 }
 
 impl Storage {
+    async fn conn(&self) -> &libsql::Connection {
+        (&self.conn).await
+    }
+
     #[instrument(skip(self), err)]
     pub async fn initialize(&self) -> anyhow::Result<()> {
         if self.conn.has_initialized() {
@@ -46,13 +51,36 @@ impl Storage {
         Ok(())
     }
 
+    /// Returns the list of hashes that could be found in the database out of the list that is
+    /// provided to search for.
+    #[instrument(skip(self, hashes), err)]
+    pub async fn find_wasm_blobs(
+        &self,
+        hashes: &HashSet<blake3::Hash>,
+    ) -> anyhow::Result<HashSet<blake3::Hash>> {
+        let placeholders = hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let rows = self
+            .conn()
+            .await
+            .query(
+                &format!("select hash from wasm_blobs where hash in ({placeholders})"),
+                hashes
+                    .iter()
+                    .map(|x| x.as_bytes().to_vec())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        let found_hashes = Vec::<Hash>::from_rows(rows).await?.into_iter().collect();
+        return Ok(found_hashes);
+    }
+
     #[instrument(skip(self, data), err)]
     pub async fn upload_wasm(&self, owner: &str, data: Vec<u8>) -> anyhow::Result<blake3::Hash> {
         if data.len() > 1024 * 1024 * 10 {
             anyhow::bail!("WASM module larger than 10MB maximum size.");
         }
         validate_wasm(&data)?;
-        let trans = self.conn.get().await.transaction().await?;
+        let trans = self.conn().await.transaction().await?;
         let hash = blake3::hash(&data);
         trans
             .execute(
@@ -73,8 +101,7 @@ impl Storage {
     #[instrument(skip(self), err)]
     pub async fn garbage_collect_wasm(&self) -> anyhow::Result<()> {
         let mut deleted = self
-            .conn
-            .get()
+            .conn()
             .await
             .execute_batch(
                 r#"
@@ -87,8 +114,8 @@ impl Storage {
                 "#,
             )
             .await?;
-        let mut deleted_staged: Vec<(String, StringOrBinaryAsHex)> = Vec::new();
-        let mut deleted_blobs: Vec<StringOrBinaryAsHex> = Vec::new();
+        let mut deleted_staged: Vec<(String, Hash)> = Vec::new();
+        let mut deleted_blobs: Vec<Hash> = Vec::new();
         let r = async {
             if let Some(rows) = deleted.next_stmt_row().flatten() {
                 deleted_staged = Vec::from_rows(rows).await?;

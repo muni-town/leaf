@@ -10,24 +10,16 @@ pub trait FromRows: Sized {
     async fn from_rows(rows: Rows) -> anyhow::Result<Self>;
 }
 
-pub struct StringOrBinaryAsHex(String);
-impl std::fmt::Display for StringOrBinaryAsHex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::fmt::Debug for StringOrBinaryAsHex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("\"")?;
-        f.write_str(&self.0)?;
-        f.write_str("\"")
-    }
-}
-impl FromValue for StringOrBinaryAsHex {
+impl FromValue for blake3::Hash {
     async fn from_value(value: Value) -> anyhow::Result<Self> {
         match value {
-            Value::Text(s) => Ok(StringOrBinaryAsHex(s)),
-            Value::Blob(blob) => Ok(StringOrBinaryAsHex(hex::encode(blob))),
+            Value::Text(s) => Ok(blake3::Hash::from_hex(s)?),
+            Value::Blob(blob) => {
+                let bytes: [u8; 32] = blob.try_into().map_err(|b: Vec<u8>| {
+                    anyhow::format_err!("Invalid length for hash from databse blob: {}", b.len())
+                })?;
+                Ok(blake3::Hash::from_bytes(bytes))
+            }
             _ => anyhow::bail!("Expected STRING or BLOB"),
         }
     }
