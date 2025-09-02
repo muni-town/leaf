@@ -2429,6 +2429,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "leaf-stream-types",
  "leaf-utils",
  "libsql",
  "parity-scale-codec",
@@ -2437,6 +2438,14 @@ dependencies = [
  "tracing",
  "ulid",
  "wasmtime",
+]
+
+[[package]]
+name = "leaf-stream-types"
+version = "0.1.0"
+dependencies = [
+ "parity-scale-codec",
+ "thiserror 2.0.16",
 ]
 
 [[package]]

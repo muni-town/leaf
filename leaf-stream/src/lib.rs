@@ -1,13 +1,17 @@
 use std::{pin::Pin, sync::Arc};
 
 use blake3::Hash;
+use leaf_stream_types::{InboundFilterResponse, ModuleInput, OutboundFilterResponse};
 use leaf_utils::convert::*;
 use parity_scale_codec::Encode;
 use tracing::instrument;
+use types::ModuleUpdate;
 use ulid::Ulid;
 
 mod encoding;
 use encoding::Encodable;
+
+pub use leaf_stream_types as types;
 
 pub mod modules;
 
@@ -223,7 +227,14 @@ impl Stream {
             // NOTE: we **ignore** module updates while we are catching up modules. Module updates
             // are only allowed to happen on new events.
             let _module_update = module
-                .process_event(payload, self.params.clone(), user, self.module_db.clone())
+                .process_event(
+                    ModuleInput {
+                        payload,
+                        params: self.params.clone(),
+                        user,
+                    },
+                    self.module_db.clone(),
+                )
                 .await?;
 
             self.db
@@ -277,9 +288,11 @@ impl Stream {
         // First we check whether the event should be filtered out
         let filter_response = module
             .filter_inbound(
-                payload.clone(),
-                self.params.clone(),
-                user.clone(),
+                ModuleInput {
+                    payload: payload.clone(),
+                    params: self.params.clone(),
+                    user: user.clone(),
+                },
                 self.module_db.clone(),
             )
             .await?;
@@ -288,7 +301,7 @@ impl Stream {
         self.module_db.authorizer(None)?;
 
         // Error if the event was rejected by the filter
-        if let InboundFilterResponse::Reject { reason } = filter_response {
+        if let InboundFilterResponse::Block { reason } = filter_response {
             return Err(StreamError::EventRejected { reason });
         }
 
@@ -312,9 +325,11 @@ impl Stream {
         // Now that the event has been included in the stream, we can let the module process it.
         let module_update = module
             .process_event(
-                payload.clone(),
-                self.params.clone(),
-                user,
+                ModuleInput {
+                    payload: payload.clone(),
+                    params: self.params.clone(),
+                    user,
+                },
                 self.module_db.clone(),
             )
             .await?;
@@ -333,10 +348,10 @@ impl Stream {
             self.db
                 .execute(
                     "update stream_state set module = :module where id = 1",
-                    (":module", new_module.as_bytes().to_vec()),
+                    (":module", new_module.to_vec()),
                 )
                 .await?;
-            self.module = ModuleStatus::Unloaded(new_module);
+            self.module = ModuleStatus::Unloaded(Hash::from_bytes(new_module));
         }
         // If there are new params, then update our params
         if let Some(new_params) = module_update.new_params {
@@ -349,14 +364,8 @@ impl Stream {
             self.params = new_params;
         }
 
-        Ok(module_update.new_module)
+        Ok(module_update.new_module.map(Hash::from_bytes))
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum InboundFilterResponse {
-    Accept,
-    Reject { reason: String },
 }
 
 /// The trait implemented by leaf modules.
@@ -364,32 +373,19 @@ pub trait LeafModule {
     fn id(&self) -> blake3::Hash;
     fn filter_inbound(
         &mut self,
-        payload: Vec<u8>,
-        params: Vec<u8>,
-        user: String,
+        moduel_input: ModuleInput,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<InboundFilterResponse>>>>;
     fn filter_outbound(
         &mut self,
-        payload: Vec<u8>,
-        params: Vec<u8>,
-        user: String,
+        moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>>>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<OutboundFilterResponse>>>>;
     fn process_event(
         &mut self,
-        payload: Vec<u8>,
-        params: Vec<u8>,
-        user: String,
+        moduel_input: ModuleInput,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<ModuleUpdate>>>>;
-}
-
-/// An update that should be made to the Leaf module for a stream.
-#[derive(Default)]
-pub struct ModuleUpdate {
-    new_module: Option<Hash>,
-    new_params: Option<Vec<u8>>,
 }
 
 fn read_only_sql_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {

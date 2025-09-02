@@ -9,6 +9,10 @@ module-lua = ["dep:piccolo"]
 module-wasm = ["dep:wasmtime"]
 
 [dependencies]
+# Leaf
+leaf-utils = { path = "../leaf-utils" }
+leaf-stream-types = { path = "../leaf-stream-types" }
+
 # Database
 libsql = { version = "0.9.21", default-features = false }
 
@@ -23,9 +27,6 @@ ulid = "1.2.1"
 
 # Logging
 tracing = "0.1.41"
-
-# Utils
-leaf-utils = { path = "../leaf-utils" }
 
 # Module backends
 piccolo = { git = "https://github.com/kyren/piccolo.git", optional = true }
