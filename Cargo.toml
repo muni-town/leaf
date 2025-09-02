@@ -1,4 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["leaf-server"]
-
+members = [
+    "leaf-stream",
+    "leaf-utils",
+    "leaf-module-sdk",
+    "leaf-server",
+    "modules/*-module",
+]

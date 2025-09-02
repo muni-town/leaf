@@ -6,7 +6,7 @@ use serde_json::json;
 use socketioxide::extract::{AckSender, Data, SocketRef, TryData};
 use tracing::{Instrument, Span};
 
-use crate::{error::LogError, iggy::IGGY, storage::STORAGE, stream::GenesisStreamConfig};
+use crate::{error::LogError, storage::STORAGE};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span = Span::current();
@@ -68,22 +68,21 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     socket.on(
         "stream/create",
         async move |TryData::<GenesisStreamConfig>(data), ack: AckSender| {
-            let result = async {
-                let genesis = data?;
-                let blobs = genesis.wasm_blobs();
-                let hash = IGGY.create_stream(genesis).await?;
-                STORAGE.save_stream(hash, &did_, &blobs).await?;
-                anyhow::Ok(hash)
-            }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
-            .await;
+            // let result = async {
+            //     let genesis = data?;
+            //     let blobs = genesis.wasm_blobs();
+            //     // STORAGE.save_stream(todo!(), &did_, &blobs).await?;
+            //     todo!();
+            // }
+            // .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
+            // .await;
 
-            match result {
-                Ok(hash) => ack.send(&json!({ "stream_id": hash.to_hex().to_string() })),
-                Err(e) => ack.send(&json!({ "error": e.to_string()})),
-            }
-            .log_error("Internal error sending response")
-            .ok();
+            // match result {
+            //     Ok(hash) => ack.send(&json!({ "stream_id": hash.to_hex().to_string() })),
+            //     Err(e) => ack.send(&json!({ "error": e.to_string()})),
+            // }
+            // .log_error("Internal error sending response")
+            // .ok();
         },
     );
 

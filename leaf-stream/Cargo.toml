@@ -1,0 +1,33 @@
+[package]
+name = "leaf-stream"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["module-wasm"]
+module-lua = ["dep:piccolo"]
+module-wasm = ["dep:wasmtime"]
+
+[dependencies]
+# Database
+libsql = { version = "0.9.21", default-features = false }
+
+# Error handling
+thiserror = "2.0.16"
+anyhow = "1.0.99"
+
+# Data & encoding
+blake3 = "1.8.2"
+parity-scale-codec = { version = "3.7.5", features = ["derive"] }
+ulid = "1.2.1"
+
+# Logging
+tracing = "0.1.41"
+
+# Utils
+leaf-utils = { path = "../leaf-utils" }
+
+# Module backends
+piccolo = { git = "https://github.com/kyren/piccolo.git", optional = true }
+wasmtime = { version = "36.0.2", optional = true }
+

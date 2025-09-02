@@ -3,17 +3,16 @@ use std::sync::{Arc, LazyLock};
 use clap::Parser;
 use tokio::sync::Notify;
 
-use crate::{cli::Args, iggy::IGGY, storage::STORAGE};
+use crate::{cli::Args, storage::STORAGE};
 
 mod async_oncelock;
 mod cli;
 mod error;
 mod http;
-mod iggy;
 mod otel;
 mod serde;
 mod storage;
-mod stream;
+mod streams;
 mod wasm;
 
 #[derive(Default)]
@@ -71,9 +70,6 @@ async fn start_server() -> anyhow::Result<()> {
 
     // Initialize storage
     STORAGE.initialize().await?;
-
-    // Initialize iggy connection
-    IGGY.initialize().await?;
 
     // Start the web API
     http::start_api().await?;

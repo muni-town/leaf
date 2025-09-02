@@ -30,6 +30,7 @@ create table if not exists "streams" (
 -- table that ties streams to the blobs that they depend on.
 create table if not exists "streams_wasm_blobs" (
     "stream_id" blob not null references streams(id) on delete cascade,
+    "params"    blob,
     "blob_hash" blob not null references wasm_blobs(hash),
     unique (stream_id, blob_hash)
 );

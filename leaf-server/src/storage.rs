@@ -1,6 +1,7 @@
 use std::{collections::HashSet, sync::LazyLock, time::Duration};
 
 use blake3::Hash;
+use leaf_utils::convert::FromRows;
 use libsql::Connection;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -69,6 +70,21 @@ impl Storage {
             .await?;
         let found_hashes = Vec::<Hash>::from_rows(rows).await?.into_iter().collect();
         return Ok(found_hashes);
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn get_module(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut blobs = Vec::<Vec<u8>>::from_rows(
+            self.conn()
+                .await
+                .query(
+                    "select data from wasm_blobs where hash=?",
+                    [id.as_bytes().to_vec()],
+                )
+                .await?,
+        )
+        .await?;
+        Ok(blobs.pop())
     }
 
     #[instrument(skip(self), err)]
