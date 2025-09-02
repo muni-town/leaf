@@ -153,7 +153,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<InboundFilterResponse>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<InboundFilterResponse>> + Sync + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -211,7 +211,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<OutboundFilterResponse>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<OutboundFilterResponse>> + Sync + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -269,7 +269,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ModuleUpdate>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ModuleUpdate>> + Sync + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 

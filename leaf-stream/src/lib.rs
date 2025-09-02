@@ -1,5 +1,6 @@
 use std::{pin::Pin, sync::Arc};
 
+use anyhow::Context;
 use blake3::Hash;
 use leaf_stream_types::{InboundFilterResponse, ModuleInput, OutboundFilterResponse};
 use leaf_utils::convert::*;
@@ -8,21 +9,25 @@ use tracing::instrument;
 use types::ModuleUpdate;
 use ulid::Ulid;
 
-mod encoding;
+pub mod encoding;
 use encoding::Encodable;
 
+pub use blake3;
 pub use leaf_stream_types as types;
+pub use libsql;
+pub use ulid;
 
 pub mod modules;
 
+#[derive(Debug)]
 pub struct Stream {
-    pub id: Hash,
-    pub db: libsql::Connection,
-    pub module_db: libsql::Connection,
-    pub module: ModuleStatus,
-    pub params: Vec<u8>,
-    pub latest_event: i64,
-    pub module_event_cursor: i64,
+    id: Hash,
+    db: libsql::Connection,
+    module_db: libsql::Connection,
+    module: ModuleStatus,
+    params: Vec<u8>,
+    latest_event: i64,
+    module_event_cursor: i64,
 }
 
 /// The genesis configuration of an event stream.
@@ -55,6 +60,15 @@ pub enum ModuleStatus {
     Loaded(Box<dyn LeafModule>),
 }
 
+impl std::fmt::Debug for ModuleStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unloaded(arg0) => f.debug_tuple("Unloaded").field(arg0).finish(),
+            Self::Loaded(_) => f.debug_tuple("Loaded").field(&"dyn LeafModule").finish(),
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum StreamError {
     #[error("LibSQL error: {0}")]
@@ -83,6 +97,14 @@ pub enum StreamError {
 }
 
 impl Stream {
+    pub fn id(&self) -> blake3::Hash {
+        self.id
+    }
+
+    pub fn module(&self) -> &ModuleStatus {
+        &self.module
+    }
+
     /// Open a stream.
     pub async fn open(
         genesis: StreamGenesis,
@@ -100,9 +122,13 @@ impl Stream {
             .query("select max(id) from events;", ())
             .await?
             .next()
-            .await?;
+            .await
+            .context("error querying latest event")?;
         let latest_event = if let Some(row) = latest_event {
-            i64::from_row(row).await?
+            Option::<i64>::from_row(row)
+                .await
+                .context("error parsing latest event")?
+                .unwrap_or(0)
         } else {
             0
         };
@@ -110,13 +136,15 @@ impl Stream {
         // Load the stream state from the database
         let row = db
             .query(
-                "select (stream_id, module, params, module_event_cursor) \
+                "select stream_id, module, params, module_event_cursor \
                 from stream_state where id=1",
                 (),
             )
-            .await?
+            .await
+            .context("error querying stream state")?
             .next()
-            .await?;
+            .await
+            .context("error loading stream state from query")?;
 
         // Parse the current state from the database or initialize a new state if one does not
         // exist.
@@ -124,8 +152,10 @@ impl Stream {
         let params;
         let module_event_cursor;
         if let Some(row) = row {
-            let (db_stream_id, db_module, db_params, db_module_event_cursor) =
-                row.parse_row().await?;
+            let (db_stream_id, db_module, db_params, db_module_event_cursor) = row
+                .parse_row()
+                .await
+                .context("error parsing stream state")?;
             if db_stream_id != id {
                 return Err(StreamError::IdMismatch {
                     expected_id: id,
@@ -148,7 +178,8 @@ impl Stream {
                     (":params", genesis.params.clone()),
                 ),
             )
-            .await?;
+            .await
+            .context("error initializing stream state")?;
 
             module = ModuleStatus::Unloaded(genesis.module.0);
             params = genesis.params;
@@ -369,23 +400,23 @@ impl Stream {
 }
 
 /// The trait implemented by leaf modules.
-pub trait LeafModule {
+pub trait LeafModule: Sync + Send {
     fn id(&self) -> blake3::Hash;
     fn filter_inbound(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<InboundFilterResponse>>>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<InboundFilterResponse>> + Sync + Send>>;
     fn filter_outbound(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<OutboundFilterResponse>>>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<OutboundFilterResponse>> + Sync + Send>>;
     fn process_event(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ModuleUpdate>>>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ModuleUpdate>> + Sync + Send>>;
 }
 
 fn read_only_sql_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {

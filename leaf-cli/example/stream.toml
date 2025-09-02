@@ -1,0 +1,26 @@
+# This is an example stream config file for use
+# with the Leaf CLI.
+
+# Every stream has a ULID that acts as a creation
+# timestamp and a uniqueness nonce.
+#
+# You can generate a new ULID with https://ulidgenerator.com/
+ulid = "01K45VMS5FWQTBFPQ6T5NSR81N"
+
+# The creator is metadata that is not used for anything other
+# than to also contribute to uniqueness and give some reference
+# for who created a stream.
+creator = "did:web:muni.town"
+
+# The module is responsible for filtering events.
+module = "../../target/wasm32-unknown-unknown/release/example_module.wasm"
+# The params can be any binary data, not just JSON, but they are
+# provided to the module and therefore must be compatible with
+# the module
+params = "params.json"
+
+# There are two SQLite databases that are used to store the stream's
+# state, one for the event stream itself, and one for use by the
+# module.
+stream_db = "stream.db"
+module_db = "module.db"

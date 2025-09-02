@@ -1,7 +1,8 @@
+use std::alloc::Layout;
+
 #[unsafe(no_mangle)]
-pub extern "C" fn add(left: i32, right: i32) -> i32 {
-    let mut v = Vec::new();
-    v.push(left);
-    v.push(right);
-    v.iter().sum()
+extern "C" fn malloc(size: usize, align: usize) -> *mut u8 {
+    unsafe { std::alloc::alloc(Layout::from_size_align(size, align).unwrap()) }
 }
+
+
