@@ -6,6 +6,7 @@ create table if not exists "events" (
 
 create table if not exists "stream_state" (
     "id"                    integer primary key,
+    "creator"               text not null,
     "stream_id"             blob not null,
     "module"                blob not null,
     "params"                blob not null,

@@ -4,10 +4,29 @@ pub use leaf_stream_types::*;
 
 #[macro_export]
 macro_rules! register_handlers {
-    ($filter_inbound:ident, $filter_outbound:ident, $process_event:ident) => {
+    ($init_db:ident, $filter_inbound:ident, $filter_outbound:ident, $process_event:ident) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn malloc(size: usize, align: usize) -> *mut u8 {
             unsafe { std::alloc::alloc(std::alloc::Layout::from_size_align(size, align).unwrap()) }
+        }
+
+        #[unsafe(no_mangle)]
+        #[unsafe(export_name = "init_db")]
+        unsafe extern "C" fn __wasm_init_db(
+            input_ptr: *mut u8,
+            input_len: usize,
+            out_ptr: *mut (*mut u8, usize),
+        ) {
+            let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
+            let input = ModuleInit::decode(&mut input_bytes).unwrap();
+
+            let resp = $init_db(input.creator, input.params);
+
+            let mut response_bytes = resp.encode();
+            let ptr = response_bytes.as_mut_ptr();
+            let len = response_bytes.len();
+            std::mem::forget(response_bytes);
+            unsafe { out_ptr.write((ptr, len)) };
         }
 
         #[unsafe(no_mangle)]
@@ -18,7 +37,7 @@ macro_rules! register_handlers {
             out_ptr: *mut (*mut u8, usize),
         ) {
             let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
-            let input = ModuleInput::<String, String>::decode(&mut input_bytes).unwrap();
+            let input = ModuleInput::decode(&mut input_bytes).unwrap();
 
             let resp = $filter_inbound(input);
             let response = match resp {
@@ -43,7 +62,7 @@ macro_rules! register_handlers {
             out_ptr: *mut (*mut u8, usize),
         ) {
             let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
-            let input = ModuleInput::<String, String>::decode(&mut input_bytes).unwrap();
+            let input = ModuleInput::decode(&mut input_bytes).unwrap();
 
             let resp = $filter_outbound(input);
             let response = match resp {
@@ -67,7 +86,7 @@ macro_rules! register_handlers {
             out_ptr: *mut (*mut u8, usize),
         ) {
             let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
-            let input = ModuleInput::<String, String>::decode(&mut input_bytes).unwrap();
+            let input = ModuleInput::decode(&mut input_bytes).unwrap();
 
             let resp = $process_event(input);
             let response = match resp {

@@ -13,7 +13,7 @@ ulid = "01K45VMS5FWQTBFPQ6T5NSR81N"
 creator = "did:web:muni.town"
 
 # The module is responsible for filtering events.
-module = "../../target/wasm32-unknown-unknown/release/example_module.wasm"
+module = "../../target/wasm32-unknown-unknown/debug/example_module.wasm"
 # The params can be any binary data, not just JSON, but they are
 # provided to the module and therefore must be compatible with
 # the module

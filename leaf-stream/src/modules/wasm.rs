@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context;
 use blake3::Hash;
 use leaf_stream_types::{
-    Inbound, ModuleInput, Outbound, Process, SqlQuery, SqlRow, SqlRows, SqlValue,
+    Inbound, ModuleInit, ModuleInput, Outbound, Process, SqlQuery, SqlRow, SqlRows, SqlValue,
 };
 use parity_scale_codec::{Decode, Encode};
 use wasmtime::{Config, Engine, FuncType, Store, Val, ValType};
@@ -185,7 +185,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Sync + Send>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -245,7 +245,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Sync + Send>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -305,7 +305,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Sync + Send>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -358,6 +358,69 @@ impl LeafModule for LeafWasmModule {
             let response = Process::decode(&mut &response_bytes[..])?;
 
             Ok(response)
+        })
+    }
+
+    fn init_db(
+        &mut self,
+        creator: String,
+        params: Vec<u8>,
+        db: libsql::Connection,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>> {
+        let module = self.module.clone();
+        let linker = self.linker.clone();
+
+        Box::pin(async move {
+            let mut store = Store::new(&ENGINE, db.clone());
+            let instance = linker.instantiate_async(&mut store, &module).await?;
+            let Some(memory) = instance.get_memory(&mut store, "memory") else {
+                anyhow::bail!("Could not load wasm memory.");
+            };
+            let malloc = instance
+                .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
+                .context("invalid type for malloc function")?;
+            let init_db = instance
+                .get_typed_func::<(i32, i32, i32), ()>(&mut store, "init_db")
+                .context("Invalid type for process_event function")?;
+
+            // Allocate the input in the WASM module
+            let input_bytes = ModuleInit { creator, params }.encode();
+            let input_len = input_bytes.len() as i32;
+            let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
+            memory.write(&mut store, input_ptr as usize, &input_bytes)?;
+
+            // Allocate space for the return value
+            let output_ptr = malloc
+                .call_async(
+                    &mut store,
+                    (size_of::<i32>() as i32 * 2, align_of::<i32>() as i32),
+                )
+                .await?;
+
+            // Run the inbound filter function from the WASM module
+            init_db
+                .call_async(&mut store, (input_ptr, input_len, output_ptr))
+                .await
+                .context("error calling wasm func")?;
+
+            let mut output_ptr_bytes = [0u8; size_of::<i32>()];
+            memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
+            let mut output_len_bytes = [0u8; size_of::<i32>()];
+            memory.read(
+                &store,
+                output_ptr as usize + size_of::<i32>(),
+                &mut output_len_bytes,
+            )?;
+            let output_ptr = i32::from_le_bytes(output_ptr_bytes);
+            let output_len = i32::from_le_bytes(output_len_bytes);
+
+            let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
+            memory.read(&store, output_ptr as usize, &mut response_bytes)?;
+            let response = String::decode(&mut &response_bytes[..])?;
+
+            db.execute_batch(&response).await?;
+
+            Ok(())
         })
     }
 }

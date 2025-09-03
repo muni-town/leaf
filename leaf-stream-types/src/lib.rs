@@ -1,6 +1,12 @@
 pub use parity_scale_codec::{Decode, Encode};
 
 #[derive(Decode, Encode, Debug, Clone)]
+pub struct ModuleInit<Params = Vec<u8>> {
+    pub creator: String,
+    pub params: Params,
+}
+
+#[derive(Decode, Encode, Debug, Clone)]
 pub struct ModuleInput<Payload = Vec<u8>, Params = Vec<u8>> {
     pub payload: Payload,
     pub params: Params,

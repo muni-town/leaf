@@ -25,6 +25,7 @@ pub struct Stream {
     module_db: libsql::Connection,
     module: ModuleStatus,
     params: Vec<u8>,
+    creator: String,
     latest_event: i64,
     module_event_cursor: i64,
 }
@@ -174,10 +175,11 @@ impl Stream {
             // Initialize the stream state
             db.execute(
                 "insert into stream_state \
-                (id, stream_id, module, params, module_event_cursor) values \
-                (1, :stream_id, :module, :params, null) ",
+                (id, creator, stream_id, module, params, module_event_cursor) values \
+                (1, :creator, :stream_id, :module, :params, null) ",
                 (
                     (":stream_id", id.as_bytes().to_vec()),
+                    (":creator", genesis.creator.clone()),
                     (":module", genesis.module.0.as_bytes().to_vec()),
                     (":params", genesis.params.clone()),
                 ),
@@ -196,6 +198,7 @@ impl Stream {
             module_db,
             module,
             params,
+            creator: genesis.creator,
             module_event_cursor,
             latest_event,
         })
@@ -236,6 +239,20 @@ impl Stream {
         let ModuleStatus::Loaded(module) = &mut self.module else {
             return Err(StreamError::ModuleNotNeeded);
         };
+
+        // TODO: should we make sure this only ever runs once or just have them make sure the SQL is
+        // idempodent like we do now? ( Right now there are edge cases where we might call this
+        // twice. )
+        if self.module_event_cursor == 0 {
+            module
+                .init_db(
+                    self.creator.clone(),
+                    self.params.clone(),
+                    self.module_db.clone(),
+                )
+                .await
+                .context("Error initializing module DB")?;
+        }
 
         assert!(
             self.latest_event >= self.module_event_cursor,
@@ -446,21 +463,27 @@ pub struct FetchedEvent {
 /// The trait implemented by leaf modules.
 pub trait LeafModule: Sync + Send {
     fn id(&self) -> blake3::Hash;
+    fn init_db(
+        &mut self,
+        creator: String,
+        params: Vec<u8>,
+        db: libsql::Connection,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
     fn filter_inbound(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Sync + Send>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Send>>;
     fn filter_outbound(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Sync + Send>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Send>>;
     fn process_event(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Sync + Send>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Send>>;
 }
 
 fn read_only_sql_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {
