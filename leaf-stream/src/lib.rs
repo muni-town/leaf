@@ -2,11 +2,10 @@ use std::{pin::Pin, sync::Arc};
 
 use anyhow::Context;
 use blake3::Hash;
-use leaf_stream_types::{InboundFilterResponse, ModuleInput, OutboundFilterResponse};
+use leaf_stream_types::{Inbound, ModuleInput, Outbound, Process};
 use leaf_utils::convert::*;
 use parity_scale_codec::Encode;
 use tracing::instrument;
-use types::ModuleUpdate;
 use ulid::Ulid;
 
 pub mod encoding;
@@ -341,7 +340,7 @@ impl Stream {
         self.module_db.authorizer(None)?;
 
         // Error if the event was rejected by the filter
-        if let InboundFilterResponse::Block { reason } = filter_response {
+        if let Inbound::Block { reason } = filter_response {
             return Err(StreamError::EventRejected { reason });
         }
 
@@ -451,17 +450,17 @@ pub trait LeafModule: Sync + Send {
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<InboundFilterResponse>> + Sync + Send>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Sync + Send>>;
     fn filter_outbound(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<OutboundFilterResponse>> + Sync + Send>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Sync + Send>>;
     fn process_event(
         &mut self,
         moduel_input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ModuleUpdate>> + Sync + Send>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Sync + Send>>;
 }
 
 fn read_only_sql_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {

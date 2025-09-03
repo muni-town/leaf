@@ -8,7 +8,7 @@ pub struct ModuleInput<Payload = Vec<u8>, Params = Vec<u8>> {
 }
 
 #[derive(Decode, Encode, Debug, Clone, Default)]
-pub enum InboundFilterResponse {
+pub enum Inbound {
     #[default]
     Allow,
     Block {
@@ -17,14 +17,14 @@ pub enum InboundFilterResponse {
 }
 
 #[derive(Decode, Encode, Debug, Clone, Default)]
-pub enum OutboundFilterResponse {
+pub enum Outbound {
     #[default]
     Allow,
     Block,
 }
 
 #[derive(Decode, Encode, Debug, Clone, Default)]
-pub struct ModuleUpdate {
+pub struct Process {
     pub new_module: Option<[u8; 32]>,
     pub new_params: Option<Vec<u8>>,
 }

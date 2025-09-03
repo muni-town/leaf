@@ -7,11 +7,13 @@ use std::{
 
 use anyhow::Context;
 use blake3::Hash;
-use leaf_stream_types::{ModuleInput, OutboundFilterResponse, SqlQuery, SqlRow, SqlRows, SqlValue};
+use leaf_stream_types::{
+    Inbound, ModuleInput, Outbound, Process, SqlQuery, SqlRow, SqlRows, SqlValue,
+};
 use parity_scale_codec::{Decode, Encode};
 use wasmtime::{Config, Engine, FuncType, Store, Val, ValType};
 
-use crate::{InboundFilterResponse, LeafModule, ModuleUpdate};
+use crate::LeafModule;
 
 pub static ENGINE: LazyLock<Engine> =
     LazyLock::new(|| Engine::new(Config::new().async_support(true)).unwrap());
@@ -183,7 +185,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<InboundFilterResponse>> + Sync + Send>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Sync + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -233,7 +235,7 @@ impl LeafModule for LeafWasmModule {
 
             let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
             memory.read(&store, output_ptr as usize, &mut response_bytes)?;
-            let response = InboundFilterResponse::decode(&mut &response_bytes[..])?;
+            let response = Inbound::decode(&mut &response_bytes[..])?;
 
             Ok(response)
         })
@@ -243,7 +245,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<OutboundFilterResponse>> + Sync + Send>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Sync + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -293,7 +295,7 @@ impl LeafModule for LeafWasmModule {
 
             let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
             memory.read(&store, output_ptr as usize, &mut response_bytes)?;
-            let response = OutboundFilterResponse::decode(&mut &response_bytes[..])?;
+            let response = Outbound::decode(&mut &response_bytes[..])?;
 
             Ok(response)
         })
@@ -303,7 +305,7 @@ impl LeafModule for LeafWasmModule {
         &mut self,
         input: ModuleInput,
         db: libsql::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ModuleUpdate>> + Sync + Send>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Sync + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
@@ -353,7 +355,7 @@ impl LeafModule for LeafWasmModule {
 
             let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
             memory.read(&store, output_ptr as usize, &mut response_bytes)?;
-            let response = ModuleUpdate::decode(&mut &response_bytes[..])?;
+            let response = Process::decode(&mut &response_bytes[..])?;
 
             Ok(response)
         })

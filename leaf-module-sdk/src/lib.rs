@@ -23,7 +23,7 @@ macro_rules! register_handlers {
             let resp = $filter_inbound(input);
             let response = match resp {
                 Ok(r) => r,
-                Err(e) => InboundFilterResponse::Block {
+                Err(e) => Inbound::Block {
                     reason: format!("Error processing filter: {e}"),
                 },
             };
@@ -49,7 +49,7 @@ macro_rules! register_handlers {
             let response = match resp {
                 Ok(r) => r,
                 // TODO: provide a way to return errors.
-                Err(_) => OutboundFilterResponse::Block,
+                Err(_) => Outbound::Block,
             };
 
             let mut response_bytes = response.encode();
@@ -73,7 +73,7 @@ macro_rules! register_handlers {
             let response = match resp {
                 Ok(r) => r,
                 // TODO: provide a way to return errors.
-                Err(_) => ModuleUpdate {
+                Err(_) => Process {
                     new_module: None,
                     new_params: None,
                 },
