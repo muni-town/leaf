@@ -61,6 +61,31 @@ pub enum SqlValue {
     Text(String),
     Blob(Vec<u8>),
 }
+impl From<()> for SqlValue {
+    fn from(_: ()) -> Self {
+        SqlValue::Null
+    }
+}
+impl From<i64> for SqlValue {
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
+    }
+}
+impl From<f64> for SqlValue {
+    fn from(value: f64) -> Self {
+        SqlValue::Real(value)
+    }
+}
+impl From<String> for SqlValue {
+    fn from(value: String) -> Self {
+        SqlValue::Text(value)
+    }
+}
+impl From<Vec<u8>> for SqlValue {
+    fn from(value: Vec<u8>) -> Self {
+        SqlValue::Blob(value)
+    }
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum SqlError {

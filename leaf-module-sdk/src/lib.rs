@@ -2,6 +2,33 @@ pub use anyhow;
 pub use anyhow::Result;
 pub use leaf_stream_types::*;
 
+#[link(wasm_import_module = "host")]
+unsafe extern "C" {
+    #[link_name = "query"]
+    unsafe fn __wasm_query(query_ptr: *const u8, query_len: usize, out_ptr: *mut u8);
+}
+
+pub fn query(query: &str, params: Vec<(String, SqlValue)>) -> SqlRows {
+    let query = SqlQuery {
+        sql: query.into(),
+        params,
+    };
+    let query_bytes = query.encode();
+    let query_ptr = query_bytes.as_ptr();
+    let query_len = query_bytes.len();
+
+    let mut rows_bytes = unsafe {
+        let out_ptr =
+            std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(8, 4)) as *mut usize;
+        __wasm_query(query_ptr, query_len, out_ptr as *mut u8);
+
+        let rows_ptr = out_ptr.read() as *mut u8;
+        let rows_len = out_ptr.add(1).read();
+        std::slice::from_raw_parts(rows_ptr, rows_len)
+    };
+    SqlRows::decode(&mut rows_bytes).unwrap()
+}
+
 #[macro_export]
 macro_rules! register_handlers {
     ($init_db:ident, $filter_inbound:ident, $filter_outbound:ident, $process_event:ident) => {
@@ -12,21 +39,11 @@ macro_rules! register_handlers {
 
         #[unsafe(no_mangle)]
         #[unsafe(export_name = "init_db")]
-        unsafe extern "C" fn __wasm_init_db(
-            input_ptr: *mut u8,
-            input_len: usize,
-            out_ptr: *mut (*mut u8, usize),
-        ) {
+        unsafe extern "C" fn __wasm_init_db(input_ptr: *mut u8, input_len: usize) {
             let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
             let input = ModuleInit::decode(&mut input_bytes).unwrap();
 
-            let resp = $init_db(input.creator, input.params);
-
-            let mut response_bytes = resp.encode();
-            let ptr = response_bytes.as_mut_ptr();
-            let len = response_bytes.len();
-            std::mem::forget(response_bytes);
-            unsafe { out_ptr.write((ptr, len)) };
+            $init_db(input.creator, input.params);
         }
 
         #[unsafe(no_mangle)]

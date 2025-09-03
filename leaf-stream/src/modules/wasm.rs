@@ -51,7 +51,7 @@ impl LeafWasmModule {
         linker.func_wrap_async(
             "host",
             "query",
-            |mut caller, (query_ptr, query_len): (i32, i32)| {
+            |mut caller, (query_ptr, query_len, out_ptr): (i32, i32, i32)| {
                 Box::new(async move {
                     let memory = caller
                         .get_export("memory")
@@ -67,6 +67,7 @@ impl LeafWasmModule {
                     memory.read(&caller, query_ptr as usize, &mut query_bytes)?;
                     let query = SqlQuery::decode(&mut &query_bytes[..])?;
 
+                    // TODO: provide a way to execute batch queries.
                     let mut rows = conn
                         .query(
                             &query.sql,
@@ -100,13 +101,19 @@ impl LeafWasmModule {
                     malloc
                         .call_async(&mut caller, &[result_len.into(), 1.into()], &mut results)
                         .await?;
-                    let Some(input_ptr) = results[0].i32() else {
+                    let Some(result_ptr) = results[0].i32() else {
                         anyhow::bail!("Invalid return type from malloc");
                     };
-                    memory.write(&mut caller, input_ptr as usize, &result_bytes)?;
+                    memory.write(&mut caller, result_ptr as usize, &result_bytes)?;
 
-                    // Return the pointer to the query result
-                    Ok((input_ptr, result_len))
+                    // Write the pointer to the result to the out pointer
+                    let ptr_bytes: Vec<u8> = i32::to_le_bytes(result_ptr)
+                        .into_iter()
+                        .chain(i32::to_le_bytes(result_len).into_iter())
+                        .collect();
+                    memory.write(&mut caller, out_ptr as usize, &ptr_bytes)?;
+
+                    Ok(())
                 })
             },
         )?;
@@ -380,7 +387,7 @@ impl LeafModule for LeafWasmModule {
                 .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
                 .context("invalid type for malloc function")?;
             let init_db = instance
-                .get_typed_func::<(i32, i32, i32), ()>(&mut store, "init_db")
+                .get_typed_func::<(i32, i32), ()>(&mut store, "init_db")
                 .context("Invalid type for process_event function")?;
 
             // Allocate the input in the WASM module
@@ -389,36 +396,11 @@ impl LeafModule for LeafWasmModule {
             let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
             memory.write(&mut store, input_ptr as usize, &input_bytes)?;
 
-            // Allocate space for the return value
-            let output_ptr = malloc
-                .call_async(
-                    &mut store,
-                    (size_of::<i32>() as i32 * 2, align_of::<i32>() as i32),
-                )
-                .await?;
-
-            // Run the inbound filter function from the WASM module
+            // Run the init_db function from the WASM module
             init_db
-                .call_async(&mut store, (input_ptr, input_len, output_ptr))
+                .call_async(&mut store, (input_ptr, input_len))
                 .await
                 .context("error calling wasm func")?;
-
-            let mut output_ptr_bytes = [0u8; size_of::<i32>()];
-            memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
-            let mut output_len_bytes = [0u8; size_of::<i32>()];
-            memory.read(
-                &store,
-                output_ptr as usize + size_of::<i32>(),
-                &mut output_len_bytes,
-            )?;
-            let output_ptr = i32::from_le_bytes(output_ptr_bytes);
-            let output_len = i32::from_le_bytes(output_len_bytes);
-
-            let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
-            memory.read(&store, output_ptr as usize, &mut response_bytes)?;
-            let response = String::decode(&mut &response_bytes[..])?;
-
-            db.execute_batch(&response).await?;
 
             Ok(())
         })
