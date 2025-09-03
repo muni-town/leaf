@@ -168,7 +168,6 @@ impl Stream {
                     database_id: db_stream_id,
                 });
             }
-            dbg!(&db_module_event_cursor);
             module = ModuleStatus::Unloaded(db_module);
             params = db_params;
             module_event_cursor = db_module_event_cursor.unwrap_or(0);
@@ -335,7 +334,8 @@ impl Stream {
                 },
                 self.module_db.clone(),
             )
-            .await?;
+            .await
+            .context("error running module filter_inbound.")?;
 
         // Now disable the read-only authorizer
         self.module_db.authorizer(None)?;

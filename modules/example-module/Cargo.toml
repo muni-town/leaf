@@ -7,3 +7,6 @@ edition = "2024"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
+leaf-module-sdk = { path = "../../leaf-module-sdk" }
+
+serde_json = "1.0.143"

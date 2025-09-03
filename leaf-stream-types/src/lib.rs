@@ -1,4 +1,4 @@
-use parity_scale_codec::{Decode, Encode};
+pub use parity_scale_codec::{Decode, Encode};
 
 #[derive(Decode, Encode, Debug, Clone)]
 pub struct ModuleInput<Payload = Vec<u8>, Params = Vec<u8>> {

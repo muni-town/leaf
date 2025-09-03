@@ -1546,6 +1546,10 @@ dependencies = [
 [[package]]
 name = "example-module"
 version = "0.1.0"
+dependencies = [
+ "leaf-module-sdk",
+ "serde_json",
+]
 
 [[package]]
 name = "fallible-iterator"
@@ -2583,6 +2587,10 @@ dependencies = [
 [[package]]
 name = "leaf-module-sdk"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "leaf-stream-types",
+]
 
 [[package]]
 name = "leaf-server"
