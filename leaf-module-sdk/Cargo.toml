@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 leaf-stream-types = { path = "../leaf-stream-types" }
 anyhow = "1.0.99"
+mini-alloc = { git = "https://github.com/OffchainLabs/mini-alloc.git" }

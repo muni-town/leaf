@@ -2,6 +2,10 @@ pub use anyhow;
 pub use anyhow::Result;
 pub use leaf_stream_types::*;
 
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOC: mini_alloc::MiniAlloc = mini_alloc::MiniAlloc::INIT;
+
 #[link(wasm_import_module = "host")]
 unsafe extern "C" {
     #[link_name = "query"]
