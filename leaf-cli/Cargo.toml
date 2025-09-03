@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.99"
 async-trait = "0.1.89"
+base64 = "0.22.1"
 blake3 = { version = "1.8.2", features = ["serde"] }
 clap = { version = "4.5.46", features = ["derive"] }
 leaf-stream = { path = "../leaf-stream" }

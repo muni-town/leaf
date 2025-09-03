@@ -106,6 +106,7 @@ impl Stream {
     }
 
     /// Open a stream.
+    #[instrument(skip(db, module_db))]
     pub async fn open(
         genesis: StreamGenesis,
         db: libsql::Connection,
@@ -152,7 +153,12 @@ impl Stream {
         let params;
         let module_event_cursor;
         if let Some(row) = row {
-            let (db_stream_id, db_module, db_params, db_module_event_cursor) = row
+            let (db_stream_id, db_module, db_params, db_module_event_cursor): (
+                Hash,
+                Hash,
+                Vec<u8>,
+                Option<i64>,
+            ) = row
                 .parse_row()
                 .await
                 .context("error parsing stream state")?;
@@ -162,16 +168,16 @@ impl Stream {
                     database_id: db_stream_id,
                 });
             }
-
+            dbg!(&db_module_event_cursor);
             module = ModuleStatus::Unloaded(db_module);
             params = db_params;
-            module_event_cursor = db_module_event_cursor;
+            module_event_cursor = db_module_event_cursor.unwrap_or(0);
         } else {
             // Initialize the stream state
-            db.query(
+            db.execute(
                 "insert into stream_state \
                 (id, stream_id, module, params, module_event_cursor) values \
-                (1, :stream_id, :module, :params, 0) ",
+                (1, :stream_id, :module, :params, null) ",
                 (
                     (":stream_id", id.as_bytes().to_vec()),
                     (":module", genesis.module.0.as_bytes().to_vec()),
@@ -245,8 +251,8 @@ impl Stream {
         let events: Vec<(i64, String, Vec<u8>)> = self
             .db
             .query(
-                "select (id, user, payload) from events where id > :cursor",
-                (":cursor", self.module_event_cursor),
+                "select id, user, payload from events where id > ?",
+                [self.module_event_cursor],
             )
             .await?
             .parse_rows()
@@ -268,10 +274,11 @@ impl Stream {
                 )
                 .await?;
 
+            self.module_event_cursor += 1;
             self.db
-                .query(
-                    "update stream_state set module_event_cursor = :cursor where id = 1",
-                    (":cursor", self.module_event_cursor + 1),
+                .execute(
+                    "update stream_state set module_event_cursor = ? where id = 1",
+                    [self.module_event_cursor],
                 )
                 .await?;
         }
@@ -305,7 +312,9 @@ impl Stream {
         payload: Vec<u8>,
     ) -> Result<Option<Hash>, StreamError> {
         // Make sure the current module is caught up
-        self.catch_up_module().await?;
+        self.catch_up_module()
+            .await
+            .context("error catching up module")?;
 
         let module = match &mut self.module {
             ModuleStatus::Unloaded(hash) => return Err(StreamError::ModuleNotProvided(*hash)),
@@ -337,13 +346,18 @@ impl Stream {
         }
 
         // Now that the event has passed the filter, add it to the stream.
+        self.latest_event += 1;
+        // TODO: add SQL trigger to enforce incrementing the ID once in the database
         self.db
-            .query(
-                "insert into events (user, payload) values (:user, :payload)",
-                ((":user", user.clone()), (":payload", payload.clone())),
+            .execute(
+                "insert into events (id, user, payload) values (:id, :user, :payload)",
+                (
+                    (":id", self.latest_event),
+                    (":user", user.clone()),
+                    (":payload", payload.clone()),
+                ),
             )
             .await?;
-        self.latest_event += 1;
 
         // TODO: We need to think more carefully around this portion of the code what happens if we
         // crash at different timings and if that causes the same event to be processed twice or
@@ -367,19 +381,22 @@ impl Stream {
 
         // Now we update the module's event cursor
         self.module_event_cursor += 1;
+        assert_eq!(self.module_event_cursor, self.latest_event);
+        dbg!(&self.module_event_cursor);
         self.db
-            .query(
-                "update stream_state set module_event_cursor = :cursor where id = 1",
-                (":cursor", self.module_event_cursor),
+            .execute(
+                "update stream_state set module_event_cursor = ? where id = 1",
+                [self.module_event_cursor],
             )
-            .await?;
+            .await
+            .context("error updating module event cursor")?;
 
         // If there is a new module, then update our module status
         if let Some(new_module) = module_update.new_module {
             self.db
                 .execute(
-                    "update stream_state set module = :module where id = 1",
-                    (":module", new_module.to_vec()),
+                    "update stream_state set module = ? where id = 1",
+                    [new_module.to_vec()],
                 )
                 .await?;
             self.module = ModuleStatus::Unloaded(Hash::from_bytes(new_module));
@@ -387,16 +404,44 @@ impl Stream {
         // If there are new params, then update our params
         if let Some(new_params) = module_update.new_params {
             self.db
-                .execute(
-                    "update stream_state set params = :params",
-                    (":params", new_params.clone()),
-                )
+                .execute("update stream_state set params = ?", [new_params.clone()])
                 .await?;
             self.params = new_params;
         }
 
         Ok(module_update.new_module.map(Hash::from_bytes))
     }
+
+    /// TODO: provide a way to asynchronously stream the events instead of batch collecting them.
+    pub async fn fetch_events(
+        &self,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FetchedEvent>, StreamError> {
+        let rows = self
+            .db
+            .query(
+                "select id, user, payload from events where id >= :start and id < :end",
+                ((":start", offset), (":end", offset + limit)),
+            )
+            .await?;
+        let events: Vec<(i64, String, Vec<u8>)> = rows.parse_rows().await?;
+
+        Ok(events
+            .into_iter()
+            .map(|x| FetchedEvent {
+                idx: x.0 as u64,
+                user: x.1,
+                payload: x.2,
+            })
+            .collect())
+    }
+}
+
+pub struct FetchedEvent {
+    pub idx: u64,
+    pub user: String,
+    pub payload: Vec<u8>,
 }
 
 /// The trait implemented by leaf modules.

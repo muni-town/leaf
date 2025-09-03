@@ -4,13 +4,14 @@ use std::{
 };
 
 use anyhow::Context;
+use base64::Engine;
 use clap::{Parser, Subcommand};
 use leaf_stream::{
     Stream, StreamGenesis, encoding::Encodable, libsql, modules::wasm::LeafWasmModule, ulid::Ulid,
 };
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
@@ -127,22 +128,91 @@ async fn host(args: &HostArgs) -> anyhow::Result<()> {
     tracing::info!(status=?stream.module(), id=?stream.id(), "Successfully opened stream");
 
     let router = Router::new()
-        .hoop(Inject(Arc::new(Mutex::new(stream))))
-        .post(host_request);
+        .hoop(Inject(Arc::new(RwLock::new(stream))))
+        .post(post_event)
+        .push(Router::new().get(get_events));
 
     Server::new(acceptor).serve(router).await;
 
     Ok(())
 }
 
-type StreamCtx = Arc<Mutex<Stream>>;
+type StreamCtx = Arc<RwLock<Stream>>;
+
+#[derive(Serialize)]
+struct Event {
+    pub index: u64,
+    pub user: String,
+    pub payload: Payload,
+}
+
+enum Payload {
+    String(String),
+    Binary(Vec<u8>),
+}
+
+impl serde::Serialize for Payload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct StringPayload<'a> {
+            string: &'a str,
+        }
+        #[derive(Serialize)]
+        struct Base64<'a> {
+            base64: &'a str,
+        }
+        match self {
+            Payload::String(s) => StringPayload { string: s }.serialize(serializer),
+            Payload::Binary(items) => Base64 {
+                base64: &base64::prelude::BASE64_STANDARD.encode(items),
+            }
+            .serialize(serializer),
+        }
+    }
+}
 
 #[handler]
-async fn host_request(depot: &mut Depot, req: &mut Request) -> anyhow::Result<()> {
+async fn get_events(
+    depot: &mut Depot,
+    req: &mut Request,
+    res: &mut Response,
+) -> anyhow::Result<()> {
+    let stream = depot
+        .obtain::<StreamCtx>()
+        .expect("Missing stream context")
+        .read()
+        .await;
+    let offset = req.query::<u64>("offset").unwrap_or(0);
+    let limit = req.query::<u64>("limit").unwrap_or(100);
+
+    let events = stream.fetch_events(offset, limit).await?;
+
+    let events = events
+        .into_iter()
+        .map(|x| Event {
+            index: x.idx,
+            user: x.user,
+            payload: match String::from_utf8(x.payload) {
+                Ok(s) => Payload::String(s),
+                Err(e) => Payload::Binary(e.into_bytes()),
+            },
+        })
+        .collect::<Vec<_>>();
+
+    res.render(Json(events));
+
+    Ok(())
+}
+
+#[handler]
+async fn post_event(depot: &mut Depot, req: &mut Request) -> anyhow::Result<()> {
     let mut stream = depot
         .obtain::<StreamCtx>()
         .expect("Missing stream context")
-        .lock()
+        .write()
         .await;
     let payload = req.payload().await?.to_vec();
     let user = req
