@@ -22,15 +22,11 @@ create table if not exists "staged_wasm" (
 create table if not exists "streams" (
     -- The stream ID
     "id"    blob not null primary key,
-    -- The user that created the stream
-    "owner" text not null,
+    -- The user that created the stream.
+    "creator" text not null,
+    -- The encoded genesis config of the stream.
+    "genesis" blob not null,
+    -- Current module
+    "current_module" blob not null references wasm_blobs(hash),
     unique (id, owner)
-);
-
--- table that ties streams to the blobs that they depend on.
-create table if not exists "streams_wasm_blobs" (
-    "stream_id" blob not null references streams(id) on delete cascade,
-    "params"    blob,
-    "blob_hash" blob not null references wasm_blobs(hash),
-    unique (stream_id, blob_hash)
 );

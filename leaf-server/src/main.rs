@@ -3,17 +3,18 @@ use std::sync::{Arc, LazyLock};
 use clap::Parser;
 use tokio::sync::Notify;
 
-use crate::{cli::Args, storage::STORAGE};
+use crate::{
+    cli::{Args, ServerArgs},
+    storage::STORAGE,
+};
 
 mod async_oncelock;
 mod cli;
 mod error;
 mod http;
 mod otel;
-mod serde;
 mod storage;
 mod streams;
-mod wasm;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);
@@ -40,22 +41,9 @@ async fn main() {
     // Initialize logging & telemetry
     let _g = otel::init();
 
-    // Make Ctrl+C trigger graceful shutdown
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.unwrap();
-        EXIT_SIGNAL.trigger_exit_signal();
-    });
-
-    let result: anyhow::Result<()> = async {
-        // Start server
-        start_server().await?;
-
-        // Then wait for shutdown signal
-        wait_for_shutdown().await;
-
-        Ok(())
-    }
-    .await;
+    let result = match &ARGS.command {
+        cli::Command::Server(args) => start_server(args).await,
+    };
 
     // Log server start error
     if let Err(e) = result {
@@ -65,14 +53,23 @@ async fn main() {
 
 /// Start the leaf server
 #[tracing::instrument(err)]
-async fn start_server() -> anyhow::Result<()> {
+async fn start_server(args: &'static ServerArgs) -> anyhow::Result<()> {
     tracing::info!(args=?&*ARGS, "Starting Leaf server");
 
+    // Make Ctrl+C trigger graceful shutdown
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        EXIT_SIGNAL.trigger_exit_signal();
+    });
+
     // Initialize storage
-    STORAGE.initialize().await?;
+    STORAGE.initialize(&args.data_dir).await?;
 
     // Start the web API
-    http::start_api().await?;
+    http::start_api(args).await?;
+
+    // Then wait for shutdown signal
+    wait_for_shutdown().await;
 
     Ok(())
 }

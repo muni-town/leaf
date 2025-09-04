@@ -123,8 +123,8 @@ async fn host(args: &HostArgs) -> anyhow::Result<()> {
         params,
     };
 
-    let mut stream = leaf_stream::Stream::open(genesis, stream_db, module_db).await?;
-    stream.provide_module(Box::new(module))?;
+    let mut stream = leaf_stream::Stream::open(genesis, stream_db).await?;
+    stream.provide_module(Box::new(module), module_db)?;
     tracing::info!(status=?stream.module(), id=?stream.id(), "Successfully opened stream");
 
     let router = Router::new()

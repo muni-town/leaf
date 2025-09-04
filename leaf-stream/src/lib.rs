@@ -16,18 +16,30 @@ pub use leaf_stream_types as types;
 pub use libsql;
 pub use ulid;
 
+use crate::modules::wasm::ENGINE;
+
 pub mod modules;
 
 #[derive(Debug)]
 pub struct Stream {
     id: Hash,
     db: libsql::Connection,
-    module_db: libsql::Connection,
     module: ModuleStatus,
     params: Vec<u8>,
     creator: String,
     latest_event: i64,
     module_event_cursor: i64,
+}
+impl std::hash::Hash for Stream {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+impl std::cmp::Eq for Stream {}
+impl std::cmp::PartialEq for Stream {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 }
 
 /// The genesis configuration of an event stream.
@@ -57,14 +69,17 @@ impl StreamGenesis {
 
 pub enum ModuleStatus {
     Unloaded(Hash),
-    Loaded(Box<dyn LeafModule>),
+    Loaded {
+        module: Box<dyn LeafModule>,
+        module_db: libsql::Connection,
+    },
 }
 
 impl std::fmt::Debug for ModuleStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unloaded(arg0) => f.debug_tuple("Unloaded").field(arg0).finish(),
-            Self::Loaded(_) => f.debug_tuple("Loaded").field(&"dyn LeafModule").finish(),
+            Self::Loaded { .. } => f.debug_tuple("Loaded").field(&"dyn LeafModule").finish(),
         }
     }
 }
@@ -106,12 +121,8 @@ impl Stream {
     }
 
     /// Open a stream.
-    #[instrument(skip(db, module_db))]
-    pub async fn open(
-        genesis: StreamGenesis,
-        db: libsql::Connection,
-        module_db: libsql::Connection,
-    ) -> Result<Self, StreamError> {
+    #[instrument(skip(db))]
+    pub async fn open(genesis: StreamGenesis, db: libsql::Connection) -> Result<Self, StreamError> {
         let id = genesis.get_stream_id_and_bytes().0;
 
         // run database migrations
@@ -195,7 +206,6 @@ impl Stream {
         Ok(Self {
             id,
             db,
-            module_db,
             module,
             params,
             creator: genesis.creator,
@@ -209,7 +219,7 @@ impl Stream {
     ///
     /// You must then call [`provide_module()`][Self::provide_module] with the module in order to
     /// allow the stream to continue processing.
-    fn needs_module(&self) -> Option<blake3::Hash> {
+    pub fn needs_module(&self) -> Option<blake3::Hash> {
         match self.module {
             ModuleStatus::Unloaded(hash) => Some(hash),
             _ => None,
@@ -217,7 +227,11 @@ impl Stream {
     }
 
     /// Provide the stream it's module, if it is needed.
-    pub fn provide_module(&mut self, module: Box<dyn LeafModule>) -> Result<(), StreamError> {
+    pub fn provide_module(
+        &mut self,
+        module: Box<dyn LeafModule>,
+        module_db: libsql::Connection,
+    ) -> Result<(), StreamError> {
         let Some(needed) = self.needs_module() else {
             return Err(StreamError::ModuleNotNeeded);
         };
@@ -226,7 +240,7 @@ impl Stream {
             return Err(StreamError::InvalidModuleId { needed, provided });
         }
 
-        self.module = ModuleStatus::Loaded(module);
+        self.module = ModuleStatus::Loaded { module, module_db };
 
         Ok(())
     }
@@ -236,7 +250,7 @@ impl Stream {
     /// Returns the number of events that were processed while catching up.
     #[instrument(skip(self), err)]
     pub async fn catch_up_module(&mut self) -> Result<i64, StreamError> {
-        let ModuleStatus::Loaded(module) = &mut self.module else {
+        let ModuleStatus::Loaded { module, module_db } = &mut self.module else {
             return Err(StreamError::ModuleNotNeeded);
         };
 
@@ -245,11 +259,7 @@ impl Stream {
         // twice. )
         if self.module_event_cursor == 0 {
             module
-                .init_db(
-                    self.creator.clone(),
-                    self.params.clone(),
-                    self.module_db.clone(),
-                )
+                .init_db(self.creator.clone(), self.params.clone(), module_db.clone())
                 .await
                 .context("Error initializing module DB")?;
         }
@@ -285,7 +295,7 @@ impl Stream {
                         params: self.params.clone(),
                         user,
                     },
-                    self.module_db.clone(),
+                    module_db.clone(),
                 )
                 .await?;
 
@@ -331,14 +341,13 @@ impl Stream {
             .await
             .context("error catching up module")?;
 
-        let module = match &mut self.module {
+        let (module, module_db) = match &mut self.module {
             ModuleStatus::Unloaded(hash) => return Err(StreamError::ModuleNotProvided(*hash)),
-            ModuleStatus::Loaded(module) => module,
+            ModuleStatus::Loaded { module, module_db } => (module, module_db),
         };
 
         // For filter operations, switch the SQL authorization to only allow read operations.
-        self.module_db
-            .authorizer(Some(Arc::new(read_only_sql_authorizer)))?;
+        module_db.authorizer(Some(Arc::new(read_only_sql_authorizer)))?;
 
         // First we check whether the event should be filtered out
         let filter_response = module
@@ -348,13 +357,13 @@ impl Stream {
                     params: self.params.clone(),
                     user: user.clone(),
                 },
-                self.module_db.clone(),
+                module_db.clone(),
             )
             .await
             .context("error running module filter_inbound.")?;
 
         // Now disable the read-only authorizer
-        self.module_db.authorizer(None)?;
+        module_db.authorizer(None)?;
 
         // Error if the event was rejected by the filter
         if let Inbound::Block { reason } = filter_response {
@@ -391,7 +400,7 @@ impl Stream {
                     params: self.params.clone(),
                     user,
                 },
-                self.module_db.clone(),
+                module_db.clone(),
             )
             .await?;
 
@@ -493,4 +502,12 @@ fn read_only_sql_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization 
         }
         _ => libsql::Authorization::Deny,
     }
+}
+
+/// Check that the provided bytes represent a valid WASM file.
+///
+/// This doesn't check that the imports/exports of the module are compatible with Leaf, it just does
+/// a very quick check that the bytes are valid according to the WASM binary file format.
+pub fn validate_wasm(bytes: &[u8]) -> anyhow::Result<()> {
+    wasmtime::Module::validate(&ENGINE, bytes)
 }

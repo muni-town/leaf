@@ -20,11 +20,11 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 mod connection;
 
-use crate::{ARGS, EXIT_SIGNAL};
+use crate::{EXIT_SIGNAL, cli::ServerArgs};
 
 #[instrument(err)]
-pub async fn start_api() -> anyhow::Result<()> {
-    let acceptor = TcpListener::new(&ARGS.listen_address).bind().await;
+pub async fn start_api(args: &'static ServerArgs) -> anyhow::Result<()> {
+    let acceptor = TcpListener::new(&args.listen_address).bind().await;
 
     let (layer, io) = SocketIo::new_layer();
 

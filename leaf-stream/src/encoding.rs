@@ -3,6 +3,11 @@ use ulid::Ulid;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Encodable<T>(pub T);
+impl<T> From<T> for Encodable<T> {
+    fn from(value: T) -> Self {
+        Encodable(value)
+    }
+}
 impl Encode for Encodable<Ulid> {
     fn size_hint(&self) -> usize {
         u128::size_hint(&self.0.0)

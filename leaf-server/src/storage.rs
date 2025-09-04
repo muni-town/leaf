@@ -1,35 +1,52 @@
-use std::{collections::HashSet, sync::LazyLock, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+    time::Duration,
+};
 
 use blake3::Hash;
+use leaf_stream::{StreamGenesis, validate_wasm};
 use leaf_utils::convert::FromRows;
 use libsql::Connection;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::{ARGS, async_oncelock::AsyncOnceLock, wasm::validate_wasm};
+use crate::{
+    async_oncelock::AsyncOnceLock,
+    streams::{STREAMS, StreamHandle},
+};
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
 #[derive(Default)]
 pub struct Storage {
     conn: AsyncOnceLock<libsql::Connection>,
+    data_dir: Option<PathBuf>,
 }
 
 impl Storage {
-    async fn conn(&self) -> &libsql::Connection {
+    async fn db(&self) -> &libsql::Connection {
         (&self.conn).await
     }
 
+    pub fn data_dir(&self) -> anyhow::Result<&Path> {
+        if let Some(d) = &self.data_dir {
+            Ok(d)
+        } else {
+            anyhow::bail!("Storage not initialized");
+        }
+    }
+
     #[instrument(skip(self), err)]
-    pub async fn initialize(&self) -> anyhow::Result<()> {
+    pub async fn initialize(&self, data_dir: &Path) -> anyhow::Result<()> {
         if self.conn.has_initialized() {
             tracing::warn!("Database already initialized.");
             return Ok(());
         }
 
         // Open database file
-        tokio::fs::create_dir_all(&ARGS.data_dir).await?;
-        let database = libsql::Builder::new_local(ARGS.data_dir.join("leaf.db"))
+        tokio::fs::create_dir_all(data_dir).await?;
+        let database = libsql::Builder::new_local(data_dir.join("leaf.db"))
             .build()
             .await?;
         let c = database.connect()?;
@@ -48,31 +65,23 @@ impl Storage {
 
     /// Returns the list of hashes that could be found in the database out of the list that is
     /// provided to search for.
-    #[instrument(skip(self, hashes), err)]
-    pub async fn find_wasm_blobs(
-        &self,
-        hashes: &HashSet<blake3::Hash>,
-    ) -> anyhow::Result<HashSet<blake3::Hash>> {
-        let placeholders = hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let rows = self
-            .conn()
+    #[instrument(skip(self, hash), err)]
+    pub async fn has_blob(&self, hash: Hash) -> anyhow::Result<bool> {
+        let mut rows = self
+            .db()
             .await
             .query(
-                &format!("select hash from wasm_blobs where hash in ({placeholders})"),
-                hashes
-                    .iter()
-                    .map(|x| x.as_bytes().to_vec())
-                    .collect::<Vec<_>>(),
+                "select hash from wasm_blobs where hash = ?",
+                [hash.as_bytes().to_vec()],
             )
             .await?;
-        let found_hashes = Vec::<Hash>::from_rows(rows).await?.into_iter().collect();
-        return Ok(found_hashes);
+        return Ok(rows.next().await?.is_some());
     }
 
     #[instrument(skip(self), err)]
     pub async fn get_module(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
         let mut blobs = Vec::<Vec<u8>>::from_rows(
-            self.conn()
+            self.db()
                 .await
                 .query(
                     "select data from wasm_blobs where hash=?",
@@ -85,32 +94,28 @@ impl Storage {
     }
 
     #[instrument(skip(self), err)]
-    pub async fn save_stream(
-        &self,
-        id: Hash,
-        owner: &str,
-        blobs: &HashSet<Hash>,
-    ) -> anyhow::Result<()> {
-        let trans = self.conn().await.transaction().await?;
-        trans
+    pub async fn create_stream(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
+        let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
+        let creator = genesis.creator.clone();
+        let genesis_module = genesis.module;
+
+        let stream = STREAMS.load(genesis).await?;
+
+        self.db()
+            .await
             .execute(
-                "insert into streams (id, owner) values (:id, :owner)",
-                ((":id", id.as_bytes().to_vec()), (":owner", owner)),
+                "insert into streams (id, creator, genesis, current_module) \
+                values (:id, :creator, :genesis, :current_module)",
+                (
+                    (":id", id.as_bytes().to_vec()),
+                    (":creator", creator),
+                    (":genesis", genesis_bytes),
+                    (":current_module", genesis_module.0.as_bytes().to_vec()),
+                ),
             )
             .await?;
-        for blob in blobs {
-            trans
-                .execute(
-                    "insert into streams_wasm_blobs (stream_id, blob_hash) values (:stream_id, :blob_hash)",
-                    (
-                        (":stream_id", id.as_bytes().to_vec()),
-                        (":blob_hash", blob.as_bytes().to_vec()),
-                    ),
-                )
-                .await?;
-        }
-        trans.commit().await?;
-        Ok(())
+
+        Ok(stream)
     }
 
     #[instrument(skip(self, data), err)]
@@ -119,7 +124,7 @@ impl Storage {
             anyhow::bail!("WASM module larger than 10MB maximum size.");
         }
         validate_wasm(&data)?;
-        let trans = self.conn().await.transaction().await?;
+        let trans = self.db().await.transaction().await?;
         let hash = blake3::hash(&data);
         trans
             .execute(
@@ -140,7 +145,7 @@ impl Storage {
     #[instrument(skip(self), err)]
     pub async fn garbage_collect_wasm(&self) -> anyhow::Result<()> {
         let mut deleted = self
-            .conn()
+            .db()
             .await
             .execute_batch(
                 r#"
@@ -148,7 +153,7 @@ impl Storage {
                 delete from wasm_blobs where not exists (
                     select 1 from staged_wasm s where s.hash=wasm_blobs.hash
                         union
-                    select 1 from streams_wasm_blobs s where s.blob_hash=wasm_blobs.hash
+                    select 1 from streams s where s.current_module=wasm_blobs.hash
                 ) returning hash;
                 "#,
             )

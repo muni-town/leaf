@@ -30,5 +30,10 @@ tracing = "0.1.41"
 
 # Module backends
 piccolo = { git = "https://github.com/kyren/piccolo.git", optional = true }
-wasmtime = { version = "36.0.2", optional = true }
-
+wasmtime = { version = "36.0.2", optional = true, features = [
+    "cranelift",
+    "runtime",
+    "parallel-compilation",
+    "std",
+    "async",
+], default-features = false }

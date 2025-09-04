@@ -1,15 +1,22 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::HashSet, sync::Arc};
 
+use base64::Engine;
 use blake3::Hash;
+use leaf_stream::StreamGenesis;
 use rmpv::Value;
+use serde::Deserialize;
 use serde_json::json;
 use socketioxide::extract::{AckSender, Data, SocketRef, TryData};
+use tokio::sync::RwLock;
 use tracing::{Instrument, Span};
+use ulid::Ulid;
 
 use crate::{error::LogError, storage::STORAGE};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span = Span::current();
+
+    let open_streams = Arc::new(RwLock::new(HashSet::new()));
 
     let did_ = did.clone();
     let span_ = span.clone();
@@ -34,22 +41,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span_ = span.clone();
     socket.on(
         "wasm/has",
-        async move |TryData::<Vec<String>>(hashes_hex), ack: AckSender| {
+        async move |TryData::<String>(hash_hex), ack: AckSender| {
             let result = async {
-                let hashes_hex = hashes_hex?;
-                let hashes = hashes_hex
-                    .into_iter()
-                    .map(Hash::from_hex)
-                    .collect::<Result<HashSet<_>, _>>()?;
-                let found_hashes = STORAGE.find_wasm_blobs(&hashes).await?;
-                let mut response = HashMap::new();
-                for hash in &found_hashes {
-                    response.insert(hash.to_hex().to_string(), true);
-                }
-                for hash in hashes.difference(&found_hashes) {
-                    response.insert(hash.to_hex().to_string(), false);
-                }
-                anyhow::Ok(response)
+                let hash_hex = hash_hex?;
+                let hash = Hash::from_hex(hash_hex)?;
+                let has_module = STORAGE.has_blob(hash).await?;
+                anyhow::Ok(serde_json::json!(has_module))
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/has"))
             .await;
@@ -67,22 +64,31 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let did_ = did.clone();
     socket.on(
         "stream/create",
-        async move |TryData::<GenesisStreamConfig>(data), ack: AckSender| {
-            // let result = async {
-            //     let genesis = data?;
-            //     let blobs = genesis.wasm_blobs();
-            //     // STORAGE.save_stream(todo!(), &did_, &blobs).await?;
-            //     todo!();
-            // }
-            // .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
-            // .await;
+        async move |TryData::<StreamCreateInput>(data), ack: AckSender| {
+            let result = async {
+                let input = data?;
+                let genesis = StreamGenesis {
+                    stamp: Ulid::new().into(),
+                    creator: did_.clone(),
+                    module: Hash::from_hex(input.module)?.into(),
+                    params: base64::prelude::BASE64_STANDARD.decode(input.params)?,
+                };
+                let stream_id = STORAGE.create_stream(genesis).await?;
+                anyhow::Ok(stream_id)
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
+            .await;
 
-            // match result {
-            //     Ok(hash) => ack.send(&json!({ "stream_id": hash.to_hex().to_string() })),
-            //     Err(e) => ack.send(&json!({ "error": e.to_string()})),
-            // }
-            // .log_error("Internal error sending response")
-            // .ok();
+            match result {
+                Ok(stream) => {
+                    let id = stream.id();
+                    open_streams.write().await.insert(stream);
+                    ack.send(&json!({ "stream_id": id.to_hex().as_str() }))
+                }
+                Err(e) => ack.send(&json!({ "error": e.to_string()})),
+            }
+            .log_error("Internal error sending response")
+            .ok();
         },
     );
 
@@ -93,4 +99,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             ack.send(&data).ok();
         },
     );
+}
+
+#[derive(Deserialize)]
+struct StreamCreateInput {
+    /// The hex-encoded, blake3 hash of the WASM module to use to create the stream.
+    module: String,
+    /// The base64-encoded parameters to configure the module with.
+    params: String,
 }
