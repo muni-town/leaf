@@ -64,7 +64,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/create",
-        async move |TryData::<StreamCreateInput>(data), ack: AckSender| {
+        async move |TryData::<StreamCreateArgs>(data), ack: AckSender| {
             let result = async {
                 // Create the stream
                 let input = data?;
@@ -98,7 +98,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/event",
-        async move |TryData::<IncommingEvent>(data), ack: AckSender| {
+        async move |TryData::<StreamEventArgs>(data), ack: AckSender| {
             let result = async {
                 let request = data?;
                 let stream_id = Hash::from_hex(request.id)?;
@@ -136,7 +136,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let open_streams_ = open_streams.clone();
     let socket_ = socket.clone();
     socket.on(
-        "stream/event",
+        "stream/subscribe",
         async move |TryData::<String>(data), ack: AckSender| {
             let result = async {
                 let stream_id = data?;
@@ -160,7 +160,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                     while let Ok(event) = receiver.recv().await {
                         if let Err(e) = socket_.emit(
                             "stream/event",
-                            &OutgoingEvent {
+                            &StreamEventNotification {
                                 stream: stream_id.to_hex().to_string(),
                                 idx: event.idx,
                                 user: event.user,
@@ -187,11 +187,56 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
         },
     );
 
-    // TODO: Allow client to fetch events
+    let span_ = span.clone();
+    let did_ = did.clone();
+    let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/fetch",
+        async move |TryData::<StreamFetchArgs>(data), ack: AckSender| {
+            let result = async {
+                let args = data?;
+                let stream_id = Hash::from_hex(args.id)?;
+                let open_streams = open_streams_.upgradable_read().await;
+
+                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                    stream.clone()
+                } else {
+                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
+                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
+                    };
+                    let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
+                    open_streams.insert(stream_id, stream.clone());
+                    stream
+                };
+
+                let events = stream
+                    .fetch_events(&did_, args.offset, args.limit)
+                    .await?
+                    .into_iter()
+                    .map(|x| StreamFetchResponseEvent {
+                        idx: x.idx,
+                        user: x.user,
+                        payload: x.payload,
+                    })
+                    .collect::<Vec<_>>();
+
+                anyhow::Ok(events)
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
+            .await;
+
+            match result {
+                Ok(events) => ack.send(&json!({ "events": events })),
+                Err(e) => ack.send(&json!({ "error": e.to_string()})),
+            }
+            .log_error("Internal error sending response")
+            .ok();
+        },
+    );
 }
 
 #[derive(Deserialize)]
-struct StreamCreateInput {
+struct StreamCreateArgs {
     /// The hex-encoded, blake3 hash of the WASM module to use to create the stream.
     module: String,
     /// The base64-encoded parameters to configure the module with.
@@ -199,16 +244,33 @@ struct StreamCreateInput {
 }
 
 #[derive(Deserialize)]
-struct IncommingEvent {
+struct StreamEventArgs {
     /// The hex-encoded stream ID
     id: String,
     /// The event payload
     payload: Vec<u8>,
 }
 
+#[derive(Deserialize)]
+struct StreamFetchArgs {
+    /// The hex-encoded stream ID
+    pub id: String,
+    /// The event offset to start fetching from
+    pub offset: u64,
+    /// The limit on the number of events to fetch
+    pub limit: u64,
+}
+
 #[derive(Clone, Debug, Serialize)]
-pub struct OutgoingEvent {
+pub struct StreamEventNotification {
     pub stream: String,
+    pub idx: i64,
+    pub user: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StreamFetchResponseEvent {
     pub idx: i64,
     pub user: String,
     pub payload: Vec<u8>,
