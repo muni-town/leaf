@@ -7,10 +7,16 @@ pub struct ModuleInit<Params = Vec<u8>> {
 }
 
 #[derive(Decode, Encode, Debug, Clone)]
-pub struct ModuleInput<Payload = Vec<u8>, Params = Vec<u8>> {
+pub struct IncomingEvent<Payload = Vec<u8>, Params = Vec<u8>> {
     pub payload: Payload,
     pub params: Params,
     pub user: String,
+}
+
+#[derive(Decode, Encode, Debug, Clone)]
+pub struct EventRequest<Payload = Vec<u8>, Params = Vec<u8>> {
+    pub requesting_user: String,
+    pub incoming_event: IncomingEvent<Payload, Params>,
 }
 
 #[derive(Decode, Encode, Debug, Clone, Default)]

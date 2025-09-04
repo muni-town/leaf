@@ -60,3 +60,4 @@ parity-scale-codec = { version = "3.7.5", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
 ulid = { version = "1.2.1", features = ["serde"] }
 base64 = "0.22.1"
+async-lock = "3.4.1"

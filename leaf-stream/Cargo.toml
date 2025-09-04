@@ -37,3 +37,7 @@ wasmtime = { version = "36.0.2", optional = true, features = [
     "std",
     "async",
 ], default-features = false }
+async-broadcast = "0.7.2"
+async-channel = "2.5.0"
+async-lock = "3.4.1"
+futures = "0.3.31"

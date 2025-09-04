@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context;
 use blake3::Hash;
 use leaf_stream_types::{
-    Inbound, ModuleInit, ModuleInput, Outbound, Process, SqlQuery, SqlRow, SqlRows, SqlValue,
+    EventRequest, Inbound, IncomingEvent, ModuleInit, Outbound, Process, SqlQuery, SqlRow, SqlRows, SqlValue
 };
 use parity_scale_codec::{Decode, Encode};
 use wasmtime::{Config, Engine, FuncType, Store, Val, ValType};
@@ -189,8 +189,8 @@ impl LeafModule for LeafWasmModule {
     }
 
     fn filter_inbound(
-        &mut self,
-        input: ModuleInput,
+        &self,
+        input: IncomingEvent,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Send>> {
         let module = self.module.clone();
@@ -249,8 +249,8 @@ impl LeafModule for LeafWasmModule {
     }
 
     fn filter_outbound(
-        &mut self,
-        input: ModuleInput,
+        &self,
+        input: EventRequest,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Send>> {
         let module = self.module.clone();
@@ -309,8 +309,8 @@ impl LeafModule for LeafWasmModule {
     }
 
     fn process_event(
-        &mut self,
-        input: ModuleInput,
+        &self,
+        input: IncomingEvent,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Send>> {
         let module = self.module.clone();
@@ -369,7 +369,7 @@ impl LeafModule for LeafWasmModule {
     }
 
     fn init_db(
-        &mut self,
+        &self,
         creator: String,
         params: Vec<u8>,
         db: libsql::Connection,

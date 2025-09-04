@@ -58,7 +58,7 @@ macro_rules! register_handlers {
             out_ptr: *mut (*mut u8, usize),
         ) {
             let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
-            let input = ModuleInput::decode(&mut input_bytes).unwrap();
+            let input = IncomingEvent::decode(&mut input_bytes).unwrap();
 
             let resp = $filter_inbound(input);
             let response = match resp {
@@ -83,7 +83,7 @@ macro_rules! register_handlers {
             out_ptr: *mut (*mut u8, usize),
         ) {
             let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
-            let input = ModuleInput::decode(&mut input_bytes).unwrap();
+            let input = EventRequest::decode(&mut input_bytes).unwrap();
 
             let resp = $filter_outbound(input);
             let response = match resp {
@@ -107,7 +107,7 @@ macro_rules! register_handlers {
             out_ptr: *mut (*mut u8, usize),
         ) {
             let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
-            let input = ModuleInput::decode(&mut input_bytes).unwrap();
+            let input = IncomingEvent::decode(&mut input_bytes).unwrap();
 
             let resp = $process_event(input);
             let response = match resp {

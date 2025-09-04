@@ -1,3 +1,5 @@
+use blake3::Hash;
+use leaf_stream_types::Decode;
 use parity_scale_codec::Encode;
 use ulid::Ulid;
 
@@ -6,6 +8,13 @@ pub struct Encodable<T>(pub T);
 impl<T> From<T> for Encodable<T> {
     fn from(value: T) -> Self {
         Encodable(value)
+    }
+}
+impl Decode for Encodable<Ulid> {
+    fn decode<I: parity_scale_codec::Input>(
+        input: &mut I,
+    ) -> Result<Self, parity_scale_codec::Error> {
+        Ok(Encodable(Ulid(u128::decode(input)?)))
     }
 }
 impl Encode for Encodable<Ulid> {
@@ -49,5 +58,12 @@ impl Encode for Encodable<blake3::Hash> {
 
     fn encoded_size(&self) -> usize {
         H::encoded_size(self.0.as_bytes())
+    }
+}
+impl Decode for Encodable<blake3::Hash> {
+    fn decode<I: parity_scale_codec::Input>(
+        input: &mut I,
+    ) -> Result<Self, parity_scale_codec::Error> {
+        Ok(Encodable(Hash::from_bytes(<[u8; 32]>::decode(input)?)))
     }
 }

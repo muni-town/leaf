@@ -8,7 +8,7 @@ use atproto_oauth::{encoding::FromBase64, jwt::Claims};
 use rmpv::Value;
 use salvo::prelude::*;
 use socketioxide::{
-    SocketIo,
+    ParserConfig, SocketIo,
     extract::{Data, SocketRef},
 };
 use tokio::sync::Notify;
@@ -26,7 +26,9 @@ use crate::{EXIT_SIGNAL, cli::ServerArgs};
 pub async fn start_api(args: &'static ServerArgs) -> anyhow::Result<()> {
     let acceptor = TcpListener::new(&args.listen_address).bind().await;
 
-    let (layer, io) = SocketIo::new_layer();
+    let (layer, io) = SocketIo::builder()
+        .with_parser(ParserConfig::msgpack())
+        .build_layer();
 
     // This code is used to integrates other tower layers before or after Socket.IO such as CORS
     // Beware that classic salvo request won't pass through these layers

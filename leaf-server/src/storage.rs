@@ -1,15 +1,18 @@
 use std::{
     path::{Path, PathBuf},
-    sync::LazyLock,
+    sync::{Arc, LazyLock, Weak},
     time::Duration,
 };
 
+use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
-use leaf_stream::{StreamGenesis, validate_wasm};
-use leaf_utils::convert::FromRows;
+use leaf_stream::{StreamGenesis, modules::wasm::LeafWasmModule, validate_wasm};
+use leaf_utils::convert::{FromRows, ParseRow};
 use libsql::Connection;
+use parity_scale_codec::Decode;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+use weak_table::WeakValueHashMap;
 
 use crate::{
     async_oncelock::AsyncOnceLock,
@@ -18,15 +21,18 @@ use crate::{
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
+static WASM_MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafWasmModule>>>> =
+    LazyLock::new(|| RwLock::new(WeakValueHashMap::new()));
+
 #[derive(Default)]
 pub struct Storage {
-    conn: AsyncOnceLock<libsql::Connection>,
+    db: AsyncOnceLock<libsql::Connection>,
     data_dir: Option<PathBuf>,
 }
 
 impl Storage {
     async fn db(&self) -> &libsql::Connection {
-        (&self.conn).await
+        (&self.db).await
     }
 
     pub fn data_dir(&self) -> anyhow::Result<&Path> {
@@ -39,7 +45,7 @@ impl Storage {
 
     #[instrument(skip(self), err)]
     pub async fn initialize(&self, data_dir: &Path) -> anyhow::Result<()> {
-        if self.conn.has_initialized() {
+        if self.db.has_initialized() {
             tracing::warn!("Database already initialized.");
             return Ok(());
         }
@@ -58,7 +64,7 @@ impl Storage {
         // Start the background storage tasks
         start_background_tasks();
 
-        self.conn.set(c).ok();
+        self.db.set(c).ok();
 
         Ok(())
     }
@@ -79,7 +85,7 @@ impl Storage {
     }
 
     #[instrument(skip(self), err)]
-    pub async fn get_module(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
+    pub async fn get_wasm_blob(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
         let mut blobs = Vec::<Vec<u8>>::from_rows(
             self.db()
                 .await
@@ -91,6 +97,22 @@ impl Storage {
         )
         .await?;
         Ok(blobs.pop())
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn get_wasm_module(&self, id: Hash) -> anyhow::Result<Option<Arc<LeafWasmModule>>> {
+        let modules = WASM_MODULES.upgradable_read().await;
+        if let Some(module) = modules.get(&id) {
+            return Ok(Some(module));
+        }
+        let Some(blob) = self.get_wasm_blob(id).await? else {
+            return Ok(None);
+        };
+        let module = Arc::new(LeafWasmModule::new(&blob)?);
+        let mut modules = RwLockUpgradableReadGuard::upgrade(modules).await;
+        modules.insert(id, module.clone());
+
+        Ok(Some(module))
     }
 
     #[instrument(skip(self), err)]
@@ -116,6 +138,25 @@ impl Storage {
             .await?;
 
         Ok(stream)
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn open_stream(&self, id: Hash) -> anyhow::Result<Option<StreamHandle>> {
+        let mut rows = self
+            .db()
+            .await
+            .query(
+                "select genesis from streams where id = ?",
+                [id.as_bytes().to_vec()],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let genesis_bytes: Vec<u8> = row.parse_row().await?;
+        let genesis = StreamGenesis::decode(&mut &genesis_bytes[..])?;
+
+        Ok(Some(STREAMS.load(genesis).await?))
     }
 
     #[instrument(skip(self, data), err)]

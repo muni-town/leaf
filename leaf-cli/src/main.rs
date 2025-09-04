@@ -188,7 +188,7 @@ async fn get_events(
     let offset = req.query::<u64>("offset").unwrap_or(0);
     let limit = req.query::<u64>("limit").unwrap_or(100);
 
-    let events = stream.fetch_events(offset, limit).await?;
+    let events = stream.fetch_events("anonymous:", offset, limit).await?;
 
     let events = events
         .into_iter()
