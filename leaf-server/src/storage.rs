@@ -143,6 +143,30 @@ impl Storage {
         Ok(stream)
     }
 
+    /// Update the recorded current module for the stream in the leaf database.
+    ///
+    /// This should be called after a module change has been made to the stream so that the database
+    /// can avoid garbage collecting the new WASM module that it depends on.
+    #[instrument(skip(self), err)]
+    pub async fn update_stream_current_module(
+        &self,
+        stream: Hash,
+        current_module: Hash,
+    ) -> anyhow::Result<()> {
+        self.db()
+            .await
+            .execute(
+                "update streams set current_module = :module where id = :id",
+                (
+                    (":module", current_module.as_bytes().to_vec()),
+                    (":id", stream.as_bytes().to_vec()),
+                ),
+            )
+            .await?;
+
+        Ok(())
+    }
+
     #[instrument(skip(self), err)]
     pub async fn open_stream(&self, id: Hash) -> anyhow::Result<Option<StreamHandle>> {
         let mut rows = self

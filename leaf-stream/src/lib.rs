@@ -72,10 +72,10 @@ struct ModuleState {
     /// have one set of initialization params, and that will give the module the opportunity to
     /// write to it's database if it needs to record any of that for ongoing evaluation of events
     /// during filtering.
-    /// 
+    ///
     /// For example, right now there is a question of what makes sense to configure though events
     /// and what makes sense for params.
-    /// 
+    ///
     /// Maybe params still make sense for some configuration, but we are cloning it into the WASM
     /// module on every single event we process both during writes and during reads, so the params
     /// should stay relatively small.
@@ -272,6 +272,10 @@ impl Stream {
             ModuleLoad::Unloaded(hash) => {
                 if module.id() == *hash {
                     module_state.load = ModuleLoad::Loaded { module, module_db };
+                    drop(module_state);
+
+                    // Make sure we catch up the new module if it needs it.
+                    self.catch_up_module().await?;
 
                     // Send our pending event if we had an event that we were waiting to send to
                     // subscribers because we didn't have a module.
@@ -280,6 +284,7 @@ impl Stream {
                     {
                         sender.try_send(event).ok();
                     }
+
                     Ok(())
                 } else {
                     Err(StreamError::InvalidModuleId {
@@ -305,7 +310,7 @@ impl Stream {
     ///
     /// Returns the number of events that were processed while catching up.
     #[instrument(skip(self), err)]
-    pub async fn catch_up_module(&mut self) -> Result<i64, StreamError> {
+    async fn catch_up_module(&mut self) -> Result<i64, StreamError> {
         let module_state = self.module_state.read().await;
         let (module, module_db) = Self::ensure_module_loaded(&module_state.load)?;
 
@@ -319,8 +324,7 @@ impl Stream {
                     module_state.params.clone(),
                     module_db.clone(),
                 )
-                .await
-                .context("Error initializing module DB")?;
+                .await?;
         }
 
         assert!(
@@ -402,6 +406,7 @@ impl Stream {
 
         let module_state = self.module_state.upgradable_read().await;
         let (module, module_db) = Self::ensure_module_loaded(&module_state.load)?;
+        let current_module_id = module.id();
 
         // For filter operations, switch the SQL authorization to only allow read operations.
         module_db.authorizer(Some(Arc::new(read_only_sql_authorizer)))?;
@@ -461,30 +466,24 @@ impl Stream {
             )
             .await?;
 
-        // Now we update the module's event cursor
-        self.module_event_cursor += 1;
-        assert_eq!(self.module_event_cursor, self.latest_event);
-        self.db
-            .execute(
-                "update stream_state set module_event_cursor = ? where id = 1",
-                [self.module_event_cursor],
-            )
-            .await
-            .context("error updating module event cursor")?;
-
+        // If there is a module or parameter update
         if module_update.new_module.is_some() || module_update.new_params.is_some() {
             let mut module_state = RwLockUpgradableReadGuard::upgrade(module_state).await;
 
             // If there is a new module, then update our module status
-            if let Some(new_module) = module_update.new_module {
+            if let Some(new_module) = module_update.new_module
+                && &new_module != current_module_id.as_bytes()
+            {
                 self.db
                     .execute(
-                        "update stream_state set module = ? where id = 1",
+                        "update stream_state set module = ?, module_event_cursor = null where id = 1",
                         [new_module.to_vec()],
                     )
-                    .await?;
+                    .await.context("error updating steam module and module event cursor")?;
+                self.module_event_cursor = 0;
                 module_state.load = ModuleLoad::Unloaded(Hash::from_bytes(new_module));
             }
+
             // If there are new params, then update our params
             if let Some(new_params) = module_update.new_params {
                 self.db
@@ -492,6 +491,19 @@ impl Stream {
                     .await?;
                 module_state.params = new_params;
             }
+
+        // If there is no module update
+        } else {
+            // We update the module's event cursor
+            self.module_event_cursor += 1;
+            assert_eq!(self.module_event_cursor, self.latest_event);
+            self.db
+                .execute(
+                    "update stream_state set module_event_cursor = ? where id = 1",
+                    [self.module_event_cursor],
+                )
+                .await
+                .context("error updating module event cursor")?;
         }
 
         let event = Event {

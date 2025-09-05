@@ -1,5 +1,5 @@
 [package]
-name = "module-single-author-public-read-no-upgrades"
+name = "module-multi-author-private-read-admin-upgrades"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,6 +7,9 @@ edition = "2024"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
+base64 = "0.22.1"
+hex = "0.4.3"
 leaf-module-sdk = { path = "../../leaf-module-sdk" }
+serde = { version = "1.0.219", features = ["derive"] }
 
 serde_json = "1.0.143"

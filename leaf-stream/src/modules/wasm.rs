@@ -183,6 +183,8 @@ impl LeafWasmModule {
     }
 }
 
+// FIXME: We need to apply fuel limits to WASM module execution, and we also need to watch memory
+// usage.
 impl LeafModule for LeafWasmModule {
     fn id(&self) -> blake3::Hash {
         self.id

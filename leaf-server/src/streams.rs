@@ -36,7 +36,10 @@ impl StreamHandle {
             let stream_dir = data_dir.join("streams").join(self.0.id.to_hex().as_str());
             let (module, module_db) = load_module(&stream_dir, module_id).await?;
             stream.provide_module(module, module_db).await?;
-            stream.catch_up_module().await?;
+            STORAGE
+                .update_stream_current_module(self.0.id, module_id)
+                .await
+                .context("error updating current module for stream")?;
         }
 
         Ok(())
