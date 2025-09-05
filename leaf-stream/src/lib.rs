@@ -68,6 +68,17 @@ pub struct Stream {
 #[derive(Debug)]
 struct ModuleState {
     load: ModuleLoad,
+    /// TODO: consider the fact that maybe modules should just be configured by events, or maybe
+    /// have one set of initialization params, and that will give the module the opportunity to
+    /// write to it's database if it needs to record any of that for ongoing evaluation of events
+    /// during filtering.
+    /// 
+    /// For example, right now there is a question of what makes sense to configure though events
+    /// and what makes sense for params.
+    /// 
+    /// Maybe params still make sense for some configuration, but we are cloning it into the WASM
+    /// module on every single event we process both during writes and during reads, so the params
+    /// should stay relatively small.
     params: Vec<u8>,
 }
 

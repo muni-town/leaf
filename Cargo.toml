@@ -5,6 +5,6 @@ members = [
     "leaf-utils",
     "leaf-module-sdk",
     "leaf-server",
-    "modules/*-module",
+    "modules/*",
     "leaf-stream-types",
 ]

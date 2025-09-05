@@ -113,28 +113,18 @@ pub trait FromRows: Sized {
     fn from_rows(rows: SqlRows) -> SqlResult<Self>;
 }
 
-pub trait ParseValue<T>: Sized {
-    fn parse_value(self) -> SqlResult<T>;
-}
-impl<T: FromValue> ParseValue<T> for SqlValue {
-    fn parse_value(self) -> SqlResult<T> {
+impl SqlValue {
+    pub fn parse_value<T: FromValue>(self) -> SqlResult<T> {
         T::from_value(self)
     }
 }
-pub trait ParseRow<T>: Sized {
-    fn parse_row(self) -> SqlResult<T>;
-}
-impl<T: FromRow> ParseRow<T> for SqlRow {
-    fn parse_row(self) -> SqlResult<T> {
+impl SqlRow {
+    pub fn parse_row<T: FromRow>(self) -> SqlResult<T> {
         T::from_row(self)
     }
 }
-
-pub trait ParseRows<T>: Sized {
-    fn parse_rows(self) -> SqlResult<T>;
-}
-impl<T: FromRows> ParseRows<T> for SqlRows {
-    fn parse_rows(self) -> SqlResult<T> {
+impl SqlRows {
+    pub fn parse_rows<T: FromRows>(self) -> SqlResult<T> {
         T::from_rows(self)
     }
 }

@@ -24,11 +24,11 @@ fn filter_inbound(input: IncomingEvent<String, String>) -> Result<Inbound> {
             reason: "Message is not valid JSON".into(),
         });
     }
-
-    let mut rows: Vec<String> = query("select creator from state where id = 1", Vec::new())
-        .parse_rows()
+    let creator = query("select creator from state where id = 1", Vec::new())
+        .parse_rows::<Vec<String>>()
+        .unwrap()
+        .pop()
         .unwrap();
-    let creator = rows.pop().unwrap();
     if input.user != creator {
         return Ok(Inbound::Block {
             reason: format!(
