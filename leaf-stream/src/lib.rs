@@ -570,7 +570,7 @@ impl Stream {
     ///
     /// If you call this function a second time it will return `None` because there may only be one
     /// worker task.
-    pub fn creat_worker_task(&mut self) -> Option<impl Future<Output = ()>> {
+    pub fn creat_worker_task(&mut self) -> Option<impl Future<Output = ()> + 'static> {
         let module_state_lock = self.module_state.clone();
         let subs = self.subscribers.clone();
         if self.worker_sender.is_some() {
