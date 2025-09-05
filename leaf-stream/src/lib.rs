@@ -537,6 +537,7 @@ impl Stream {
                 break;
             }
 
+            module_db.authorizer(Some(Arc::new(read_only_sql_authorizer)))?;
             for (idx, user, payload) in events {
                 let result = module
                     .filter_outbound(
@@ -556,6 +557,7 @@ impl Stream {
                     Outbound::Block => (),
                 }
             }
+            module_db.authorizer(None)?;
         }
 
         Ok(filtered)
@@ -593,6 +595,9 @@ impl Stream {
                     continue;
                 };
 
+                if let Err(e) = module_db.authorizer(Some(Arc::new(read_only_sql_authorizer))) {
+                    tracing::warn!("Error setting SQLite authorizer to read only: {e}");
+                }
                 let notification_futures = subscribers.iter().map(|(requesting_user, sender)| {
                     let requesting_user = requesting_user.clone();
                     async {
@@ -624,6 +629,9 @@ impl Stream {
                     }
                 });
                 futures::future::join_all(notification_futures).await;
+                if let Err(e) = module_db.authorizer(None) {
+                    tracing::warn!("Error setting SQLite authorizer to None: {e}");
+                }
             }
         })
     }
