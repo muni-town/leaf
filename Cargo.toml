@@ -7,5 +7,4 @@ members = [
     "leaf-server",
     "modules/*-module",
     "leaf-stream-types",
-    "leaf-cli",
 ]
