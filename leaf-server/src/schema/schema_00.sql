@@ -11,7 +11,7 @@ create table if not exists "wasm_blobs" (
 -- but not used by a stream yet.
 create table if not exists "staged_wasm" (
     -- The user that uploaded the staged wasm
-    "owner"	blob not null,
+    "creator"	blob not null,
     -- The hash of the WASM blob that was uploaded
     "hash"  blob not null references wasm_blobs(hash),
     -- The unix timestamp for when this WASM module was staged
@@ -28,5 +28,5 @@ create table if not exists "streams" (
     "genesis" blob not null,
     -- Current module
     "current_module" blob not null references wasm_blobs(hash),
-    unique (id, owner)
+    unique (id, creator)
 );

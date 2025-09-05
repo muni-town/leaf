@@ -54,30 +54,6 @@ services:
               receivers: [otlp]
               exporters: [otlp/openobserve]
 
-  iggy:
-    image: apache/iggy:edge
-    environment:
-      IGGY_SYSTEM_LOGGING_SYSINFO_PRINT_INTERVAL: '0s'
-      IGGY_ROOT_USERNAME: iggy
-      IGGY_ROOT_PASSWORD: password
-      IGGY_TELEMETRY_ENABLED: true
-      IGGY_TELEMETRY_LOGS_TRANSPORT: http
-      IGGY_TELEMETRY_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
-      IGGY_TELEMETRY_TRACES_TRANSPORT: http
-      IGGY_TELEMETRY_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
-    ports:
-      - "8090:8090" # TCP API
-      - "3100:3000" # HTTP API
-    volumes:
-      - iggy:/iggy/local_data
-
-  iggy-web-ui:
-    image: iggyrs/iggy-web-ui:latest
-    environment:
-      - PUBLIC_IGGY_API_URL=http://iggy:3000
-    ports:
-      - "3050:3050"
-
 volumes:
   openobserve:
   iggy:

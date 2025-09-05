@@ -27,7 +27,7 @@ static WASM_MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafWasmModule>
 #[derive(Default)]
 pub struct Storage {
     db: AsyncOnceLock<libsql::Connection>,
-    data_dir: Option<PathBuf>,
+    data_dir: RwLock<Option<PathBuf>>,
 }
 
 impl Storage {
@@ -35,9 +35,11 @@ impl Storage {
         (&self.db).await
     }
 
-    pub fn data_dir(&self) -> anyhow::Result<&Path> {
-        if let Some(d) = &self.data_dir {
-            Ok(d)
+    pub fn data_dir(&self) -> anyhow::Result<PathBuf> {
+        if let Some(lock) = &self.data_dir.try_read()
+            && let Some(d) = lock.as_ref()
+        {
+            Ok(d.clone())
         } else {
             anyhow::bail!("Storage not initialized");
         }
@@ -51,6 +53,7 @@ impl Storage {
         }
 
         // Open database file
+        *self.data_dir.write().await = Some(data_dir.to_owned());
         tokio::fs::create_dir_all(data_dir).await?;
         let database = libsql::Builder::new_local(data_dir.join("leaf.db"))
             .build()
@@ -160,7 +163,7 @@ impl Storage {
     }
 
     #[instrument(skip(self, data), err)]
-    pub async fn upload_wasm(&self, owner: &str, data: Vec<u8>) -> anyhow::Result<blake3::Hash> {
+    pub async fn upload_wasm(&self, creator: &str, data: Vec<u8>) -> anyhow::Result<blake3::Hash> {
         if data.len() > 1024 * 1024 * 10 {
             anyhow::bail!("WASM module larger than 10MB maximum size.");
         }
@@ -175,8 +178,8 @@ impl Storage {
             .await?;
         trans
             .execute(
-                r#"insert into staged_wasm (owner, hash) values (:owner, :hash)"#,
-                ((":owner", owner), (":hash", hash.as_bytes().to_vec())),
+                r#"insert into staged_wasm (creator, hash) values (:creator, :hash)"#,
+                ((":creator", creator), (":hash", hash.as_bytes().to_vec())),
             )
             .await?;
         trans.commit().await?;
@@ -190,7 +193,7 @@ impl Storage {
             .await
             .execute_batch(
                 r#"
-                delete from staged_wasm where (unixepoch() - timestamp) > 500 returning owner, hash;
+                delete from staged_wasm where (unixepoch() - timestamp) > 500 returning creator, hash;
                 delete from wasm_blobs where not exists (
                     select 1 from staged_wasm s where s.hash=wasm_blobs.hash
                         union

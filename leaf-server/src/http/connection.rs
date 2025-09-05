@@ -119,7 +119,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
 
                 anyhow::Ok(())
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/event"))
             .await;
 
             match result {
@@ -175,7 +175,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
 
                 anyhow::Ok(())
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/subscribe"))
             .await;
 
             match result {
@@ -222,7 +222,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
 
                 anyhow::Ok(events)
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
             .await;
 
             match result {
