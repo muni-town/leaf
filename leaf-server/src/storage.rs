@@ -59,6 +59,7 @@ impl Storage {
             .build()
             .await?;
         let c = database.connect()?;
+        c.execute_batch("pragma synchronous = normal; pragma journal_mode = wal;").await?;
         tracing::info!("database connected");
 
         // Run migrations

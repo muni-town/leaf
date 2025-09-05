@@ -100,6 +100,9 @@ impl Streams {
             .await
             .context("error opening stream db")?
             .connect()?;
+        stream_db
+            .execute_batch("pragma synchronous = normal; pragma journal_mode = wal;")
+            .await?;
 
         // Open the stream
         let mut stream = leaf_stream::Stream::open(genesis, stream_db).await?;
@@ -137,6 +140,9 @@ async fn load_module(
         .await
         .context("error opening module db")?
         .connect()?;
+    module_db
+        .execute_batch("pragma synchronous = normal; pragma journal_mode = wal;")
+        .await?;
     Ok((module, module_db))
 }
 

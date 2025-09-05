@@ -137,6 +137,46 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span_ = span.clone();
     let did_ = did.clone();
     let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/event_batch",
+        async move |TryData::<StreamEventBatchArgs>(data), ack: AckSender| {
+            let result = async {
+                let request = data?;
+                let stream_id = Hash::from_hex(request.id)?;
+                let open_streams = open_streams_.upgradable_read().await;
+
+                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                    stream.clone()
+                } else {
+                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
+                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
+                    };
+                    let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
+                    open_streams.insert(stream_id, stream.clone());
+                    stream
+                };
+
+                for paylaod in request.payloads {
+                    stream.handle_event(did_.clone(), paylaod.into()).await?;
+                }
+
+                anyhow::Ok(())
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/event"))
+            .await;
+
+            match result {
+                Ok(_) => ack.send(&json!({ "ok": true })),
+                Err(e) => ack.send(&json!({ "error": e.to_string()})),
+            }
+            .log_error("Internal error sending response")
+            .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    let open_streams_ = open_streams.clone();
     let socket_ = socket.clone();
     let unsubscribers_ = unsubscribers.clone();
     socket.on(
@@ -301,6 +341,14 @@ struct StreamEventArgs {
     id: String,
     /// The event payload
     payload: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+struct StreamEventBatchArgs {
+    /// The hex-encoded stream ID
+    id: String,
+    /// The event payload
+    payloads: Vec<bytes::Bytes>,
 }
 
 #[derive(Deserialize)]

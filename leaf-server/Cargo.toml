@@ -34,7 +34,7 @@ clap = { version = "4.5.45", features = ["derive", "env"] }
 anyhow = "1.0.99"
 
 # Tracing, Metrics, and Logging
-tracing = "0.1.41"
+tracing = { version = "0.1.41", features = ["release_max_level_info"] }
 opentelemetry = "0.30.0"
 opentelemetry-otlp = { version = "0.30.0", features = ["grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.30.0"

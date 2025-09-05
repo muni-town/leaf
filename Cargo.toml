@@ -8,3 +8,6 @@ members = [
     "modules/*",
     "leaf-stream-types",
 ]
+
+[profile.release]
+lto = 'thin'
