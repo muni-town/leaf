@@ -164,7 +164,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                                 stream: stream_id.to_hex().to_string(),
                                 idx: event.idx,
                                 user: event.user,
-                                payload: event.payload,
+                                payload: event.payload.into(),
                             },
                         ) {
                             // TODO: better error message
@@ -180,6 +180,34 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
 
             match result {
                 Ok(_) => ack.send(&json!({ "ok": true })),
+                Err(e) => ack.send(&json!({ "error": e.to_string()})),
+            }
+            .log_error("Internal error sending response")
+            .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/unsubscribe",
+        async move |TryData::<String>(data), ack: AckSender| {
+            let result = async {
+                let stream_id_hex = data?;
+                let stream_id = Hash::from_hex(stream_id_hex)?;
+                let mut open_streams = open_streams_.write().await;
+
+                let receiver = open_streams.remove(&stream_id);
+
+                anyhow::Ok(receiver.is_some())
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
+            .await;
+
+            match result {
+                Ok(was_subscribed) => {
+                    ack.send(&json!({ "ok": true, "wasSubscribed": was_subscribed }))
+                }
                 Err(e) => ack.send(&json!({ "error": e.to_string()})),
             }
             .log_error("Internal error sending response")
@@ -216,7 +244,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                     .map(|x| StreamFetchResponseEvent {
                         idx: x.idx,
                         user: x.user,
-                        payload: x.payload,
+                        payload: x.payload.into(),
                     })
                     .collect::<Vec<_>>();
 
@@ -234,6 +262,13 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
         },
     );
 }
+
+// TODO: make these types more compact by making their field names shorter, or maybe just use the
+// non-self-describing SCALE codec with the client to make it even more compact? The same goes for
+// the event names. Maybe we can collapse `stream/event` to `s/e`?
+//
+// Maybe that's not necessary, but at the same time maybe it's wasteful to send longer names when
+// _that_ is unnecessary.
 
 #[derive(Deserialize)]
 struct StreamCreateArgs {
@@ -266,12 +301,12 @@ pub struct StreamEventNotification {
     pub stream: String,
     pub idx: i64,
     pub user: String,
-    pub payload: Vec<u8>,
+    pub payload: bytes::Bytes,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StreamFetchResponseEvent {
     pub idx: i64,
     pub user: String,
-    pub payload: Vec<u8>,
+    pub payload: bytes::Bytes,
 }

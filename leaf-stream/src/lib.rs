@@ -453,7 +453,6 @@ impl Stream {
         // Now we update the module's event cursor
         self.module_event_cursor += 1;
         assert_eq!(self.module_event_cursor, self.latest_event);
-        dbg!(&self.module_event_cursor);
         self.db
             .execute(
                 "update stream_state set module_event_cursor = ? where id = 1",
