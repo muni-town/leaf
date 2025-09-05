@@ -2017,6 +2017,7 @@ dependencies = [
  "blake3",
  "bytes",
  "clap",
+ "futures",
  "futures-util",
  "hex",
  "leaf-stream",

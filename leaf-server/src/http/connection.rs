@@ -1,12 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
-use async_lock::{RwLock, RwLockUpgradableReadGuard};
+use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use base64::Engine;
 use blake3::Hash;
+use futures::future::{Either, select};
 use leaf_stream::StreamGenesis;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use socketioxide::extract::{AckSender, SocketRef, TryData};
+use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 use ulid::Ulid;
 
@@ -16,6 +18,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span = Span::current();
 
     let open_streams = Arc::new(RwLock::new(HashMap::new()));
+    let unsubscribers = Arc::new(Mutex::new(HashMap::new()));
 
     let did_ = did.clone();
     let span_ = span.clone();
@@ -135,6 +138,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let did_ = did.clone();
     let open_streams_ = open_streams.clone();
     let socket_ = socket.clone();
+    let unsubscribers_ = unsubscribers.clone();
     socket.on(
         "stream/subscribe",
         async move |TryData::<String>(data), ack: AckSender| {
@@ -157,7 +161,20 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 let mut receiver = stream.subscribe(&did_).await;
 
                 tokio::spawn(async move {
-                    while let Ok(event) = receiver.recv().await {
+                    let (unsubscribe_tx, unsubscribe_rx) = oneshot::channel();
+
+                    unsubscribers_
+                        .lock()
+                        .await
+                        .insert(stream_id, unsubscribe_tx);
+
+                    let mut next_event = receiver.recv();
+                    let mut unsubscribe = unsubscribe_rx;
+                    while let Either::Left((Ok(event), _)) =
+                        select(next_event, &mut unsubscribe).await
+                    {
+                        next_event = receiver.recv();
+
                         if let Err(e) = socket_.emit(
                             "stream/event",
                             &StreamEventNotification {
@@ -188,18 +205,18 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     );
 
     let span_ = span.clone();
-    let open_streams_ = open_streams.clone();
+    let unsubscribers_ = unsubscribers.clone();
     socket.on(
         "stream/unsubscribe",
         async move |TryData::<String>(data), ack: AckSender| {
             let result = async {
                 let stream_id_hex = data?;
                 let stream_id = Hash::from_hex(stream_id_hex)?;
-                let mut open_streams = open_streams_.write().await;
 
-                let receiver = open_streams.remove(&stream_id);
-
-                anyhow::Ok(receiver.is_some())
+                let unsubscriber = unsubscribers_.lock().await.remove(&stream_id);
+                let was_subscribed = unsubscriber.is_some();
+                unsubscriber.map(|x| x.send(()));
+                anyhow::Ok(was_subscribed)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
             .await;

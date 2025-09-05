@@ -12,6 +12,7 @@ pub enum Command {
     Server(ServerArgs),
 }
 
+/// Run the leaf server.
 #[derive(clap::Parser, Debug)]
 pub struct ServerArgs {
     #[arg(short = 'l', long, env, default_value = "0.0.0.0:5530")]
