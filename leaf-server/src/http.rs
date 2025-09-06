@@ -20,7 +20,10 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 mod connection;
 
-use crate::{EXIT_SIGNAL, cli::ServerArgs};
+use crate::{
+    ARGS, EXIT_SIGNAL,
+    cli::{Command, ServerArgs},
+};
 
 #[instrument(err)]
 pub async fn start_api(args: &'static ServerArgs) -> anyhow::Result<()> {
@@ -38,6 +41,7 @@ pub async fn start_api(args: &'static ServerArgs) -> anyhow::Result<()> {
 
     // TODO: add richer request information to tracing.
     let router = Router::new()
+        .push(Router::with_path(".well-known/did.json").get(did_endpoint))
         .push(Router::with_path("/socket.io").goal(layer.compat()))
         .push(Router::with_path("/xrpc/space.roomy.token.v0").post(token_endpoint))
         .push(Router::new().get(http_index))
@@ -140,9 +144,26 @@ async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
         .nth(1)
         .ok_or_else(|| anyhow::format_err!("Invalid format for JWT auth token"))?;
     let claims = Claims::from_base64(claims_base64)?;
+
+    // Make sure the audience matches our server
+    if let Some(audience) = claims.jose.audience
+        && let Command::Server(server_args) = &ARGS.command
+        && audience != server_args.did
+    {
+        anyhow::bail!(
+            "Invalid JWT audience while parsing auth token: \
+            Expected {} but got {}",
+            server_args.did,
+            audience
+        )
+    }
+
+    // Make sure the authenticating user is specified
     let Some(did) = claims.jose.issuer else {
         anyhow::bail!("JWT token issuer is missing")
     };
+
+    // Add the user DID to the tracing metadata
     Span::current().set_attribute("did", did.clone());
 
     let doc = atproto_identity::plc::query(&CLIENT, "plc.directory", &did).await?;
@@ -164,4 +185,23 @@ async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
     atproto_oauth::jwt::verify(token, &key_data)?;
 
     Ok(did)
+}
+
+#[handler]
+async fn did_endpoint(req: &Request) -> Json<serde_json::Value> {
+    #[allow(irrefutable_let_patterns)]
+    let Command::Server(server_args) = &ARGS.command else {
+        return Json(serde_json::json!({"error": "unreachable"}));
+    };
+    Json(serde_json::json!({
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": server_args.did,
+        "service": [
+            {
+                "id": "#leaf_server",
+                "type": "LeafServer",
+                "serviceEndpoint": req.uri().to_string().replace(".well-known/did.json", ""),
+            }
+        ]
+    }))
 }
