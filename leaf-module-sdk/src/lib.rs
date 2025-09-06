@@ -2,6 +2,8 @@ pub use anyhow;
 pub use anyhow::Result;
 pub use leaf_stream_types::*;
 
+// TODO: benchmark or profile or something to make sure this actually helps reduce size / increase
+// performance.
 #[cfg(target_arch = "wasm32")]
 #[global_allocator]
 static ALLOC: mini_alloc::MiniAlloc = mini_alloc::MiniAlloc::INIT;
