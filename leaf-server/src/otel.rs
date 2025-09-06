@@ -11,6 +11,8 @@ use tracing::Level;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::ARGS;
+
 // Create a Resource that captures information about the entity for which telemetry is recorded.
 fn resource() -> Resource {
     Resource::builder()
@@ -74,12 +76,7 @@ fn init_tracer_provider() -> SdkTracerProvider {
 
 // Initialize tracing-subscriber and return OtelGuard for opentelemetry-related termination processing
 pub fn init() -> OtelGuard {
-    let tracer_provider = Arc::new(init_tracer_provider());
-    let meter_provider = init_meter_provider();
-
-    let tracer = tracer_provider.tracer("tracing-otel-subscriber");
-
-    tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         // The global level filter prevents the exporter network stack
         // from reentering the globally installed OpenTelemetryLayer with
         // its own spans while exporting, as the libraries should not use
@@ -90,10 +87,23 @@ pub fn init() -> OtelGuard {
         .with(tracing_subscriber::filter::LevelFilter::from_level(
             Level::INFO,
         ))
-        .with(tracing_subscriber::fmt::layer())
-        .with(MetricsLayer::new(meter_provider.clone()))
-        .with(OpenTelemetryLayer::new(tracer))
-        .init();
+        .with(tracing_subscriber::fmt::layer());
+
+    let (tracer_provider, meter_provider) = if ARGS.otel {
+        let tracer_provider = Arc::new(init_tracer_provider());
+        let meter_provider = init_meter_provider();
+        let tracer = tracer_provider.tracer("tracing-otel-subscriber");
+
+        registry
+            .with(MetricsLayer::new(meter_provider.clone()))
+            .with(OpenTelemetryLayer::new(tracer))
+            .init();
+
+        (Some(tracer_provider), Some(meter_provider))
+    } else {
+        registry.init();
+        (None, None)
+    };
 
     OtelGuard {
         tracer_provider,
@@ -102,16 +112,16 @@ pub fn init() -> OtelGuard {
 }
 
 pub struct OtelGuard {
-    pub tracer_provider: Arc<SdkTracerProvider>,
-    pub meter_provider: SdkMeterProvider,
+    pub tracer_provider: Option<Arc<SdkTracerProvider>>,
+    pub meter_provider: Option<SdkMeterProvider>,
 }
 
 impl Drop for OtelGuard {
     fn drop(&mut self) {
-        if let Err(err) = self.tracer_provider.shutdown() {
+        if let Some(Err(err)) = self.tracer_provider.take().map(|x| x.shutdown()) {
             eprintln!("{err:?}");
         }
-        if let Err(err) = self.meter_provider.shutdown() {
+        if let Some(Err(err)) = self.meter_provider.take().map(|x| x.shutdown()) {
             eprintln!("{err:?}");
         }
     }

@@ -3,6 +3,9 @@ use std::path::PathBuf;
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
+    /// Enable open telemetry - TODO: add otel options
+    #[arg(long)]
+    pub otel: bool,
     #[clap(subcommand)]
     pub command: Command,
 }
