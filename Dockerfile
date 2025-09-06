@@ -13,5 +13,5 @@ RUN --mount=type=cache,target=/home/rust/.cargo/git \
 
 FROM scratch
 COPY --from=build /project/target/x86_64-unknown-linux-musl/release/leaf /leaf
-CMD = ["server"]
-ENTRYPOINT ["/leaf"]
+CMD ["server"]
+ENTRYPOINT "/leaf"
