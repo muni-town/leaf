@@ -42,7 +42,6 @@ tracing = { version = "0.1.41", features = ["release_max_level_info"] }
 opentelemetry = "0.30.0"
 opentelemetry-otlp = { version = "0.30.0", features = ["grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.30.0"
-opentelemetry-stdout = "0.30.0"
 opentelemetry_sdk = "0.30.0"
 tracing-opentelemetry = "0.31.0"
 tracing-subscriber = "0.3.19"
@@ -58,7 +57,6 @@ atproto-identity = "0.11.2"
 # Formats & Serialization
 serde_json = "1.0.143"
 blake3 = { version = "1.8.2" }
-hex = "0.4.3"
 bytes = "1.10.1"
 parity-scale-codec = { version = "3.7.5", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
