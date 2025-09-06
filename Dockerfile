@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/home/rust/.cargo/git \
     --mount=type=cache,target=/home/rust/src/target \
     cargo b -p leaf-server --release --target x86_64-unknown-linux-musl
 
-FROM debian:bookworm
+FROM scratch
 COPY --from=build /project/target/x86_64-unknown-linux-musl/release/leaf /leaf
 CMD = ["server"]
 ENTRYPOINT ["/leaf"]
