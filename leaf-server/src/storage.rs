@@ -19,6 +19,8 @@ use crate::{
     streams::{STREAMS, StreamHandle},
 };
 
+pub static GLOBAL_SQLITE_PRAGMA: &str = "pragma synchronous = normal; pragma journal_mode = wal;";
+
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
 static WASM_MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafWasmModule>>>> =
@@ -59,7 +61,7 @@ impl Storage {
             .build()
             .await?;
         let c = database.connect()?;
-        c.execute_batch("pragma synchronous = normal; pragma journal_mode = wal;").await?;
+        c.execute_batch(GLOBAL_SQLITE_PRAGMA).await?;
         tracing::info!("database connected");
 
         // Run migrations

@@ -9,7 +9,7 @@ use leaf_stream::{Event, EventReceiver, Stream, StreamGenesis, modules::wasm::Le
 use tokio::sync::RwLock;
 use weak_table::{WeakValueHashMap, traits::WeakElement};
 
-use crate::storage::STORAGE;
+use crate::storage::{GLOBAL_SQLITE_PRAGMA, STORAGE};
 
 /// Global cache of open Leaf streams.
 pub static STREAMS: LazyLock<Streams> = LazyLock::new(Streams::default);
@@ -101,7 +101,7 @@ impl Streams {
             .context("error opening stream db")?
             .connect()?;
         stream_db
-            .execute_batch("pragma synchronous = normal; pragma journal_mode = wal;")
+            .execute_batch(GLOBAL_SQLITE_PRAGMA)
             .await?;
 
         // Open the stream
@@ -141,7 +141,7 @@ async fn load_module(
         .context("error opening module db")?
         .connect()?;
     module_db
-        .execute_batch("pragma synchronous = normal; pragma journal_mode = wal;")
+        .execute_batch(GLOBAL_SQLITE_PRAGMA)
         .await?;
     Ok((module, module_db))
 }
