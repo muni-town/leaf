@@ -48,13 +48,13 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 let hash_hex = hash_hex?;
                 let hash = Hash::from_hex(hash_hex)?;
                 let has_module = STORAGE.has_blob(hash).await?;
-                anyhow::Ok(serde_json::json!(has_module))
+                anyhow::Ok(has_module)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/has"))
             .await;
 
             match result {
-                Ok(response) => ack.send(&response),
+                Ok(response) => ack.send(&json!({ "hasModule": response })),
                 Err(e) => ack.send(&json!({ "error": e.to_string()})),
             }
             .log_error("Internal error sending response")
@@ -87,7 +87,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 Ok(stream) => {
                     let id = stream.id();
                     open_streams_.write().await.insert(id, stream);
-                    ack.send(&json!({ "stream_id": id.to_hex().as_str() }))
+                    ack.send(&json!({ "streamId": id.to_hex().as_str() }))
                 }
                 Err(e) => ack.send(&json!({ "error": e.to_string()})),
             }

@@ -1,0 +1,38 @@
+{
+  "name": "@muni-town/leaf-client",
+  "version": "0.1.0-alpha.1",
+  "license": "MPL-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.13.0",
+  "repository": {
+    "url": "https://github.com/muni-town/leaf"
+  },
+  "files": [
+    "./src",
+    "./dist",
+    "./README.md"
+  ],
+  "scripts": {
+    "dev": "tsc --watch",
+    "build": "tsc",
+    "format": "prettier . --write"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.1",
+    "socket.io-msgpack-parser": "^3.0.2"
+  },
+  "devDependencies": {
+    "beachball": "^2.54.0",
+    "pkgroll": "^2.12.2",
+    "prettier": "3.5.3",
+    "typescript": "^5.8.3"
+  }
+}
