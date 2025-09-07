@@ -41,8 +41,15 @@ fn filter_inbound(input: IncomingEvent<String, String>) -> Result<Inbound> {
     Ok(Inbound::Allow)
 }
 
-// Everything is public
-fn filter_outbound(_input: EventRequest<String, String>) -> Result<Outbound> {
+// Everything is public, but an optional search filter can be applied.
+fn filter_outbound(input: EventRequest<String, String, String>) -> Result<Outbound> {
+    // Reject any records that don't include the filter, if present.
+    if let Some(filter) = input.filter
+        && !input.incoming_event.payload.contains(&filter)
+    {
+        return Ok(Outbound::Block);
+    }
+
     Ok(Outbound::Allow)
 }
 

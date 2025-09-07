@@ -534,6 +534,7 @@ impl Stream {
         requesting_user: &str,
         offset: u64,
         limit: u64,
+        filter: Option<Vec<u8>>,
     ) -> Result<Vec<Event>, StreamError> {
         let module_state = self.module_state.upgradable_read().await;
         let (module, module_db) = Self::ensure_module_loaded(&module_state.load)?;
@@ -570,6 +571,7 @@ impl Stream {
                                 params: module_state.params.clone(),
                                 user: user.clone(),
                             },
+                            filter: filter.clone(),
                         },
                         module_db.clone(),
                     )
@@ -577,6 +579,9 @@ impl Stream {
                 match result {
                     Outbound::Allow => filtered.push(Event { idx, user, payload }),
                     Outbound::Block => (),
+                }
+                if filtered.len() >= limit as usize {
+                    break;
                 }
             }
             module_db.authorizer(None)?;
@@ -632,6 +637,8 @@ impl Stream {
                                         params: module_state.params.clone(),
                                         user: event.user.clone(),
                                     },
+                                    // TODO: allow you to specify filters on subscriptions.
+                                    filter: None,
                                 },
                                 module_db.clone(),
                             )

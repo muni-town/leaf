@@ -142,9 +142,17 @@ export class LeafClient {
     opts?: {
       offset?: number;
       limit?: number;
+      filter?: ArrayBuffer;
     },
   ): Promise<{ idx: number; user: string; payload: ArrayBuffer }[]> {
     opts = { ...{ offset: 1, limit: 100 }, ...(opts || {}) };
+    // Remove any "undefined" values which get serialized and don't need to be sent over the
+    // network.
+    for (const key of Object.keys(opts) as (keyof typeof opts)[]) {
+      if (!opts[key]) {
+        delete opts[key];
+      }
+    }
     const resp:
       | { events: { idx: number; user: string; payload: ArrayBuffer }[] }
       | { error: string } = await this.socket.emitWithAck("stream/fetch", {

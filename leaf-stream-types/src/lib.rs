@@ -14,9 +14,10 @@ pub struct IncomingEvent<Payload = Vec<u8>, Params = Vec<u8>> {
 }
 
 #[derive(Decode, Encode, Debug, Clone)]
-pub struct EventRequest<Payload = Vec<u8>, Params = Vec<u8>> {
+pub struct EventRequest<Payload = Vec<u8>, Params = Vec<u8>, Filter = Vec<u8>> {
     pub requesting_user: String,
     pub incoming_event: IncomingEvent<Payload, Params>,
+    pub filter: Option<Filter>,
 }
 
 #[derive(Decode, Encode, Debug, Clone, Default)]

@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use base64::Engine;
 use blake3::Hash;
+use bytes::Bytes;
 use futures::future::{Either, select};
 use leaf_stream::StreamGenesis;
 use serde::{Deserialize, Serialize};
@@ -295,7 +296,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 };
 
                 let events = stream
-                    .fetch_events(&did_, args.offset, args.limit)
+                    .fetch_events(&did_, args.offset, args.limit, args.filter.map(Into::into))
                     .await?
                     .into_iter()
                     .map(|x| StreamFetchResponseEvent {
@@ -351,7 +352,7 @@ struct StreamEventBatchArgs {
     payloads: Vec<bytes::Bytes>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct StreamFetchArgs {
     /// The hex-encoded stream ID
     pub id: String,
@@ -359,6 +360,8 @@ struct StreamFetchArgs {
     pub offset: u64,
     /// The limit on the number of events to fetch
     pub limit: u64,
+    /// An optional filter to provide to limit the results returned by the filter module
+    pub filter: Option<Bytes>,
 }
 
 #[derive(Clone, Debug, Serialize)]

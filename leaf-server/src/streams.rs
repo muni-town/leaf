@@ -50,13 +50,14 @@ impl StreamHandle {
         requesting_user: &str,
         offset: u64,
         limit: u64,
+        filter: Option<Vec<u8>>,
     ) -> anyhow::Result<Vec<Event>> {
         let events = self
             .0
             .stream
             .read()
             .await
-            .fetch_events(requesting_user, offset, limit)
+            .fetch_events(requesting_user, offset, limit, filter)
             .await?;
         Ok(events)
     }
@@ -100,9 +101,7 @@ impl Streams {
             .await
             .context("error opening stream db")?
             .connect()?;
-        stream_db
-            .execute_batch(GLOBAL_SQLITE_PRAGMA)
-            .await?;
+        stream_db.execute_batch(GLOBAL_SQLITE_PRAGMA).await?;
 
         // Open the stream
         let mut stream = leaf_stream::Stream::open(genesis, stream_db).await?;
@@ -140,9 +139,7 @@ async fn load_module(
         .await
         .context("error opening module db")?
         .connect()?;
-    module_db
-        .execute_batch(GLOBAL_SQLITE_PRAGMA)
-        .await?;
+    module_db.execute_batch(GLOBAL_SQLITE_PRAGMA).await?;
     Ok((module, module_db))
 }
 
