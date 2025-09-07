@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use base64::Engine;
 use blake3::Hash;
 use bytes::Bytes;
 use futures::future::{Either, select};
@@ -76,7 +75,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                     stamp: Ulid::new().into(),
                     creator: did_.clone(),
                     module: Hash::from_hex(input.module)?.into(),
-                    params: base64::prelude::BASE64_STANDARD.decode(input.params)?,
+                    params: input.params,
                 };
                 let stream_id = STORAGE.create_stream(genesis).await?;
                 anyhow::Ok(stream_id)
@@ -332,8 +331,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
 struct StreamCreateArgs {
     /// The hex-encoded, blake3 hash of the WASM module to use to create the stream.
     module: String,
-    /// The base64-encoded parameters to configure the module with.
-    params: String,
+    params: Vec<u8>,
 }
 
 #[derive(Deserialize)]
