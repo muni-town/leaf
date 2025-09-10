@@ -1917,7 +1917,6 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "leaf-stream-types",
- "mini-alloc",
 ]
 
 [[package]]
@@ -2187,14 +2186,6 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
-]
-
-[[package]]
-name = "mini-alloc"
-version = "1.0.0"
-source = "git+https://github.com/OffchainLabs/mini-alloc.git#3127794b7b98f0d0d485c525cec5b9bdd0780be0"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
