@@ -9,5 +9,11 @@ members = [
     "leaf-stream-types",
 ]
 
+[workspace.package]
+edition = "2024"
+repository = "https://github.com/muni-town/leaf"
+license = "PolyForm-Noncommercial-1.0.0"
+description = "Leaf protocol"
+
 [profile.release]
 lto = 'thin'

@@ -1,7 +1,11 @@
 [package]
 name = "leaf-stream-types"
 version = "0.1.0-alpha.0"
-edition = "2024"
+
+description.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 parity-scale-codec = { version = "3.7.5", features = ["derive"] }

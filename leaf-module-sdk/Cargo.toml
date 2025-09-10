@@ -1,7 +1,11 @@
 [package]
 name = "leaf-module-sdk"
 version = "0.1.0-alpha.0"
-edition = "2024"
+
+description.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 leaf-stream-types = { path = "../leaf-stream-types" }

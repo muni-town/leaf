@@ -1,8 +1,11 @@
 [package]
 name = "leaf-server"
 version = "0.1.0-alpha.0"
-edition = "2024"
-license = "MPL-2.0"
+
+description.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "leaf"
