@@ -2,6 +2,7 @@
 name = "module-single-author-public-read-no-upgrades"
 version = "0.1.0-alpha.1"
 edition = "2024"
+private = true
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

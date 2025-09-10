@@ -13,8 +13,8 @@ module-wasm = ["dep:wasmtime"]
 
 [dependencies]
 # Leaf
-leaf-utils = { path = "../leaf-utils" }
-leaf-stream-types = { path = "../leaf-stream-types" }
+leaf-utils = { version = "0.1.0-alpha.1", path = "../leaf-utils" }
+leaf-stream-types = { version = "0.1.0-alpha.1", path = "../leaf-stream-types" }
 
 # Database
 libsql = { version = "0.9.21", features = ["core"], default-features = false }
