@@ -1,6 +1,6 @@
 [package]
 name = "leaf-server"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 edition = "2024"
 license = "MPL-2.0"
 
@@ -28,7 +28,11 @@ reqwest = { version = "0.12.23", features = [
 ], default-features = false }
 
 # Async
-tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1.47.1", features = [
+    "macros",
+    "rt-multi-thread",
+    "signal",
+] }
 futures-util = "0.3.31"
 
 # CLI

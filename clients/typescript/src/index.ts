@@ -1,16 +1,18 @@
 import { io, Socket } from "socket.io-client";
 import parser from "socket.io-msgpack-parser";
 
+export interface IncomingEvent {
+  stream: string;
+  idx: number;
+  user: string;
+  payload: ArrayBuffer;
+}
+
 type EventMap = {
   connect: () => void;
   disconnect: () => void;
   authenticated: (did: string) => void;
-  event: (event: {
-    stream: string;
-    idx: number;
-    user: string;
-    payload: ArrayBuffer;
-  }) => void;
+  event: (event: IncomingEvent) => void;
   error: (error: string) => void;
 };
 
@@ -183,5 +185,12 @@ export class LeafClient {
       throw new Error(resp.error);
     }
     return resp.wasUnSubscribed;
+  }
+
+  disconnect() {
+    this.socket.disconnect();
+    for (const key in this._listeners) {
+      this._listeners[key as keyof typeof this._listeners] = [];
+    }
   }
 }
