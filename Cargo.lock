@@ -1913,7 +1913,7 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "leaf-module-sdk"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "leaf-stream-types",
@@ -1922,7 +1922,7 @@ dependencies = [
 
 [[package]]
 name = "leaf-server"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-lock",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "leaf-stream"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -1979,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "leaf-stream-types"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "parity-scale-codec",
  "thiserror 2.0.16",
@@ -1987,7 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "leaf-utils"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "blake3",
  "libsql",
@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "module-multi-author-private-read-admin-upgrades"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "base64",
  "hex",
@@ -2236,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "module-single-author-public-read-no-upgrades"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "leaf-module-sdk",
  "serde_json",
