@@ -6,7 +6,7 @@
 	import { page } from '$app/state';
 	import type { IncomingEvent } from '@muni-town/leaf-client';
 
-	let leafUrl = $state(localStorage.getItem('leaf-url') || 'http://localhost:5530');
+	let leafUrl = $state(localStorage.getItem('leaf-url') || 'https://leaf-dev.muni.town');
 	onMount(() => {
 		backend.setLeafUrl(leafUrl);
 	});
