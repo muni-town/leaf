@@ -28,10 +28,10 @@
 		loading = true;
 		try {
 			const evs = await backend.fetchEvents(streamId.value, offset, limit);
-			events.push(`Finished fetch: ${evs.length} items`);
+			events.push(`Finished fetch: ${evs.length} items from stream ${streamId.value}`);
 			evs.forEach((e) =>
 				events.push(
-					`${e.idx}(${e.user}) - ${e.stream}:\n    ${new TextDecoder().decode(e.payload)}`
+					`${e.idx}(${e.user}):\n    ${new TextDecoder().decode(e.payload)}`
 				)
 			);
 		} catch (e: any) {

@@ -63,7 +63,7 @@
 
 <div class="flex h-screen max-h-full flex-col">
 	<div class="px-5 py-3">
-		<div class="navbar bg-base-200 flex gap-8 p-3 shadow-md">
+		<div class="navbar bg-base-100 flex gap-8 p-3 shadow-md">
 			<a class="text-xl" href="/">Leaf Explorer</a>
 
 			{#if backendStatus.did}
@@ -127,12 +127,12 @@
 
 		<div class="flex min-h-0 min-w-0 shrink flex-row gap-3 px-5">
 			<div
-				class="border-accent bg-base-200 thin-scroll w-[24em] shrink overflow-y-auto shadow-md"
+				class="border-accent bg-base-100 thin-scroll w-[24em] shrink overflow-y-auto shadow-md"
 			>
 				{@render children?.()}
 			</div>
 			<pre
-				class="bg-base-200 thin-scroll min-w-[20em] grow overflow-auto shadow-md">{leafEvents
+				class="bg-base-100 thin-scroll min-w-[20em] grow overflow-auto shadow-md">{leafEvents
 					.map((x) => x)
 					.join('\n')}</pre>
 		</div>
@@ -158,7 +158,7 @@
 	{:else if backendStatus.authLoaded && !isOauthCallback}
 		<div class="flex h-full w-full grow items-center justify-center">
 			<form
-				class="card bg-base-200 flex flex-col gap-6 p-8 shadow-md"
+				class="card bg-base-100 flex flex-col gap-6 p-8 shadow-md"
 				onsubmit={async () => {
 					loginLoading = true;
 					window.location.href = await backend.login(loginHandle);
