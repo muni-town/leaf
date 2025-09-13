@@ -181,7 +181,7 @@ class Backend {
 	}
 	setLeafClient(client: LeafClient | undefined) {
 		if (client) {
-      this.#leafClient?.disconnect();
+			this.#leafClient?.disconnect();
 			initializeLeafClient(client);
 		} else {
 			this.#leafClient?.disconnect();
@@ -244,8 +244,33 @@ function connectMessagePort(port: MessagePortApi) {
 		async logout() {
 			state.logout();
 		},
-		async sendEvent() {
-			throw 'Unimplemented';
+		async sendEvent(streamId, payload) {
+			await state.leafClient?.sendEvent(streamId, payload);
+		},
+		async hasModule(moduleId) {
+			return (await state.leafClient?.hasModule(moduleId)) || false;
+		},
+		async uploadModule(buffer) {
+			return await state.leafClient!.uploadModule(buffer);
+		},
+		async createStream(moduleId: string, params: ArrayBuffer) {
+			return await state.leafClient!.createStream(moduleId, params);
+		},
+		async subscribe(streamId) {
+			state.leafClient?.subscribe(streamId);
+		},
+		async unsubscribe(streamId) {
+			state.leafClient?.unsubscribe(streamId);
+		},
+		async fetchEvents(streamId, offset, limit) {
+			if (!state.leafClient) throw 'Leaf client not initialized';
+			const events = (await state.leafClient?.fetchEvents(streamId, { offset, limit }))?.map(
+				(x) => ({
+					...x,
+					stream: streamId
+				})
+			);
+			return events;
 		},
 		async addClient(port) {
 			connectMessagePort(port);
@@ -301,6 +326,7 @@ async function createOauthClient(): Promise<BrowserOAuthClient> {
 	});
 }
 
+const eventBroadcast = new BroadcastChannel('leaf-events');
 async function initializeLeafClient(client: LeafClient) {
 	status.leafConnected = false;
 	const url = state.leafUrl;
@@ -314,5 +340,8 @@ async function initializeLeafClient(client: LeafClient) {
 	});
 	client.on('authenticated', (did) => {
 		console.log('Leaf: authenticated as', did, url);
+	});
+	client.on('event', (event) => {
+		eventBroadcast.postMessage(event);
 	});
 }

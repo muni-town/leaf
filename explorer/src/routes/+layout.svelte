@@ -2,8 +2,9 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { backend, backendStatus } from '$lib/workers';
-	import { onMount } from 'svelte';
+	import { onMount, setContext } from 'svelte';
 	import { page } from '$app/state';
+	import type { IncomingEvent } from '@muni-town/leaf-client';
 
 	let leafUrl = $state(localStorage.getItem('leaf-url') || 'http://localhost:5530');
 	onMount(() => {
@@ -11,6 +12,30 @@
 	});
 	let loginHandle = $state('');
 	let loginLoading = $state(false);
+
+	const leafEventsChanel = new BroadcastChannel('leaf-events');
+	leafEventsChanel.onmessage = (ev) => {
+		const event: IncomingEvent = ev.data;
+
+		leafEvents.push(
+			`sub ${event.idx}(${event.user}) - ${event.stream}\n    ${new TextDecoder().decode(event.payload)}`
+		);
+	};
+	let leafEvents = $state([]) as string[];
+	let streamId = $state(localStorage.getItem('stream-id') || '');
+	$effect(() => {
+		localStorage.setItem('stream-id', streamId);
+	});
+
+	setContext('events', leafEvents);
+	setContext('streamId', {
+		get value() {
+			return streamId;
+		},
+		set value(v) {
+			streamId = v;
+		}
+	});
 
 	// Check for oauth callback
 	let oauthCallbackError = $state(undefined) as undefined | string;
@@ -36,8 +61,8 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<div class="flex min-h-screen flex-col">
-	<div class="p-5">
+<div class="flex h-screen max-h-full flex-col">
+	<div class="px-5 py-3">
 		<div class="navbar bg-base-200 flex gap-8 p-3 shadow-md">
 			<a class="text-xl" href="/">Leaf Explorer</a>
 
@@ -82,7 +107,35 @@
 	</div>
 
 	{#if backendStatus.did}
-		{@render children?.()}
+		<div class="mb-3 px-5">
+			<label class="flex items-center gap-2">
+				Stream ID
+				<input class="input" bind:value={streamId} />
+				<button class="btn" onclick={() => backend.subscribe(streamId)}>Subscribe</button>
+				<button class="btn" onclick={() => backend.unsubscribe(streamId)}
+					>Unsubscribe</button
+				>
+				<div class="grow"></div>
+				<button
+					class="btn"
+					onclick={() => {
+						leafEvents.splice(0, leafEvents.length);
+					}}>Clear Log</button
+				>
+			</label>
+		</div>
+
+		<div class="flex min-h-0 min-w-0 shrink flex-row gap-3 px-5">
+			<div
+				class="border-accent bg-base-200 thin-scroll w-[24em] shrink overflow-y-auto shadow-md"
+			>
+				{@render children?.()}
+			</div>
+			<pre
+				class="bg-base-200 thin-scroll min-w-[20em] grow overflow-auto shadow-md">{leafEvents
+					.map((x) => x)
+					.join('\n')}</pre>
+		</div>
 	{:else if oauthCallbackError}
 		<div class="flex h-full w-full grow items-center justify-center">
 			<div role="alert" class="alert alert-error">
@@ -145,3 +198,9 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.thin-scroll {
+		scrollbar-width: thin;
+	}
+</style>
