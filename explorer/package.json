@@ -16,7 +16,6 @@
 	"devDependencies": {
 		"@eslint/compat": "^1.2.5",
 		"@eslint/js": "^9.18.0",
-		"@sveltejs/adapter-auto": "^6.0.0",
 		"@sveltejs/kit": "^2.22.0",
 		"@sveltejs/vite-plugin-svelte": "^6.0.0",
 		"@tailwindcss/vite": "^4.0.0",
@@ -37,15 +36,13 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"esbuild"
-		],
-		"overrides": {
-			"@muni-town/leaf-client": "link:../clients/typescript"
-		}
+		]
 	},
 	"dependencies": {
 		"@atproto/api": "^0.16.9",
 		"@atproto/oauth-client-browser": "^0.3.32",
 		"@muni-town/leaf-client": "0.1.0-alpha.2",
+		"@sveltejs/adapter-static": "^3.0.9",
 		"daisyui": "^5.1.10",
 		"dexie": "^4.2.0"
 	}

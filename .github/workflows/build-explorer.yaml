@@ -1,0 +1,75 @@
+name: Deploy Explorer to GitHub Pages
+
+on:
+  push:
+    branches: 'main'
+
+jobs:
+  build_site:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+            node-version: 22
+
+      - name: Install dependencies
+        run: |
+            cd explorer
+            pnpm i --frozen-lockfile
+
+      - name: build
+        env:
+            BASE_PATH: '/${{ github.event.repository.name }}'
+        run: |
+            cd explorer
+            pnpm run build
+    
+      - name: add OAuth config
+        run: |
+          target_url=https://explorer.leaf.muni.town
+          echo "{
+            \"client_id\": \"$target_url/oauth-client.json\",
+            \"client_name\": \"Roomy\",
+            \"client_uri\": \"$target_url\",
+            \"logo_uri\": \"$target_url/favicon.png\",
+            \"tos_uri\": \"$target_url\",
+            \"policy_uri\": \"$target_url\",
+            \"redirect_uris\": [\"$target_url/oauth/callback\"],
+            \"scope\": \"atproto transition:generic transition:chat.bsky\",
+            \"grant_types\": [\"authorization_code\", \"refresh_token\"],
+            \"response_types\": [\"code\"],
+            \"token_endpoint_auth_method\": \"none\",
+            \"application_type\": \"web\",
+            \"dpop_bound_access_tokens\": true
+          }" > explorer/build/oauth-client.json
+
+      - name: Upload Artifacts
+        uses: actions/upload-pages-artifact@v3
+        with:
+            path: 'explorer/build/'
+
+  deploy:
+    needs: build_site
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
