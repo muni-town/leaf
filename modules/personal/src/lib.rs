@@ -4,12 +4,11 @@ register_handlers!(init_db, filter_inbound, filter_outbound, process_event);
 
 fn init_db(creator: String, _params: String) {
     query(
-        r#"create table if not exists "state" \
-        ("id" integer primary key, "creator" text not null )"#,
+        r#"create table if not exists "state" ("id" integer primary key, "creator" text not null )"#,
         Vec::new(),
     );
     query(
-        "insert or ignore into state (id, creator) values (1, :creator);",
+        "insert or ignore into state (id, creator) values (1, :creator)",
         vec![(":creator".into(), creator.into())],
     );
 }
