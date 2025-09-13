@@ -15,8 +15,8 @@ importers:
         specifier: ^0.3.32
         version: 0.3.32
       '@muni-town/leaf-client':
-        specifier: 0.1.0-alpha.2
-        version: 0.1.0-alpha.2
+        specifier: 0.1.0-alpha.3
+        version: 0.1.0-alpha.3
       '@sveltejs/adapter-static':
         specifier: ^3.0.9
         version: 3.0.9(@sveltejs/kit@2.39.1(@sveltejs/vite-plugin-svelte@6.2.0(svelte@5.38.10)(vite@7.1.5(jiti@2.5.1)(lightningcss@1.30.1)))(svelte@5.38.10)(vite@7.1.5(jiti@2.5.1)(lightningcss@1.30.1)))
@@ -380,8 +380,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@muni-town/leaf-client@0.1.0-alpha.2':
-    resolution: {integrity: sha512-+R8QPxBc71wKIu6f2Mt7UGYLmvLmEOAqVVbmjb+P/6eAzyxTMUqQ9Y5KrV4IKhUpYTCmDszP7mpnZHaQS0JQMA==}
+  '@muni-town/leaf-client@0.1.0-alpha.3':
+    resolution: {integrity: sha512-KmvkQvAAqNj2YIzam1uWeUHQMCZWqQNv6MiBtmXfSiUBNTeBeavSTUEA9r46bmVWOzaVknG6XD7PncjkLnDy4g==}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -1867,7 +1867,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@muni-town/leaf-client@0.1.0-alpha.2':
+  '@muni-town/leaf-client@0.1.0-alpha.3':
     dependencies:
       socket.io-client: 4.8.1
       socket.io-msgpack-parser: 3.0.2

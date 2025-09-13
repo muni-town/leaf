@@ -41,7 +41,7 @@
 	"dependencies": {
 		"@atproto/api": "^0.16.9",
 		"@atproto/oauth-client-browser": "^0.3.32",
-		"@muni-town/leaf-client": "0.1.0-alpha.2",
+		"@muni-town/leaf-client": "0.1.0-alpha.3",
 		"@sveltejs/adapter-static": "^3.0.9",
 		"daisyui": "^5.1.10",
 		"dexie": "^4.2.0"
