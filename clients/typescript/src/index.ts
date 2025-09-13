@@ -87,7 +87,7 @@ export class LeafClient {
     ) as any;
   }
 
-  async uploadWasm(data: ArrayBuffer): Promise<string> {
+  async uploadModule(data: ArrayBuffer): Promise<string> {
     const resp: { hash: string } | { error: string } =
       await this.socket.emitWithAck("wasm/upload", data);
     if ("error" in resp) {
@@ -96,7 +96,7 @@ export class LeafClient {
     return resp.hash;
   }
 
-  async hasWasm(wasmId: string): Promise<boolean> {
+  async hasModule(wasmId: string): Promise<boolean> {
     const resp: { hasModule: boolean } | { error: string } =
       await this.socket.emitWithAck("wasm/has", wasmId);
     if ("error" in resp) {
@@ -115,6 +115,29 @@ export class LeafClient {
       throw new Error(resp.error);
     }
     return resp.streamId;
+  }
+
+  /** Helper to create a stream from a WASM module at a given URL, avoiding uploading / downloading
+   * the WASM if the module ID already exists on the server. */
+  async createStreamFromModuleUrl(
+    moduleId: string,
+    url: string,
+    params: ArrayBuffer,
+  ): Promise<string> {
+    const hasModule = await this.hasModule(moduleId);
+
+    if (!hasModule) {
+      const resp = await fetch(url);
+      const data = await resp.blob();
+      const buffer = await data.arrayBuffer();
+      const uploadedId = await this.uploadModule(buffer);
+      if (uploadedId !== moduleId)
+        throw new Error(
+          `The module ID that was uploaded didn't match the expected module ID. Expected ${moduleId} got ${uploadedId}`,
+        );
+    }
+
+    return await this.createStream(moduleId, params);
   }
 
   async sendEvent(streamId: string, payload: ArrayBuffer): Promise<void> {
