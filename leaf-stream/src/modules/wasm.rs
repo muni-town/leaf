@@ -229,7 +229,7 @@ impl LeafModule for LeafWasmModule {
             filter_inbound
                 .call_async(&mut store, (input_ptr, input_len, output_ptr))
                 .await
-                .context("error calling wasm func")?;
+                .context("error calling filter_inbound func")?;
 
             let mut output_ptr_bytes = [0u8; size_of::<i32>()];
             memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
@@ -289,7 +289,7 @@ impl LeafModule for LeafWasmModule {
             filter_outbound
                 .call_async(&mut store, (input_ptr, input_len, output_ptr))
                 .await
-                .context("error calling wasm func")?;
+                .context("error calling filter_outbound func")?;
 
             let mut output_ptr_bytes = [0u8; size_of::<i32>()];
             memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
@@ -349,7 +349,7 @@ impl LeafModule for LeafWasmModule {
             process_event
                 .call_async(&mut store, (input_ptr, input_len, output_ptr))
                 .await
-                .context("error calling wasm func")?;
+                .context("error calling process_event func")?;
 
             let mut output_ptr_bytes = [0u8; size_of::<i32>()];
             memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
@@ -402,7 +402,7 @@ impl LeafModule for LeafWasmModule {
             init_db
                 .call_async(&mut store, (input_ptr, input_len))
                 .await
-                .context("error calling wasm func")?;
+                .context("error calling init_db func")?;
 
             Ok(())
         })
