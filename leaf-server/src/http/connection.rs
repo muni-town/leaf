@@ -311,7 +311,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .await;
 
             match result {
-                Ok(events) => ack.send(&json!({ "events": events })),
+                Ok(events) => ack.send(&STreamFetchResponse { events }),
                 Err(e) => ack.send(&json!({ "error": e.to_string()})),
             }
             .log_error("Internal error sending response")
@@ -375,4 +375,9 @@ pub struct StreamFetchResponseEvent {
     pub idx: i64,
     pub user: String,
     pub payload: bytes::Bytes,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct STreamFetchResponse {
+    events: Vec<StreamFetchResponseEvent>,
 }
