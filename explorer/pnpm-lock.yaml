@@ -11,6 +11,9 @@ importers:
       '@atproto/api':
         specifier: ^0.16.9
         version: 0.16.9
+      '@atproto/jwk-jose':
+        specifier: ^0.1.10
+        version: 0.1.10
       '@atproto/oauth-client':
         specifier: ^0.5.6
         version: 0.5.6

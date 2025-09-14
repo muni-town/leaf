@@ -7,10 +7,10 @@ import {
 	type RuntimeLock
 } from '@atproto/oauth-client';
 import { Dexie, type EntityTable } from 'dexie';
-import { WebcryptoKey } from '@atproto/oauth-client-browser';
+import { JoseKey } from '@atproto/jwk-jose';
 
-const db = new Dexie('mini-shared-worker-db') as Dexie & {
-	state: EntityTable<{ key: string; data: InternalStateData }, 'key'>;
+const db = new Dexie('atproto-oauth') as Dexie & {
+	state: EntityTable<{ key: string; data: string }, 'key'>;
 	session: EntityTable<{ key: string; data: Session }, 'key'>;
 };
 db.version(1).stores({
@@ -23,19 +23,12 @@ const requestLock: undefined | RuntimeLock = navigator.locks?.request
 			navigator.locks.request(name, { mode: 'exclusive' }, async () => fn())
 	: undefined;
 
-type EncodedKey = { keyId: Key['kid']; keyPair: CryptoKeyPair };
-function encodeKey(key: Key): EncodedKey {
-	if (!(key instanceof WebcryptoKey) || !key.kid) {
-		throw new Error('Invalid key object');
-	}
-	return {
-		keyId: key.kid,
-		keyPair: key.cryptoKeyPair
-	};
+function encodeKey(key: Key): unknown {
+	return (key as any).jwk;
 }
 
-async function decodeKey(encoded: EncodedKey): Promise<Key> {
-	return WebcryptoKey.fromKeypair(encoded.keyPair, encoded.keyId);
+async function decodeKey(encoded: unknown): Promise<Key> {
+	return JoseKey.fromJWK(encoded as any);
 }
 
 export const workerOauthClient = (clientMetadata: OAuthClientMetadataInput) =>
@@ -50,8 +43,10 @@ export const workerOauthClient = (clientMetadata: OAuthClientMetadataInput) =>
 			// implementation. The following example is suitable for use in NodeJS.
 
 			async createKey(algs: string[]): Promise<Key> {
-				const key = await WebcryptoKey.generate(algs);
-				console.log('key', key);
+				// TODO: use non-extractable WebcryptoKey instead for greater security.( but more difficult
+				// serialization problems when trying to save state in webkit-based browser ). If we change
+				// this we need toupdate the key encoding helpers and test on a Webkit based browser.
+				const key = await JoseKey.generate(algs);
 				return key;
 			},
 
@@ -75,14 +70,14 @@ export const workerOauthClient = (clientMetadata: OAuthClientMetadataInput) =>
 
 		stateStore: {
 			async set(key: string, internalState: InternalStateData): Promise<void> {
-				console.log(internalState.dpopKey.algorithms);
-				db.state.put({
+				const data = { ...internalState, dpopKey: encodeKey(internalState.dpopKey) as any };
+				await db.state.put({
 					key,
-					data: { ...internalState, dpopKey: encodeKey(internalState.dpopKey) as any }
+					data: JSON.stringify(data)
 				});
 			},
 			async get(key: string): Promise<InternalStateData | undefined> {
-				const data = (await db.state.get(key))?.data;
+				const data = JSON.parse((await db.state.get(key))?.data || 'undefined');
 				if (data) {
 					data.dpopKey = await decodeKey(data.dpopKey as any);
 				}
@@ -95,7 +90,7 @@ export const workerOauthClient = (clientMetadata: OAuthClientMetadataInput) =>
 
 		sessionStore: {
 			async set(sub: string, session: Session): Promise<void> {
-				db.session.put({
+				await db.session.put({
 					key: sub,
 					data: { ...session, dpopKey: encodeKey(session.dpopKey) as any }
 				});

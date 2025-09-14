@@ -26,6 +26,7 @@ import { workerOauthClient } from './oauth';
 const isSharedWorker = 'SharedWorkerGlobalScope' in globalThis;
 
 const status = reactiveWorkerState<BackendStatus>(new BroadcastChannel('backend-status'), true);
+(globalThis as any).status = status;
 
 const atprotoOauthScope = 'atproto transition:generic transition:chat.bsky';
 

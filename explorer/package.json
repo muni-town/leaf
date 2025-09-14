@@ -15,6 +15,7 @@
 	},
 	"devDependencies": {
 		"@atproto/api": "^0.16.9",
+		"@atproto/jwk-jose": "^0.1.10",
 		"@atproto/oauth-client": "^0.5.6",
 		"@atproto/oauth-client-browser": "^0.3.32",
 		"@eslint/compat": "^1.2.5",
