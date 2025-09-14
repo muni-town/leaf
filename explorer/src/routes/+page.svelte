@@ -5,7 +5,7 @@
 
 	let loading = $state(false);
 
-	const events = getContext<(IncomingEvent | string)[]>('events');
+	const events = getContext<string[]>('events');
 	const streamId = getContext<{ value: string }>('streamId');
 
 	let offset = $state(1);
@@ -30,9 +30,7 @@
 			const evs = await backend.fetchEvents(streamId.value, offset, limit);
 			events.push(`Finished fetch: ${evs.length} items from stream ${streamId.value}`);
 			evs.forEach((e) =>
-				events.push(
-					`${e.idx}(${e.user}):\n    ${new TextDecoder().decode(e.payload)}`
-				)
+				events.push(`${e.idx}(${e.user}):\n    ${new TextDecoder().decode(e.payload)}`)
 			);
 		} catch (e: any) {
 			events.push(e.toString());
