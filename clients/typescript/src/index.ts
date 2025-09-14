@@ -1,12 +1,15 @@
 import { io, Socket } from "socket.io-client";
 import parser from "socket.io-msgpack-parser";
 
-export interface IncomingEvent {
+export type IncomingEvent = {
   stream: string;
+} & StreamEvent;
+
+export type StreamEvent = {
   idx: number;
   user: string;
   payload: ArrayBuffer;
-}
+};
 
 type EventMap = {
   connect: () => void;
