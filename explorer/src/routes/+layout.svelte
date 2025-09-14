@@ -39,7 +39,9 @@
 
 	// Check for oauth callback
 	let oauthCallbackError = $state(undefined) as undefined | string;
-	let isOauthCallback = $derived(page.url.pathname == '/oauth/callback');
+	let isOauthCallback = $derived(
+		page.url.searchParams.get('state') && page.url.searchParams.get('code')
+	);
 	onMount(async () => {
 		if (!isOauthCallback) return;
 		const searchParams = new URL(globalThis.location.href).searchParams;
@@ -50,6 +52,7 @@
 				window.location.href = '/';
 			})
 			.catch((e) => {
+                console.error(e);
 				oauthCallbackError = e.toString();
 			});
 	});

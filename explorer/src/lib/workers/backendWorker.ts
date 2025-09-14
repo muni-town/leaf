@@ -7,14 +7,15 @@ import { messagePortInterface, reactiveWorkerState, type MessagePortApi } from '
 
 import {
 	atprotoLoopbackClientMetadata,
-	BrowserOAuthClient,
 	buildLoopbackClientId,
+	OAuthClient,
 	type OAuthClientMetadataInput,
 	type OAuthSession
 } from '@atproto/oauth-client-browser';
 import { Agent } from '@atproto/api';
 import type { ProfileViewDetailed } from '@atproto/api/dist/client/types/app/bsky/actor/defs';
 import Dexie, { type EntityTable } from 'dexie';
+import { workerOauthClient } from './oauth';
 
 /**
  * Check whether or not we are executing in a shared worker.
@@ -39,42 +40,12 @@ db.version(1).stores({
 	kv: `key,value`
 });
 
-// TODO: This might be a horrible local storage shim. I don't know how it handles multiple tabs
-// open. Works for now... 🤞 We just need it so that the atproto/oauth-client-browser doesn't panic
-// because localStorage isn't defined.
-globalThis.localStorage = {
-	data: {} as { [key: string]: string },
-	persist() {
-		db.kv.put({ key: 'localStorageShim', value: JSON.stringify(this.data) });
-	},
-	clear() {
-		this.data = {};
-	},
-	getItem(s: string): string | null {
-		return this.data[s] || null;
-	},
-	key(idx: number): string | null {
-		return (Object.values(this.data)[idx] as string | undefined) || null;
-	},
-	get length(): number {
-		return Object.values(this.data).length;
-	},
-	removeItem(key: string) {
-		this.data[key] = undefined;
-		this.persist();
-	},
-	setItem(key: string, value: string) {
-		this.data[key] = value;
-		this.persist();
-	}
-};
-
 /**
  * Helper class wrapping up our worker state behind getters and setters so we run code whenever
  * they are changed.
  * */
 class Backend {
-	#oauth: BrowserOAuthClient | undefined;
+	#oauth: OAuthClient | undefined;
 	#agent: Agent | undefined;
 	#session: OAuthSession | undefined;
 	#profile: ProfileViewDetailed | undefined;
@@ -98,7 +69,7 @@ class Backend {
 		return this.#oauth;
 	}
 
-	setOauthClient(oauth: BrowserOAuthClient) {
+	setOauthClient(oauth: OAuthClient) {
 		this.#oauth = oauth;
 
 		if (oauth) {
@@ -288,7 +259,7 @@ function createLeafClient(agent: Agent, url: string) {
 	});
 }
 
-async function createOauthClient(): Promise<BrowserOAuthClient> {
+async function createOauthClient(): Promise<OAuthClient> {
 	// Build the client metadata
 	let clientMetadata: OAuthClientMetadataInput;
 	if (import.meta.env.DEV) {
@@ -298,7 +269,7 @@ async function createOauthClient(): Promise<BrowserOAuthClient> {
 		const baseUrl = new URL(`http://127.0.0.1:${globalThis.location.port}`);
 		baseUrl.hash = '';
 		baseUrl.pathname = '/';
-		const redirectUri = baseUrl.href + 'oauth/callback';
+		const redirectUri = baseUrl.href;
 		// In dev, we build a development metadata
 		clientMetadata = {
 			...atprotoLoopbackClientMetadata(buildLoopbackClientId(baseUrl)),
@@ -319,11 +290,7 @@ async function createOauthClient(): Promise<BrowserOAuthClient> {
 		clientMetadata = await resp.json();
 	}
 
-	return new BrowserOAuthClient({
-		responseMode: 'query',
-		handleResolver: 'https://resolver.roomy.chat',
-		clientMetadata
-	});
+	return workerOauthClient(clientMetadata);
 }
 
 const eventBroadcast = new BroadcastChannel('leaf-events');

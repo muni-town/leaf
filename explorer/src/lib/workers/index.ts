@@ -28,10 +28,10 @@ export type BackendInterface = {
 	getProfile(did?: string): Promise<ProfileViewDetailed | undefined>;
 	fetchEvents(streamId: string, offset: number, limit: number): Promise<IncomingEvent[]>;
 	hasModule(moduleId: string): Promise<boolean>;
-  createStream(moduleId: string, params: ArrayBuffer): Promise<string>;
-  subscribe(streamId: string): Promise<void>;
-  unsubscribe(streamId: string): Promise<void>;
-  uploadModule(buffer: ArrayBuffer): Promise<string>;
+	createStream(moduleId: string, params: ArrayBuffer): Promise<string>;
+	subscribe(streamId: string): Promise<void>;
+	unsubscribe(streamId: string): Promise<void>;
+	uploadModule(buffer: ArrayBuffer): Promise<string>;
 	sendEvent(streamId: string, payload: ArrayBuffer): Promise<void>;
 	setLeafUrl(url: string): Promise<void>;
 	/** Adds a new message port connection to the backend that can call the backend interface. */
