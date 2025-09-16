@@ -1920,6 +1920,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "leaf-module-public-read-write-admin-upgrade"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "leaf-module-sdk",
+ "parity-scale-codec",
+]
+
+[[package]]
 name = "leaf-module-sdk"
 version = "0.1.0-alpha.1"
 dependencies = [
