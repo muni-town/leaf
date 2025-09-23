@@ -215,17 +215,24 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                     {
                         next_event = receiver.recv();
 
-                        if let Err(e) = socket_.emit(
-                            "stream/event",
-                            &StreamEventNotification {
-                                stream: stream_id.to_hex().to_string(),
-                                idx: event.idx,
-                                user: event.user,
-                                payload: event.payload.into(),
-                            },
-                        ) {
-                            // TODO: better error message
-                            tracing::error!("Error sending event: {e}");
+                        if socket_.connected() {
+                            if let Err(e) = socket_.emit(
+                                "stream/event",
+                                &StreamEventNotification {
+                                    stream: stream_id.to_hex().to_string(),
+                                    idx: event.idx,
+                                    user: event.user,
+                                    payload: event.payload.into(),
+                                },
+                            ) {
+                                // TODO: better error message
+                                tracing::error!("Error sending event, unsubscribing: {e}");
+                            }
+                        } else if let Some(unsubscriber) =
+                            unsubscribers_.lock().await.remove(&stream_id)
+                        {
+                            tracing::info!("Client disconnected, canceling subscription");
+                            unsubscriber.send(()).ok();
                         }
                     }
                 });
