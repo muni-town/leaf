@@ -72,8 +72,8 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 // Create the stream
                 let input = data?;
                 let genesis = StreamGenesis {
-                    stamp: Ulid::new().into(),
-                    creator: did_.clone(),
+                    stamp: Ulid::from_bytes(input.ulid).into(),
+                    creator: did_,
                     module: Hash::from_hex(input.module)?.into(),
                     params: input.params,
                 };
@@ -118,11 +118,11 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                     stream
                 };
 
-                stream.handle_event(did_.clone(), request.payload).await?;
+                stream.handle_event(did_, request.payload).await?;
 
                 anyhow::Ok(())
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/event"))
+            .instrument(tracing::info_span!(parent: span_, "handle stream/event"))
             .await;
 
             match result {
@@ -339,6 +339,7 @@ struct StreamCreateArgs {
     /// The hex-encoded, blake3 hash of the WASM module to use to create the stream.
     module: String,
     params: Vec<u8>,
+    ulid: [u8; 16],
 }
 
 #[derive(Deserialize)]
