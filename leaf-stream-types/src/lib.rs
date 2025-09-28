@@ -1,5 +1,12 @@
 pub use parity_scale_codec::{Decode, Encode};
 
+#[derive(Clone, Debug, Encode, Decode)]
+pub struct Event<Payload = Vec<u8>> {
+    pub idx: i64,
+    pub user: String,
+    pub payload: Payload,
+}
+
 #[derive(Decode, Encode, Debug, Clone)]
 pub struct ModuleInit<Params = Vec<u8>> {
     pub creator: String,
@@ -11,6 +18,15 @@ pub struct IncomingEvent<Payload = Vec<u8>, Params = Vec<u8>> {
     pub payload: Payload,
     pub params: Params,
     pub user: String,
+}
+
+#[derive(Decode, Encode, Debug, Clone)]
+pub struct FetchInput<Filter = Vec<u8>> {
+    pub end: Option<i64>,
+    pub start: Option<i64>,
+    pub limit: i64,
+    pub filter: Option<Filter>,
+    pub requesting_user: String,
 }
 
 #[derive(Decode, Encode, Debug, Clone)]
@@ -225,6 +241,18 @@ impl<T: FromValue> FromRow for T {
                 .next()
                 .ok_or(SqlError::InvalidColumnCount)?,
         )
+    }
+}
+
+impl<P: Decode + Encode> FromRow for Event<P> {
+    fn from_row(row: SqlRow) -> SqlResult<Self> {
+        let (idx, user, payload): (i64, String, Vec<u8>) = row.parse_row()?;
+
+        Ok(Event {
+            idx,
+            user,
+            payload: P::decode(&mut &payload[..]).map_err(|_e| SqlError::InvalidValueType)?,
+        })
     }
 }
 

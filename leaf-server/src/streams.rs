@@ -5,7 +5,11 @@ use std::{
 
 use anyhow::Context;
 use blake3::Hash;
-use leaf_stream::{Event, EventReceiver, Stream, StreamGenesis, modules::wasm::LeafWasmModule};
+use leaf_stream::{
+    EventReceiver, Stream, StreamGenesis,
+    modules::wasm::LeafWasmModule,
+    types::{Event, FetchInput},
+};
 use tokio::sync::RwLock;
 use weak_table::{WeakValueHashMap, traits::WeakElement};
 
@@ -45,20 +49,8 @@ impl StreamHandle {
         Ok(())
     }
 
-    pub async fn fetch_events(
-        &self,
-        requesting_user: &str,
-        offset: u64,
-        limit: u64,
-        filter: Option<Vec<u8>>,
-    ) -> anyhow::Result<Vec<Event>> {
-        let events = self
-            .0
-            .stream
-            .read()
-            .await
-            .fetch_events(requesting_user, offset, limit, filter)
-            .await?;
+    pub async fn fetch_events(&self, options: FetchInput) -> anyhow::Result<Vec<Event>> {
+        let events = self.0.stream.read().await.fetch_events(options).await?;
         Ok(events)
     }
 }
@@ -139,7 +131,18 @@ async fn load_module(
         .await
         .context("error opening module db")?
         .connect()?;
+
+    // Set our standard pragmas
     module_db.execute_batch(GLOBAL_SQLITE_PRAGMA).await?;
+
+    // Attach the stream DB to the module DB
+    module_db
+        .execute(
+            "attach ? as events",
+            [stream_dir.join("stream.db").to_string_lossy().to_string()],
+        )
+        .await?;
+
     Ok((module, module_db))
 }
 

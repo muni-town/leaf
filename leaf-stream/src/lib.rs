@@ -3,9 +3,11 @@ use std::{collections::HashMap, pin::Pin, sync::Arc};
 use anyhow::Context;
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
-use leaf_stream_types::{Decode, EventRequest, Inbound, IncomingEvent, Outbound, Process};
+use leaf_stream_types::{
+    Decode, Event, EventRequest, FetchInput, Inbound, IncomingEvent, Outbound, Process,
+};
 use leaf_utils::convert::*;
-use libsql::Connection;
+use libsql::{AuthAction, Authorization, Connection};
 use parity_scale_codec::Encode;
 use tracing::instrument;
 use ulid::Ulid;
@@ -54,6 +56,7 @@ impl StreamGenesis {
 pub struct Stream {
     id: Hash,
     db: libsql::Connection,
+    db_filename: String,
     module_state: Arc<RwLock<ModuleState>>,
     creator: String,
     latest_event: i64,
@@ -124,6 +127,16 @@ pub enum StreamError {
     EventRejected { reason: String },
     #[error("Error while running stream module: {0}")]
     ModuleError(#[from] anyhow::Error),
+    #[error("The module DB must have an attachment to the events DB under the 'events' name.")]
+    ModuleDbMissingEventsAttachment,
+    #[error(
+        "The module DB's attached 'events' database does not have the same filename as the events database for the stream."
+    )]
+    ModuleDbEventsAttachmentHasWrongFilename,
+    #[error(
+        "Could not query main database file. This should not happen under normal circumstances."
+    )]
+    FailedToQueryDatabaseFilename,
 }
 
 impl Stream {
@@ -216,9 +229,24 @@ impl Stream {
 
         let subscribers = Default::default();
 
+        // Get the filename of the passed-in database connection so that we can make sure modules
+        // are attached to the same file.
+        let files: Vec<String> = db
+            .query(
+                "select file from pragma_database_list where name = 'main'",
+                (),
+            )
+            .await?
+            .parse_rows()
+            .await?;
+        let Some(db_filename) = files.first().cloned() else {
+            return Err(StreamError::FailedToQueryDatabaseFilename);
+        };
+
         Ok(Self {
             id,
             db,
+            db_filename,
             module_state: Arc::new(RwLock::new(ModuleState {
                 load: module,
                 params,
@@ -271,6 +299,27 @@ impl Stream {
         match &module_state.load {
             ModuleLoad::Unloaded(hash) => {
                 if module.id() == *hash {
+                    // Make sure an `events` database is connected, which must be connected to the
+                    // same database with the same virtual filesystem.
+                    let files: Vec<String> = module_db
+                        .query(
+                            "select file from pragma_database_list where name = 'events'",
+                            (),
+                        )
+                        .await?
+                        .parse_rows()
+                        .await?;
+                    let Some(db_filename) = files.first() else {
+                        return Err(StreamError::ModuleDbMissingEventsAttachment);
+                    };
+                    if db_filename != &self.db_filename {
+                        return Err(StreamError::ModuleDbEventsAttachmentHasWrongFilename);
+                    }
+
+                    // Make sure we restrict the module's SQL to prevent, for example, attaching to
+                    // other databases.
+                    module_db.authorizer(Some(Arc::new(default_module_db_authorizer)))?;
+
                     module_state.load = ModuleLoad::Loaded { module, module_db };
                     drop(module_state);
 
@@ -409,7 +458,7 @@ impl Stream {
         let current_module_id = module.id();
 
         // For filter operations, switch the SQL authorization to only allow read operations.
-        module_db.authorizer(Some(Arc::new(read_only_sql_authorizer)))?;
+        module_db.authorizer(Some(Arc::new(read_only_module_db_authorizer)))?;
 
         // First we check whether the event should be filtered out
         let filter_response = module
@@ -424,8 +473,8 @@ impl Stream {
             .await
             .context("error running module filter_inbound.")?;
 
-        // Now disable the read-only authorizer
-        module_db.authorizer(None)?;
+        // Now re-enable the default authorizer
+        module_db.authorizer(Some(Arc::new(default_module_db_authorizer)))?;
 
         // Error if the event was rejected by the filter
         if let Inbound::Block { reason } = filter_response {
@@ -529,65 +578,38 @@ impl Stream {
     }
 
     /// TODO: provide a way to asynchronously stream the events instead of batch collecting them.
-    pub async fn fetch_events(
-        &self,
-        requesting_user: &str,
-        offset: u64,
-        limit: u64,
-        filter: Option<Vec<u8>>,
-    ) -> Result<Vec<Event>, StreamError> {
+    #[instrument(skip(self), err)]
+    pub async fn fetch_events(&self, options: FetchInput) -> Result<Vec<Event>, StreamError> {
         let module_state = self.module_state.upgradable_read().await;
         let (module, module_db) = Self::ensure_module_loaded(&module_state.load)?;
 
-        let mut filtered = Vec::with_capacity(limit as usize);
+        module_db
+            .execute(
+                "create temp table if not exists fetch (id blob primary key)",
+                (),
+            )
+            .await?;
 
-        let mut page = 0;
-        while filtered.len() < limit as usize {
-            let rows = self
-                .db
-                .query(
-                    "select id, user, payload from events where id >= :start and id < :end",
-                    (
-                        (":start", offset + page * limit),
-                        (":end", offset + (page + 1) * limit),
-                    ),
-                )
-                .await?;
-            page += 1;
-            let events: Vec<(i64, String, Vec<u8>)> = rows.parse_rows().await?;
+        module_db.authorizer(Some(Arc::new(fetch_module_db_authorizer)))?;
 
-            if events.is_empty() {
-                break;
-            }
+        module.fetch(options, module_db.clone()).await?;
 
-            module_db.authorizer(Some(Arc::new(read_only_sql_authorizer)))?;
-            for (idx, user, payload) in events {
-                let result = module
-                    .filter_outbound(
-                        EventRequest {
-                            requesting_user: requesting_user.into(),
-                            incoming_event: IncomingEvent {
-                                payload: payload.clone(),
-                                params: module_state.params.clone(),
-                                user: user.clone(),
-                            },
-                            filter: filter.clone(),
-                        },
-                        module_db.clone(),
-                    )
-                    .await?;
-                match result {
-                    Outbound::Allow => filtered.push(Event { idx, user, payload }),
-                    Outbound::Block => (),
-                }
-                if filtered.len() >= limit as usize {
-                    break;
-                }
-            }
-            module_db.authorizer(None)?;
-        }
+        module_db.authorizer(Some(Arc::new(default_module_db_authorizer)))?;
 
-        Ok(filtered)
+        let events: Vec<(i64, String, Vec<u8>)> = module_db
+            .query(
+                "select e.id, e.user, e.payload from events e right join fetch on fetch.id = e.id",
+                (),
+            )
+            .await?
+            .parse_rows()
+            .await?;
+        module_db.execute("delete from fetch", ()).await?;
+
+        Ok(events
+            .into_iter()
+            .map(|(idx, user, payload)| Event { idx, user, payload })
+            .collect())
     }
 
     /// This function returns a future that must be awaited on in order for subscriptions to the
@@ -622,7 +644,8 @@ impl Stream {
                     continue;
                 };
 
-                if let Err(e) = module_db.authorizer(Some(Arc::new(read_only_sql_authorizer))) {
+                if let Err(e) = module_db.authorizer(Some(Arc::new(read_only_module_db_authorizer)))
+                {
                     tracing::warn!("Error setting SQLite authorizer to read only: {e}");
                 }
                 let notification_futures = subscribers.iter().map(|(requesting_user, sender)| {
@@ -658,19 +681,12 @@ impl Stream {
                     }
                 });
                 futures::future::join_all(notification_futures).await;
-                if let Err(e) = module_db.authorizer(None) {
-                    tracing::warn!("Error setting SQLite authorizer to None: {e}");
+                if let Err(e) = module_db.authorizer(Some(Arc::new(default_module_db_authorizer))) {
+                    tracing::warn!("Error setting SQLite authorizer to default authorizer: {e}");
                 }
             }
         })
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct Event {
-    pub idx: i64,
-    pub user: String,
-    pub payload: Vec<u8>,
 }
 
 /// The trait implemented by leaf modules.
@@ -684,27 +700,117 @@ pub trait LeafModule: Sync + Send {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
     fn filter_inbound(
         &self,
-        moduel_input: IncomingEvent,
+        event: IncomingEvent,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Send>>;
     fn filter_outbound(
         &self,
-        moduel_input: EventRequest,
+        req: EventRequest,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Outbound>> + Send>>;
+
+    /// When this fuction is called the module is expected to populate a temporary table called
+    /// `fetch` in its database. This table should have one `id` column that will list all of the
+    /// events that should be returned by the fetch.
+    fn fetch(
+        &self,
+        input: FetchInput,
+        db: libsql::Connection,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
     fn process_event(
         &self,
-        moduel_input: IncomingEvent,
+        event: IncomingEvent,
         db: libsql::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Process>> + Send>>;
 }
 
-fn read_only_sql_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {
+fn default_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {
+    use AuthAction::*;
+    use Authorization::*;
+    match (ctx.action, ctx.database_name) {
+        (CreateIndex { .. }, None | Some("main") | Some("temp"))
+        | (CreateTable { .. }, None | Some("main") | Some("temp"))
+        | (CreateTempIndex { .. }, None | Some("main") | Some("temp"))
+        | (CreateTempTable { .. }, None | Some("main") | Some("temp"))
+        | (CreateTempTrigger { .. }, None | Some("main") | Some("temp"))
+        | (CreateTempView { .. }, None | Some("main") | Some("temp"))
+        | (CreateTrigger { .. }, None | Some("main") | Some("temp"))
+        | (CreateView { .. }, None | Some("main") | Some("temp"))
+        | (Delete { .. }, None | Some("main") | Some("temp"))
+        | (DropIndex { .. }, None | Some("main") | Some("temp"))
+        | (DropTable { .. }, None | Some("main") | Some("temp"))
+        | (DropTempIndex { .. }, None | Some("main") | Some("temp"))
+        | (DropTempTable { .. }, None | Some("main") | Some("temp"))
+        | (DropTempTrigger { .. }, None | Some("main") | Some("temp"))
+        | (DropTempView { .. }, None | Some("main") | Some("temp"))
+        | (DropTrigger { .. }, None | Some("main") | Some("temp"))
+        | (DropView { .. }, None | Some("main") | Some("temp"))
+        | (Insert { .. }, None | Some("main") | Some("temp"))
+        | (Read { .. }, None | Some("main") | Some("temp"))
+        | (Select { .. }, None | Some("main") | Some("temp"))
+        | (Transaction { .. }, None | Some("main") | Some("temp"))
+        | (Update { .. }, None | Some("main") | Some("temp"))
+        | (AlterTable { .. }, None | Some("main") | Some("temp"))
+        | (Reindex { .. }, None | Some("main") | Some("temp"))
+        | (Analyze { .. }, None | Some("main") | Some("temp"))
+        | (Function { .. }, None | Some("main") | Some("temp"))
+        | (Savepoint { .. }, None | Some("main") | Some("temp"))
+        | (Recursive { .. }, None | Some("main") | Some("temp"))
+        | (Read { .. }, Some("events"))
+        | (Select { .. }, Some("events")) => Allow,
+        op => {
+            tracing::warn!(
+                ?op,
+                "Denying SQL operation from default_module_db_authorizer"
+            );
+            Deny
+        }
+    }
+}
+
+fn fetch_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {
+    use AuthAction::*;
+    use Authorization::*;
+    match (ctx.action, ctx.database_name) {
+        (CreateTempIndex { .. }, Some("temp"))
+        | (CreateTempTable { .. }, Some("temp"))
+        | (CreateTempTrigger { .. }, Some("temp"))
+        | (CreateTempView { .. }, Some("temp"))
+        | (Delete { .. }, Some("temp"))
+        | (DropTempIndex { .. }, Some("temp"))
+        | (DropTempTable { .. }, Some("temp"))
+        | (DropTempTrigger { .. }, Some("temp"))
+        | (DropTempView { .. }, Some("temp"))
+        | (Insert { .. }, Some("temp"))
+        | (Read { .. }, Some("temp"))
+        | (Select { .. }, Some("temp"))
+        | (Transaction { .. }, Some("temp"))
+        | (Update { .. }, Some("temp"))
+        | (AlterTable { .. }, Some("temp"))
+        | (Reindex { .. }, Some("temp"))
+        | (Savepoint { .. }, Some("temp"))
+        | (Recursive { .. }, Some("temp"))
+        | (Read { .. }, _)
+        | (Select { .. }, _) => Allow,
+        op => {
+            tracing::warn!(?op, "Denying SQL operation from fetch_module_db_authorizer");
+            Deny
+        }
+    }
+}
+
+fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {
     match ctx.action {
         libsql::AuthAction::Read { .. } | libsql::AuthAction::Select => {
             libsql::Authorization::Allow
         }
-        _ => libsql::Authorization::Deny,
+        op => {
+            tracing::warn!(
+                ?op,
+                "Denying SQL operation from read_only_module_db_authorizer"
+            );
+            libsql::Authorization::Deny
+        }
     }
 }
 

@@ -1,6 +1,12 @@
 use leaf_module_sdk::*;
 
-register_handlers!(init_db, filter_inbound, filter_outbound, process_event);
+register_handlers!(
+    init_db,
+    filter_inbound,
+    filter_outbound,
+    fetch,
+    process_event
+);
 
 fn init_db(creator: String, _params: String) {
     query(
@@ -39,6 +45,25 @@ fn filter_inbound(input: IncomingEvent) -> Result<Inbound> {
 
 fn filter_outbound(_input: EventRequest) -> Result<Outbound> {
     Ok(Outbound::Allow)
+}
+
+fn fetch(input: FetchInput) -> Result<()> {
+    query(
+        "
+        insert into fetch
+        select id from events where
+            id >= :start
+                and
+            id < :end
+        limit :limit
+        ",
+        vec![
+            (":start".into(), input.start.unwrap_or(0).into()),
+            (":end".into(), input.end.unwrap_or(i64::MAX).into()),
+            (":limit".into(), input.limit.into()),
+        ],
+    );
+    Ok(())
 }
 
 fn process_event(input: IncomingEvent) -> Result<Process> {

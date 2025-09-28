@@ -2,7 +2,13 @@ use base64::Engine;
 use leaf_module_sdk::*;
 use serde::Deserialize;
 
-register_handlers!(init_db, filter_inbound, filter_outbound, process_event);
+register_handlers!(
+    init_db,
+    filter_inbound,
+    filter_outbound,
+    fetch,
+    process_event
+);
 
 fn init_db(creator: String, _params: String) {
     query(
@@ -104,6 +110,32 @@ fn filter_outbound(input: EventRequest<String, String>) -> Result<Outbound> {
     } else {
         Ok(Outbound::Block)
     }
+}
+
+fn fetch(input: FetchInput) -> Result<()> {
+    query(
+        "
+        insert into fetch
+        select id from events where
+            exists (
+                select 1 from members where id = :user
+                    union
+                select 1 from state where admin = :user
+            )
+                and
+            id >= :start
+                and
+            id < :end
+        limit :limit
+        ",
+        vec![
+            (":user".into(), input.requesting_user.into()),
+            (":start".into(), input.start.unwrap_or(0).into()),
+            (":end".into(), input.end.unwrap_or(i64::MAX).into()),
+            (":limit".into(), input.limit.into()),
+        ],
+    );
+    Ok(())
 }
 
 fn process_event(input: IncomingEvent<String, String>) -> Result<Process> {

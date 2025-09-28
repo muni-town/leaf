@@ -31,7 +31,7 @@ pub fn query(query: &str, params: Vec<(String, SqlValue)>) -> SqlRows {
 
 #[macro_export]
 macro_rules! register_handlers {
-    ($init_db:ident, $filter_inbound:ident, $filter_outbound:ident, $process_event:ident) => {
+    ($init_db:ident, $filter_inbound:ident, $filter_outbound:ident, $fetch:ident, $process_event:ident) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn malloc(size: usize, align: usize) -> *mut u8 {
             unsafe { std::alloc::alloc(std::alloc::Layout::from_size_align(size, align).unwrap()) }
@@ -93,6 +93,20 @@ macro_rules! register_handlers {
             let len = response_bytes.len();
             std::mem::forget(response_bytes);
             unsafe { out_ptr.write((ptr, len)) };
+        }
+
+        #[unsafe(no_mangle)]
+        #[unsafe(export_name = "fetch")]
+        unsafe extern "C" fn __wasm_fetch(input_ptr: *mut u8, input_len: usize) {
+            let mut input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
+            let input = FetchInput::decode(&mut input_bytes).unwrap();
+
+            let resp = $fetch(input);
+            let response: () = match resp {
+                Ok(r) => r,
+                // TODO: provide a way to return errors.
+                Err(_) => (),
+            };
         }
 
         #[unsafe(no_mangle)]

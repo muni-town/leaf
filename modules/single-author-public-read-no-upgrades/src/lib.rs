@@ -1,6 +1,12 @@
 use leaf_module_sdk::*;
 
-register_handlers!(init_db, filter_inbound, filter_outbound, process_event);
+register_handlers!(
+    init_db,
+    filter_inbound,
+    filter_outbound,
+    fetch,
+    process_event
+);
 
 fn init_db(creator: String, _params: String) {
     query(
@@ -41,16 +47,27 @@ fn filter_inbound(input: IncomingEvent<String, String>) -> Result<Inbound> {
     Ok(Inbound::Allow)
 }
 
-// Everything is public, but an optional search filter can be applied.
-fn filter_outbound(input: EventRequest<String, String, String>) -> Result<Outbound> {
-    // Reject any records that don't include the filter, if present.
-    if let Some(filter) = input.filter
-        && !input.incoming_event.payload.contains(&filter)
-    {
-        return Ok(Outbound::Block);
-    }
-
+fn filter_outbound(_input: EventRequest<String, String>) -> Result<Outbound> {
     Ok(Outbound::Allow)
+}
+
+fn fetch(input: FetchInput) -> Result<()> {
+    query(
+        "
+        insert into fetch
+        select id from events where
+            id >= :start
+                and
+            id < :end
+        limit :limit
+        ",
+        vec![
+            (":start".into(), input.start.unwrap_or(0).into()),
+            (":end".into(), input.end.unwrap_or(i64::MAX).into()),
+            (":limit".into(), input.limit.into()),
+        ],
+    );
+    Ok(())
 }
 
 fn process_event(_input: IncomingEvent<String, String>) -> Result<Process> {

@@ -8,10 +8,12 @@ use std::{
 use anyhow::Context;
 use blake3::Hash;
 use leaf_stream_types::{
-    EventRequest, Inbound, IncomingEvent, ModuleInit, Outbound, Process, SqlQuery, SqlRow, SqlRows, SqlValue
+    EventRequest, Inbound, IncomingEvent, ModuleInit, Outbound, Process, SqlQuery, SqlRow, SqlRows,
+    SqlValue,
 };
+use libsql::Connection;
 use parity_scale_codec::{Decode, Encode};
-use wasmtime::{Config, Engine, FuncType, Store, Val, ValType};
+use wasmtime::{Config, Engine, FuncType, Linker, Module, Store, Val, ValType};
 
 use crate::LeafModule;
 
@@ -23,6 +25,21 @@ pub struct LeafWasmModule {
     id: Hash,
     module: wasmtime::Module,
     linker: Arc<wasmtime::Linker<libsql::Connection>>,
+}
+
+#[derive(Debug)]
+struct InvalidFunctionTypeCtx(&'static str);
+impl std::fmt::Display for InvalidFunctionTypeCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Invalid type for {} function", self.0)
+    }
+}
+#[derive(Debug)]
+struct ErrorCallingFunctionCtx(&'static str);
+impl std::fmt::Display for ErrorCallingFunctionCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Error calling {} function", self.0)
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -52,7 +69,7 @@ impl LeafWasmModule {
             "host",
             "query",
             |mut caller, (query_ptr, query_len, out_ptr): (i32, i32, i32)| {
-                Box::new(async move {
+                let result = async move {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|x| x.into_memory())
@@ -114,7 +131,9 @@ impl LeafWasmModule {
                     memory.write(&mut caller, out_ptr as usize, &ptr_bytes)?;
 
                     Ok(())
-                })
+                };
+
+                Box::new(async move { result.await.inspect_err(|e| tracing::error!("{e}")) })
             },
         )?;
 
@@ -181,6 +200,96 @@ impl LeafWasmModule {
 
         Ok(())
     }
+
+    async fn call_wasm_func<I: Encode, O: Decode>(
+        func_name: &'static str,
+        module: Module,
+        linker: Arc<Linker<Connection>>,
+        db: libsql::Connection,
+        input: I,
+    ) -> anyhow::Result<O> {
+        let mut store = Store::new(&ENGINE, db);
+        let instance = linker.instantiate_async(&mut store, &module).await?;
+        let Some(memory) = instance.get_memory(&mut store, "memory") else {
+            anyhow::bail!("Could not load wasm memory.");
+        };
+        let malloc = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
+            .context(InvalidFunctionTypeCtx("malloc"))?;
+        let func = instance
+            .get_typed_func::<(i32, i32, i32), ()>(&mut store, func_name)
+            .context(InvalidFunctionTypeCtx(func_name))?;
+
+        // Allocate the input in the WASM module
+        let input_bytes = input.encode();
+        let input_len = input_bytes.len() as i32;
+        let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
+        memory.write(&mut store, input_ptr as usize, &input_bytes)?;
+
+        // Allocate space for the return value
+        let output_ptr = malloc
+            .call_async(
+                &mut store,
+                (size_of::<i32>() as i32 * 2, align_of::<i32>() as i32),
+            )
+            .await?;
+
+        // Run the named function from the WASM module
+        func.call_async(&mut store, (input_ptr, input_len, output_ptr))
+            .await
+            .context(ErrorCallingFunctionCtx(func_name))?;
+
+        let mut output_ptr_bytes = [0u8; size_of::<i32>()];
+        memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
+        let mut output_len_bytes = [0u8; size_of::<i32>()];
+        memory.read(
+            &store,
+            output_ptr as usize + size_of::<i32>(),
+            &mut output_len_bytes,
+        )?;
+        let output_ptr = i32::from_le_bytes(output_ptr_bytes);
+        let output_len = i32::from_le_bytes(output_len_bytes);
+
+        let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
+        memory.read(&store, output_ptr as usize, &mut response_bytes)?;
+        let response = O::decode(&mut &response_bytes[..])?;
+
+        Ok(response)
+    }
+
+    async fn call_wasm_func_without_return<I: Encode>(
+        func_name: &'static str,
+        module: Module,
+        linker: Arc<Linker<Connection>>,
+        db: libsql::Connection,
+        input: I,
+    ) -> anyhow::Result<()> {
+        let mut store = Store::new(&ENGINE, db);
+        let instance = linker.instantiate_async(&mut store, &module).await?;
+        let Some(memory) = instance.get_memory(&mut store, "memory") else {
+            anyhow::bail!("Could not load wasm memory.");
+        };
+        let malloc = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
+            .context(InvalidFunctionTypeCtx("malloc"))?;
+        let func = instance
+            .get_typed_func::<(i32, i32), ()>(&mut store, func_name)
+            .context(InvalidFunctionTypeCtx(func_name))?;
+
+        // Allocate the input in the WASM module
+        let input_bytes = input.encode();
+        let input_len = input_bytes.len() as i32;
+        let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
+        memory.write(&mut store, input_ptr as usize, &input_bytes)?;
+
+        // Run the named function from the WASM module
+        func.call_async(&mut store, (input_ptr, input_len))
+            .await
+            .inspect_err(|e| tracing::error!("{e}"))
+            .context(ErrorCallingFunctionCtx(func_name))?;
+
+        Ok(())
+    }
 }
 
 // FIXME: We need to apply fuel limits to WASM module execution, and we also need to watch memory
@@ -197,57 +306,13 @@ impl LeafModule for LeafWasmModule {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Inbound>> + Send>> {
         let module = self.module.clone();
         let linker = self.linker.clone();
-
-        Box::pin(async move {
-            let mut store = Store::new(&ENGINE, db);
-            let instance = linker.instantiate_async(&mut store, &module).await?;
-            let Some(memory) = instance.get_memory(&mut store, "memory") else {
-                anyhow::bail!("Could not load wasm memory.");
-            };
-            let malloc = instance
-                .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
-                .context("invalid type for malloc function")?;
-            let filter_inbound = instance
-                .get_typed_func::<(i32, i32, i32), ()>(&mut store, "filter_inbound")
-                .context("Invalid type for filter_inbound function")?;
-
-            // Allocate the input in the WASM module
-            let input_bytes = input.encode();
-            let input_len = input_bytes.len() as i32;
-            let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
-            memory.write(&mut store, input_ptr as usize, &input_bytes)?;
-
-            // Allocate space for the return value
-            let output_ptr = malloc
-                .call_async(
-                    &mut store,
-                    (size_of::<i32>() as i32 * 2, align_of::<i32>() as i32),
-                )
-                .await?;
-
-            // Run the inbound filter function from the WASM module
-            filter_inbound
-                .call_async(&mut store, (input_ptr, input_len, output_ptr))
-                .await
-                .context("error calling filter_inbound func")?;
-
-            let mut output_ptr_bytes = [0u8; size_of::<i32>()];
-            memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
-            let mut output_len_bytes = [0u8; size_of::<i32>()];
-            memory.read(
-                &store,
-                output_ptr as usize + size_of::<i32>(),
-                &mut output_len_bytes,
-            )?;
-            let output_ptr = i32::from_le_bytes(output_ptr_bytes);
-            let output_len = i32::from_le_bytes(output_len_bytes);
-
-            let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
-            memory.read(&store, output_ptr as usize, &mut response_bytes)?;
-            let response = Inbound::decode(&mut &response_bytes[..])?;
-
-            Ok(response)
-        })
+        Box::pin(Self::call_wasm_func(
+            "filter_inbound",
+            module,
+            linker,
+            db,
+            input,
+        ))
     }
 
     fn filter_outbound(
@@ -258,56 +323,13 @@ impl LeafModule for LeafWasmModule {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
-        Box::pin(async move {
-            let mut store = Store::new(&ENGINE, db);
-            let instance = linker.instantiate_async(&mut store, &module).await?;
-            let Some(memory) = instance.get_memory(&mut store, "memory") else {
-                anyhow::bail!("Could not load wasm memory.");
-            };
-            let malloc = instance
-                .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
-                .context("invalid type for malloc function")?;
-            let filter_outbound = instance
-                .get_typed_func::<(i32, i32, i32), ()>(&mut store, "filter_outbound")
-                .context("Invalid type for filter_outbound function")?;
-
-            // Allocate the input in the WASM module
-            let input_bytes = input.encode();
-            let input_len = input_bytes.len() as i32;
-            let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
-            memory.write(&mut store, input_ptr as usize, &input_bytes)?;
-
-            // Allocate space for the return value
-            let output_ptr = malloc
-                .call_async(
-                    &mut store,
-                    (size_of::<i32>() as i32 * 2, align_of::<i32>() as i32),
-                )
-                .await?;
-
-            // Run the inbound filter function from the WASM module
-            filter_outbound
-                .call_async(&mut store, (input_ptr, input_len, output_ptr))
-                .await
-                .context("error calling filter_outbound func")?;
-
-            let mut output_ptr_bytes = [0u8; size_of::<i32>()];
-            memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
-            let mut output_len_bytes = [0u8; size_of::<i32>()];
-            memory.read(
-                &store,
-                output_ptr as usize + size_of::<i32>(),
-                &mut output_len_bytes,
-            )?;
-            let output_ptr = i32::from_le_bytes(output_ptr_bytes);
-            let output_len = i32::from_le_bytes(output_len_bytes);
-
-            let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
-            memory.read(&store, output_ptr as usize, &mut response_bytes)?;
-            let response = Outbound::decode(&mut &response_bytes[..])?;
-
-            Ok(response)
-        })
+        Box::pin(Self::call_wasm_func(
+            "filter_outbound",
+            module,
+            linker,
+            db,
+            input,
+        ))
     }
 
     fn process_event(
@@ -318,56 +340,26 @@ impl LeafModule for LeafWasmModule {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
-        Box::pin(async move {
-            let mut store = Store::new(&ENGINE, db);
-            let instance = linker.instantiate_async(&mut store, &module).await?;
-            let Some(memory) = instance.get_memory(&mut store, "memory") else {
-                anyhow::bail!("Could not load wasm memory.");
-            };
-            let malloc = instance
-                .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
-                .context("invalid type for malloc function")?;
-            let process_event = instance
-                .get_typed_func::<(i32, i32, i32), ()>(&mut store, "process_event")
-                .context("Invalid type for process_event function")?;
+        Box::pin(Self::call_wasm_func(
+            "process_event",
+            module,
+            linker,
+            db,
+            input,
+        ))
+    }
 
-            // Allocate the input in the WASM module
-            let input_bytes = input.encode();
-            let input_len = input_bytes.len() as i32;
-            let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
-            memory.write(&mut store, input_ptr as usize, &input_bytes)?;
+    fn fetch(
+        &self,
+        input: leaf_stream_types::FetchInput,
+        db: libsql::Connection,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>> {
+        let module = self.module.clone();
+        let linker = self.linker.clone();
 
-            // Allocate space for the return value
-            let output_ptr = malloc
-                .call_async(
-                    &mut store,
-                    (size_of::<i32>() as i32 * 2, align_of::<i32>() as i32),
-                )
-                .await?;
-
-            // Run the inbound filter function from the WASM module
-            process_event
-                .call_async(&mut store, (input_ptr, input_len, output_ptr))
-                .await
-                .context("error calling process_event func")?;
-
-            let mut output_ptr_bytes = [0u8; size_of::<i32>()];
-            memory.read(&store, output_ptr as usize, &mut output_ptr_bytes)?;
-            let mut output_len_bytes = [0u8; size_of::<i32>()];
-            memory.read(
-                &store,
-                output_ptr as usize + size_of::<i32>(),
-                &mut output_len_bytes,
-            )?;
-            let output_ptr = i32::from_le_bytes(output_ptr_bytes);
-            let output_len = i32::from_le_bytes(output_len_bytes);
-
-            let mut response_bytes = Vec::from_iter(iter::repeat_n(0u8, output_len as usize));
-            memory.read(&store, output_ptr as usize, &mut response_bytes)?;
-            let response = Process::decode(&mut &response_bytes[..])?;
-
-            Ok(response)
-        })
+        Box::pin(Self::call_wasm_func_without_return(
+            "fetch", module, linker, db, input,
+        ))
     }
 
     fn init_db(
@@ -379,33 +371,13 @@ impl LeafModule for LeafWasmModule {
         let module = self.module.clone();
         let linker = self.linker.clone();
 
-        Box::pin(async move {
-            let mut store = Store::new(&ENGINE, db.clone());
-            let instance = linker.instantiate_async(&mut store, &module).await?;
-            let Some(memory) = instance.get_memory(&mut store, "memory") else {
-                anyhow::bail!("Could not load wasm memory.");
-            };
-            let malloc = instance
-                .get_typed_func::<(i32, i32), i32>(&mut store, "malloc")
-                .context("invalid type for malloc function")?;
-            let init_db = instance
-                .get_typed_func::<(i32, i32), ()>(&mut store, "init_db")
-                .context("Invalid type for process_event function")?;
-
-            // Allocate the input in the WASM module
-            let input_bytes = ModuleInit { creator, params }.encode();
-            let input_len = input_bytes.len() as i32;
-            let input_ptr = malloc.call_async(&mut store, (input_len, 1)).await?;
-            memory.write(&mut store, input_ptr as usize, &input_bytes)?;
-
-            // Run the init_db function from the WASM module
-            init_db
-                .call_async(&mut store, (input_ptr, input_len))
-                .await
-                .context("error calling init_db func")?;
-
-            Ok(())
-        })
+        Box::pin(Self::call_wasm_func_without_return(
+            "init_db",
+            module,
+            linker,
+            db,
+            ModuleInit { creator, params },
+        ))
     }
 }
 
