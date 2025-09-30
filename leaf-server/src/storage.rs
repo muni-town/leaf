@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Weak},
     time::Duration,
@@ -7,9 +8,12 @@ use std::{
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
 use leaf_stream::{StreamGenesis, modules::wasm::LeafWasmModule, validate_wasm};
-use leaf_utils::convert::{FromRows, ParseRow};
+use leaf_utils::convert::{FromRows, ParseRow, ParseRows};
 use libsql::Connection;
+use miniz_oxide::{deflate::compress_to_vec, inflate::decompress_to_vec};
 use parity_scale_codec::Decode;
+use reqwest::Url;
+use s3_simple::Bucket;
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use weak_table::WeakValueHashMap;
@@ -26,10 +30,28 @@ pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 static WASM_MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafWasmModule>>>> =
     LazyLock::new(|| RwLock::new(WeakValueHashMap::new()));
 
+pub static BUCKET_MODULE_DIR: &str = "modules";
+
 #[derive(Default)]
 pub struct Storage {
     db: AsyncOnceLock<libsql::Connection>,
     data_dir: RwLock<Option<PathBuf>>,
+    backup_bucket: RwLock<Option<Bucket>>,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+#[group(required = false, multiple = true)]
+pub struct S3BackupConfig {
+    #[arg(long = "s3-host", env = "S3_HOST")]
+    pub host: Url,
+    #[arg(long = "s3-bucket", env = "S3_BUCKET")]
+    pub name: String,
+    #[arg(long = "s3-region", env = "S3_REGION")]
+    pub region: String,
+    #[arg(long = "s3-access-key", env = "S3_ACCESS_KEY")]
+    pub access_key: String,
+    #[arg(long = "s3-secret-key", env = "S3_SECRET_KEY")]
+    pub secret_key: String,
 }
 
 impl Storage {
@@ -48,11 +70,31 @@ impl Storage {
     }
 
     #[instrument(skip(self), err)]
-    pub async fn initialize(&self, data_dir: &Path) -> anyhow::Result<()> {
+    pub async fn initialize(
+        &self,
+        data_dir: &Path,
+        s3_backup: Option<S3BackupConfig>,
+    ) -> anyhow::Result<()> {
         if self.db.has_initialized() {
             tracing::warn!("Database already initialized.");
             return Ok(());
         }
+
+        // Setup the S3 bucket client if configured
+        *self.backup_bucket.write().await = s3_backup
+            .map(|config| {
+                Bucket::new(
+                    config.host,
+                    config.name,
+                    s3_simple::Region(config.region),
+                    s3_simple::Credentials {
+                        access_key_id: s3_simple::AccessKeyId(config.access_key),
+                        access_key_secret: s3_simple::AccessKeySecret(config.secret_key),
+                    },
+                    None,
+                )
+            })
+            .transpose()?;
 
         // Open database file
         *self.data_dir.write().await = Some(data_dir.to_owned());
@@ -121,6 +163,18 @@ impl Storage {
         Ok(Some(module))
     }
 
+    /// List the WASM module blobs
+    pub async fn list_wasm_modules(&self) -> anyhow::Result<HashSet<Hash>> {
+        let modules: Vec<Hash> = self
+            .db()
+            .await
+            .query("select hash from wasm_blobs", ())
+            .await?
+            .parse_rows()
+            .await?;
+        Ok(modules.into_iter().collect())
+    }
+
     #[instrument(skip(self), err)]
     pub async fn create_stream(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
         let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
@@ -144,6 +198,30 @@ impl Storage {
             .await?;
 
         Ok(stream)
+    }
+
+    /// Persist the latest event we have for a stream.
+    pub async fn set_latest_event(&self, stream_id: Hash, latest_event: i64) -> anyhow::Result<()> {
+        self.db()
+            .await
+            .execute(
+                "update streams set latest_event = ? where id = ?",
+                (latest_event, stream_id.as_bytes().to_vec()),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Get the list of streams and the latest event we have for each
+    pub async fn get_latest_events(&self) -> anyhow::Result<Vec<(Hash, Option<i64>)>> {
+        let rows: Vec<(Hash, Option<i64>)> = self
+            .db()
+            .await
+            .query("select id, latest_event from streams", ())
+            .await?
+            .parse_rows()
+            .await?;
+        Ok(rows)
     }
 
     /// Update the recorded current module for the stream in the leaf database.
@@ -187,6 +265,22 @@ impl Storage {
         let genesis = StreamGenesis::decode(&mut &genesis_bytes[..])?;
 
         Ok(Some(STREAMS.load(genesis).await?))
+    }
+
+    /// Add a WASM blob directly.
+    ///
+    /// This is used internally by the s3 backup script.
+    #[instrument(skip(self, data), err)]
+    async fn add_wasm_blob(&self, data: Vec<u8>) -> anyhow::Result<()> {
+        let hash = blake3::hash(&data);
+        self.db()
+            .await
+            .execute(
+                r#"insert or ignore into wasm_blobs (hash, data) values (:hash, :data)"#,
+                ((":hash", hash.as_bytes().to_vec()), (":data", data)),
+            )
+            .await?;
+        Ok(())
     }
 
     #[instrument(skip(self, data), err)]
@@ -241,6 +335,17 @@ impl Storage {
             anyhow::Ok(())
         }
         .await;
+
+        // Delete all the deleted blobs from the S3 backup
+        if let Some(bucket) = &*self.backup_bucket.read().await {
+            for deleted in &deleted_blobs {
+                bucket
+                    .delete(format!("{BUCKET_MODULE_DIR}/{deleted}"))
+                    .await
+                    .ok();
+            }
+        }
+
         if let Err(error) = r {
             tracing::warn!(%error, "Error parsing deleted WASM blobs")
         }
@@ -255,6 +360,52 @@ impl Storage {
         let span = Span::current();
         span.set_attribute("wasm_blobs_deleted", deleted_staged.len() as i64);
         span.set_attribute("staged_wasm_modules_deleted", deleted_blobs.len() as i64);
+
+        Ok(())
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn backup_to_s3(&self) -> anyhow::Result<()> {
+        let Some(bucket) = &*self.backup_bucket.read().await else {
+            return Ok(());
+        };
+
+        // List wasm modules in the bucket
+        let modules_in_backup = bucket
+            .list(BUCKET_MODULE_DIR, None)
+            .await?
+            .into_iter()
+            .filter_map(|x| Hash::from_hex(x.name.strip_suffix(".wasm").unwrap_or_default()).ok())
+            .collect::<HashSet<_>>();
+        // List wasm modules we have locally
+        let modules_local = self.list_wasm_modules().await?;
+
+        // Upload local modules not in backup
+        for module_not_in_backup in modules_local.difference(&modules_in_backup) {
+            let Some(module) = self.get_wasm_blob(*module_not_in_backup).await? else {
+                continue;
+            };
+            bucket
+                .put(
+                    format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}.wasm.gz"),
+                    &compress_to_vec(&module, 6),
+                )
+                .await?;
+        }
+
+        // Download backup modules that aren't local
+        for module_not_local in modules_local.difference(&modules_in_backup) {
+            let resp = bucket
+                .get(format!("{BUCKET_MODULE_DIR}/{module_not_local}.wasm.gz"))
+                .await?;
+            let data = decompress_to_vec(&resp.bytes().await?).map_err(|e| {
+                anyhow::format_err!("Could not decompress WASM module from s3 backup: {e}")
+            })?;
+            self.add_wasm_blob(data).await?;
+        }
+
+        let latest_events = self.get_latest_events().await?;
+        for (hash, latest_event) in latest_events {}
 
         Ok(())
     }
@@ -273,6 +424,14 @@ pub fn start_background_tasks() {
         loop {
             STORAGE.garbage_collect_wasm().await.ok();
             tokio::time::sleep(Duration::from_secs(500)).await;
+        }
+    });
+
+    // Backup streams to s3
+    tokio::spawn(async move {
+        loop {
+            STORAGE.backup_to_s3().await.ok();
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
 }

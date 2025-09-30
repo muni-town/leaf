@@ -1,6 +1,15 @@
 services:
+  minio: 
+    image: quay.io/minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - 9000:9000
+      - 9001:9001
+    volumes:
+      - minio:/data
   openobserve:
     image: public.ecr.aws/zinclabs/openobserve:latest
+    scale: 0
     environment:
       ZO_ROOT_USER_EMAIL: root@example.com
       ZO_ROOT_USER_PASSWORD: password
@@ -11,9 +20,10 @@ services:
       - 5081:5081
     volumes:
       - openobserve:/data
-
+    
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
+    scale: 0
     command: --config=env:CONFIG
     ports:
       - 4317:4317
@@ -56,4 +66,4 @@ services:
 
 volumes:
   openobserve:
-  iggy:
+  minio:

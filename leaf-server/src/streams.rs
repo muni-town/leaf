@@ -35,6 +35,12 @@ impl StreamHandle {
         let mut stream = self.0.stream.write().await;
         let new_module = stream.handle_event(user, payload).await?;
 
+        // Update the latest event IDx in our streams list
+        STORAGE
+            .set_latest_event(stream.id(), stream.latest_event())
+            .await?;
+
+        // Load the new module if it has changed
         if let Some(module_id) = new_module {
             let data_dir = STORAGE.data_dir()?;
             let stream_dir = data_dir.join("streams").join(self.0.id.to_hex().as_str());

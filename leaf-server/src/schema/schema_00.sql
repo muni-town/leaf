@@ -28,5 +28,7 @@ create table if not exists "streams" (
     "genesis" blob not null,
     -- Current module
     "current_module" blob not null references wasm_blobs(hash),
+    -- The index of the latest event in the stream
+    "latest_event" integer,
     unique (id, creator)
 );

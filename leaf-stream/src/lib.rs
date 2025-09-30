@@ -1,4 +1,9 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::{Bound, RangeBounds},
+    pin::Pin,
+    sync::Arc,
+};
 
 use anyhow::Context;
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
@@ -142,6 +147,10 @@ pub enum StreamError {
 impl Stream {
     pub fn id(&self) -> blake3::Hash {
         self.id
+    }
+
+    pub fn latest_event(&self) -> i64 {
+        self.latest_event
     }
 
     /// Open a stream.
@@ -432,16 +441,7 @@ impl Stream {
     ///
     /// Returns `Some(hash)` if handling this event triggered a module change for the stream. The
     /// hash is the ID of the new module. You will need to load that module and call
-    /// [`provide_module()`] and preferably [`catch_up_module()`] before calling `handle_event()`
-    /// again.
-    ///
-    /// Calling [`catch_up_module()`] is optional will cause the stream to replay all the events
-    /// through the new module and may take longer than handling a normal event. Running it in the
-    /// background would be a good idea if possible.
-    ///
-    /// If you don't call `catch_up_module()` it will automatically be called the next time you call
-    /// `handle_vent()`, but again, it will run much slower than handling a normal event because of
-    /// the need to replay.
+    /// [`provide_module()`] before calling `handle_event()` again.
     #[instrument(skip(self, payload), err)]
     pub async fn handle_event(
         &mut self,
@@ -483,7 +483,7 @@ impl Stream {
 
         // Now that the event has passed the filter, add it to the stream.
         self.latest_event += 1;
-        // TODO: add SQL trigger to enforce incrementing the ID once in the database
+        // TODO: add SQL trigger to enforce incrementing the ID once in the database?
         self.db
             .execute(
                 "insert into events (id, user, payload) values (:id, :user, :payload)",
@@ -577,6 +577,49 @@ impl Stream {
         Ok(module_update.new_module.map(Hash::from_bytes))
     }
 
+    /// Get the provided range of events from the stream.
+    ///
+    /// Unlike [`fetch_events()`][Self::fetch_events], this skips the stream module and all access
+    /// controls.
+    ///
+    /// This is useful, for example, when doing backups or other processing directly, as opposed to
+    /// retrieving the data for a 3rd party.
+    pub async fn get_events<R: RangeBounds<i64>>(
+        &self,
+        range: R,
+    ) -> Result<Vec<Event>, StreamError> {
+        let min = match range.start_bound() {
+            Bound::Included(min) => *min,
+            Bound::Excluded(x) => *x + 1,
+            Bound::Unbounded => 0,
+        };
+        let max = match range.start_bound() {
+            Bound::Included(max) => *max,
+            Bound::Excluded(x) => *x - 1,
+            Bound::Unbounded => i64::MAX,
+        };
+
+        let events: Vec<(i64, String, Vec<u8>)> = self
+            .db
+            .query(
+                "select id, user, payload from events where id >= ? and id <= ?",
+                [min, max],
+            )
+            .await?
+            .parse_rows()
+            .await?;
+
+        Ok(events
+            .into_iter()
+            .map(|(idx, user, payload)| Event { idx, user, payload })
+            .collect())
+    }
+
+    /// Fetch events, filtering them as appropriate through the module.
+    ///
+    /// See [`get_events()`][Self::get_events] if you just need to directly get the events from the
+    /// stream.
+    ///
     /// TODO: provide a way to asynchronously stream the events instead of batch collecting them.
     #[instrument(skip(self), err)]
     pub async fn fetch_events(&self, options: FetchInput) -> Result<Vec<Event>, StreamError> {

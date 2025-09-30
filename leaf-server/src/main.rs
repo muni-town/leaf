@@ -9,6 +9,7 @@ use crate::{
 };
 
 mod async_oncelock;
+mod backups;
 mod cli;
 mod error;
 mod http;
@@ -63,7 +64,16 @@ async fn start_server(args: &'static ServerArgs) -> anyhow::Result<()> {
     });
 
     // Initialize storage
-    STORAGE.initialize(&args.data_dir).await?;
+    STORAGE
+        .initialize(
+            &args.data_dir,
+            if args.backup_config.name.is_some() {
+                Some(args.backup_config.clone().into())
+            } else {
+                None
+            },
+        )
+        .await?;
 
     // Start the web API
     http::start_api(args).await?;
