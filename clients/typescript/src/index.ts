@@ -108,9 +108,14 @@ export class LeafClient {
     return resp.hasModule;
   }
 
-  async createStream(wasmId: string, params: ArrayBuffer): Promise<string> {
+  async createStream(
+    ulid: string,
+    wasmId: string,
+    params: ArrayBuffer,
+  ): Promise<string> {
     const resp: { streamId: string } | { error: string } =
       await this.socket.emitWithAck("stream/create", {
+        ulid,
         module: wasmId,
         params,
       });
@@ -123,6 +128,7 @@ export class LeafClient {
   /** Helper to create a stream from a WASM module at a given URL, avoiding uploading / downloading
    * the WASM if the module ID already exists on the server. */
   async createStreamFromModuleUrl(
+    ulid: string,
     moduleId: string,
     url: string,
     params: ArrayBuffer,
@@ -140,7 +146,7 @@ export class LeafClient {
         );
     }
 
-    return await this.createStream(moduleId, params);
+    return await this.createStream(ulid, moduleId, params);
   }
 
   async sendEvent(streamId: string, payload: ArrayBuffer): Promise<void> {

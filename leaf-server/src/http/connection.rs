@@ -4,7 +4,7 @@ use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
 use bytes::Bytes;
 use futures::future::{Either, select};
-use leaf_stream::{StreamGenesis, types::FetchInput};
+use leaf_stream::{StreamGenesis, encoding::Encodable, types::FetchInput};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use socketioxide::extract::{AckSender, SocketRef, TryData};
@@ -72,7 +72,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 // Create the stream
                 let input = data?;
                 let genesis = StreamGenesis {
-                    stamp: Ulid::from_bytes(input.ulid).into(),
+                    stamp: Encodable(input.ulid),
                     creator: did_,
                     module: Hash::from_hex(input.module)?.into(),
                     params: input.params,
@@ -345,7 +345,7 @@ struct StreamCreateArgs {
     /// The hex-encoded, blake3 hash of the WASM module to use to create the stream.
     module: String,
     params: Vec<u8>,
-    ulid: [u8; 16],
+    ulid: Ulid,
 }
 
 #[derive(Deserialize)]
