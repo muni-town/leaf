@@ -324,7 +324,43 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .await;
 
             match result {
-                Ok(events) => ack.send(&STreamFetchResponse { events }),
+                Ok(events) => ack.send(&StreamFetchResponse { events }),
+                Err(e) => ack.send(&json!({ "error": e.to_string()})),
+            }
+            .log_error("Internal error sending response")
+            .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/info",
+        async move |TryData::<StreamInfoArgs>(data), ack: AckSender| {
+            let result = async {
+                let StreamInfoArgs { stream_id } = data?;
+                let open_streams = open_streams_.upgradable_read().await;
+
+                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                    stream.clone()
+                } else {
+                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
+                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
+                    };
+                    let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
+                    open_streams.insert(stream_id, stream.clone());
+                    stream
+                };
+
+                let genesis = stream.genesis().await?;
+
+                anyhow::Ok(StreamInfoResponse::from(genesis))
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/info"))
+            .await;
+
+            match result {
+                Ok(resp) => ack.send(&resp),
                 Err(e) => ack.send(&json!({ "error": e.to_string()})),
             }
             .log_error("Internal error sending response")
@@ -392,6 +428,41 @@ pub struct StreamFetchResponseEvent {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct STreamFetchResponse {
+pub struct StreamFetchResponse {
     events: Vec<StreamFetchResponseEvent>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct StreamInfoArgs {
+    #[serde(deserialize_with = "deserialize_from_str")]
+    pub stream_id: Hash,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StreamInfoResponse {
+    pub stamp: Ulid,
+    pub creator: String,
+    pub module: String,
+    pub params: bytes::Bytes,
+}
+
+impl From<StreamGenesis> for StreamInfoResponse {
+    fn from(v: StreamGenesis) -> Self {
+        Self {
+            stamp: v.stamp.0,
+            creator: v.creator,
+            module: v.module.0.to_hex().to_string(),
+            params: v.params.into(),
+        }
+    }
+}
+
+fn deserialize_from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::de::Deserializer<'de>,
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    let s = String::deserialize(deserializer)?;
+    T::from_str(&s).map_err(serde::de::Error::custom)
 }

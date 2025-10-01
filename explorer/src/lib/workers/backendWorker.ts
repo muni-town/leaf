@@ -16,6 +16,7 @@ import { Agent } from '@atproto/api';
 import type { ProfileViewDetailed } from '@atproto/api/dist/client/types/app/bsky/actor/defs';
 import Dexie, { type EntityTable } from 'dexie';
 import { workerOauthClient } from './oauth';
+import { ulid } from 'ulidx';
 
 /**
  * Check whether or not we are executing in a shared worker.
@@ -226,13 +227,19 @@ function connectMessagePort(port: MessagePortApi) {
 			return await state.leafClient!.uploadModule(buffer);
 		},
 		async createStream(moduleId: string, params: ArrayBuffer) {
-			return await state.leafClient!.createStream(moduleId, params);
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			return await state.leafClient.createStream(ulid(), moduleId, params);
 		},
 		async subscribe(streamId) {
 			state.leafClient?.subscribe(streamId);
 		},
 		async unsubscribe(streamId) {
 			state.leafClient?.unsubscribe(streamId);
+		},
+		async streamInfo(streamId) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+      console.log(state.leafClient);
+			return state.leafClient.streamInfo(streamId);
 		},
 		async fetchEvents(streamId, offset, limit) {
 			if (!state.leafClient) throw 'Leaf client not initialized';

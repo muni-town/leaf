@@ -21,6 +21,25 @@
 	let payload = $state('');
 </script>
 
+<!-- Stream Info -->
+<form
+	class="m-8 flex flex-col gap-2"
+	onsubmit={async () => {
+		loading = true;
+		try {
+			const info = await backend.streamInfo(streamId.value);
+			events.push(`Stream Info: ${JSON.stringify(info, null, '  ')}`);
+		} catch (e: any) {
+            console.error(e);
+			events.push(`${e}`);
+		}
+		loading = false;
+	}}
+>
+	<h2 class="mb-4 text-xl font-bold">Stream Info</h2>
+	<button class="btn btn-outline" disabled={loading}>Get Info</button>
+</form>
+
 <!-- Fetch Events -->
 <form
 	class="m-8 flex flex-col gap-2"

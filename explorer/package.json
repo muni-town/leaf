@@ -20,7 +20,7 @@
 		"@atproto/oauth-client-browser": "^0.3.32",
 		"@eslint/compat": "^1.2.5",
 		"@eslint/js": "^9.18.0",
-		"@muni-town/leaf-client": "0.1.0-alpha.3",
+		"@muni-town/leaf-client": "0.1.0-alpha.5",
 		"@sveltejs/adapter-static": "^3.0.9",
 		"@sveltejs/kit": "^2.22.0",
 		"@sveltejs/vite-plugin-svelte": "^6.0.0",
@@ -39,6 +39,7 @@
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.0.0",
 		"typescript-eslint": "^8.20.0",
+		"ulidx": "^2.4.1",
 		"vite": "^7.0.4"
 	},
 	"pnpm": {

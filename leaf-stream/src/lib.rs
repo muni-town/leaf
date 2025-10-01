@@ -33,7 +33,7 @@ use crate::modules::wasm::ENGINE;
 pub mod modules;
 
 /// The genesis configuration of an event stream.
-#[derive(Encode, Decode, Debug)]
+#[derive(Encode, Decode, Debug, Clone)]
 pub struct StreamGenesis {
     /// A ULID, which encompasses the timestamp and additional randomness, included in this stream
     /// to make it's hash unique.
@@ -63,7 +63,6 @@ pub struct Stream {
     db: libsql::Connection,
     db_filename: String,
     module_state: Arc<RwLock<ModuleState>>,
-    creator: String,
     latest_event: i64,
     module_event_cursor: i64,
     /// This is an event that needs to be sent to subscribers but we are waiting until a new module
@@ -71,6 +70,7 @@ pub struct Stream {
     pending_event_for_subscribers: Option<Event>,
     subscribers: Arc<RwLock<HashMap<String, async_broadcast::Sender<Event>>>>,
     worker_sender: Option<async_channel::Sender<Event>>,
+    genesis: StreamGenesis,
 }
 
 #[derive(Debug)]
@@ -147,6 +147,10 @@ pub enum StreamError {
 impl Stream {
     pub fn id(&self) -> blake3::Hash {
         self.id
+    }
+
+    pub fn genesis(&self) -> &StreamGenesis {
+        &self.genesis
     }
 
     pub fn latest_event(&self) -> i64 {
@@ -232,7 +236,7 @@ impl Stream {
             .context("error initializing stream state")?;
 
             module = ModuleLoad::Unloaded(genesis.module.0);
-            params = genesis.params;
+            params = genesis.params.clone();
             module_event_cursor = 0;
         };
 
@@ -261,11 +265,11 @@ impl Stream {
                 params,
             })),
             subscribers,
-            creator: genesis.creator,
             module_event_cursor,
             latest_event,
             worker_sender: None,
             pending_event_for_subscribers: None,
+            genesis,
         })
     }
 
@@ -378,7 +382,7 @@ impl Stream {
         if self.module_event_cursor == 0 {
             module
                 .init_db(
-                    self.creator.clone(),
+                    self.genesis.creator.clone(),
                     module_state.params.clone(),
                     module_db.clone(),
                 )

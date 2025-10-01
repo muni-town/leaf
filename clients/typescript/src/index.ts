@@ -11,6 +11,22 @@ export type StreamEvent = {
   payload: ArrayBuffer;
 };
 
+export type StreamGenesis = {
+  /** ULID that acts as a timestamp and unique identifier. */
+  stamp: string;
+  /** User account that created the stream. */
+  creator: string;
+  /**
+   * Hex-encoded module ID that the stream was created with.
+   *
+   * > **Note:** If there has been a module update since the stream was created this will not be the
+   * > current module.
+   */
+  module: string;
+  /** The parameters used to initialize the module when the stream was created. */
+  params: ArrayBuffer;
+};
+
 type EventMap = {
   connect: () => void;
   disconnect: () => void;
@@ -197,6 +213,17 @@ export class LeafClient {
       throw new Error(resp.error);
     }
     return resp.events;
+  }
+
+  async streamInfo(streamId: string): Promise<StreamGenesis> {
+    const resp: StreamGenesis | { error: string } =
+      await this.socket.emitWithAck("stream/info", {
+        stream_id: streamId,
+      });
+    if ("error" in resp) {
+      throw new Error(resp.error);
+    }
+    return resp;
   }
 
   async subscribe(streamId: string): Promise<void> {
