@@ -7,11 +7,11 @@ use std::{
 
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
-use leaf_stream::{StreamGenesis, modules::wasm::LeafWasmModule, validate_wasm};
+use leaf_stream::{StreamGenesis, modules::wasm::LeafWasmModule, types::Event, validate_wasm};
 use leaf_utils::convert::{FromRows, ParseRow, ParseRows};
 use libsql::Connection;
 use miniz_oxide::{deflate::compress_to_vec, inflate::decompress_to_vec};
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, Encode};
 use reqwest::Url;
 use s3_simple::Bucket;
 use tracing::{Span, instrument};
@@ -31,6 +31,7 @@ static WASM_MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafWasmModule>
     LazyLock::new(|| RwLock::new(WeakValueHashMap::new()));
 
 pub static BUCKET_MODULE_DIR: &str = "modules";
+pub static BUCKET_STREAMS_DIR: &str = "streams";
 
 #[derive(Default)]
 pub struct Storage {
@@ -52,6 +53,12 @@ pub struct S3BackupConfig {
     pub access_key: String,
     #[arg(long = "s3-secret-key", env = "S3_SECRET_KEY")]
     pub secret_key: String,
+}
+
+pub struct ListStreamsItem {
+    pub id: Hash,
+    pub latest_event: Option<i64>,
+    pub genesis: StreamGenesis,
 }
 
 impl Storage {
@@ -91,7 +98,10 @@ impl Storage {
                         access_key_id: s3_simple::AccessKeyId(config.access_key),
                         access_key_secret: s3_simple::AccessKeySecret(config.secret_key),
                     },
-                    None,
+                    Some(s3_simple::BucketOptions {
+                        path_style: true,
+                        list_objects_v2: false,
+                    }),
                 )
             })
             .transpose()?;
@@ -213,15 +223,25 @@ impl Storage {
     }
 
     /// Get the list of streams and the latest event we have for each
-    pub async fn get_latest_events(&self) -> anyhow::Result<Vec<(Hash, Option<i64>)>> {
-        let rows: Vec<(Hash, Option<i64>)> = self
+    pub async fn list_streams(&self) -> anyhow::Result<Vec<ListStreamsItem>> {
+        let rows: Vec<(Hash, Option<i64>, Vec<u8>)> = self
             .db()
             .await
-            .query("select id, latest_event from streams", ())
+            .query("select id, latest_event, genesis from streams", ())
             .await?
             .parse_rows()
             .await?;
-        Ok(rows)
+        let items = rows
+            .into_iter()
+            .map(|x| {
+                Ok::<_, anyhow::Error>(ListStreamsItem {
+                    id: x.0,
+                    latest_event: x.1,
+                    genesis: StreamGenesis::decode(&mut &x.2[..])?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(items)
     }
 
     /// Update the recorded current module for the stream in the leaf database.
@@ -375,8 +395,19 @@ impl Storage {
             .list(BUCKET_MODULE_DIR, None)
             .await?
             .into_iter()
-            .filter_map(|x| Hash::from_hex(x.name.strip_suffix(".wasm").unwrap_or_default()).ok())
+            .flat_map(|x| x.contents.into_iter())
+            .filter_map(|x| {
+                Hash::from_hex(
+                    x.key
+                        .strip_prefix(&format!("{BUCKET_MODULE_DIR}/"))
+                        .unwrap_or_default()
+                        .strip_suffix(".wasm.gz")
+                        .unwrap_or_default(),
+                )
+                .ok()
+            })
             .collect::<HashSet<_>>();
+
         // List wasm modules we have locally
         let modules_local = self.list_wasm_modules().await?;
 
@@ -404,11 +435,68 @@ impl Storage {
             self.add_wasm_blob(data).await?;
         }
 
-        let latest_events = self.get_latest_events().await?;
-        for (hash, latest_event) in latest_events {}
+        let streams = self.list_streams().await?;
+        for stream in streams {
+            let latest_event_local = stream.latest_event;
+
+            let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream.id);
+            // Get the latest event from the S3 bucket
+            let latest_in_s3 = bucket
+                .list(&stream_dir, None)
+                .await?
+                .into_iter()
+                .flat_map(|x| x.contents.into_iter())
+                .filter_map(|x| {
+                    let name = x
+                        .key
+                        .strip_prefix(&format!("{stream_dir}/"))
+                        .unwrap_or_default();
+                    let (_start, end) = name.split_once('-')?;
+                    let end = end.parse::<u32>().ok()? as i64;
+                    Some(end)
+                })
+                .max();
+
+            if let Some(latest_event) = latest_event_local {
+                let range_to_export = match latest_in_s3 {
+                    Some(latest_in_s3) if latest_in_s3 < latest_event => Some(latest_in_s3..),
+                    None => Some(0..),
+                    _ => None,
+                };
+                if let Some(range_to_export) = range_to_export
+                    && let Some(s) = self.open_stream(stream.id).await?
+                {
+                    // If this range includes the first event, then include the stream genesis in
+                    // the archive.
+                    let genesis = if range_to_export.start <= 1 {
+                        Some(stream.genesis.clone())
+                    } else {
+                        None
+                    };
+                    let events = s.get_events(range_to_export.clone()).await?;
+                    let events_len = events.len() as i64;
+                    let archive = EventArchive { genesis, events };
+                    let archive_bytes = compress_to_vec(&archive.encode(), 6);
+                    let name = format!(
+                        "{BUCKET_STREAMS_DIR}/{}/{}-{}",
+                        stream.id,
+                        range_to_export.start,
+                        range_to_export.start + events_len - 1
+                    );
+
+                    bucket.put(name, &archive_bytes).await?;
+                }
+            }
+        }
 
         Ok(())
     }
+}
+
+#[derive(Decode, Encode)]
+struct EventArchive {
+    genesis: Option<StreamGenesis>,
+    events: Vec<Event>,
 }
 
 #[instrument(skip(db))]

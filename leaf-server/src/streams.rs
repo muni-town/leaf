@@ -1,4 +1,5 @@
 use std::{
+    ops::RangeBounds,
     path::Path,
     sync::{Arc, LazyLock, Weak},
 };
@@ -53,6 +54,15 @@ impl StreamHandle {
         }
 
         Ok(())
+    }
+
+    pub async fn genesis(&self) -> anyhow::Result<StreamGenesis> {
+        Ok(self.0.stream.read().await.genesis().clone())
+    }
+
+    pub async fn get_events<R: RangeBounds<i64>>(&self, range: R) -> anyhow::Result<Vec<Event>> {
+        let events = self.0.stream.read().await.get_events(range).await?;
+        Ok(events)
     }
 
     pub async fn fetch_events(&self, options: FetchInput) -> anyhow::Result<Vec<Event>> {
