@@ -71,4 +71,4 @@ ulid = { version = "1.2.1", features = ["serde"] }
 async-lock = "3.4.1"
 futures = "0.3.31"
 s3-simple = { version = "0.6.0", default-features = false }
-miniz_oxide = "0.8.9"
+flate2 = "1.1.2"

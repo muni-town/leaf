@@ -60,8 +60,39 @@ impl StreamHandle {
         Ok(self.0.stream.read().await.genesis().clone())
     }
 
-    pub async fn get_events<R: RangeBounds<i64>>(&self, range: R) -> anyhow::Result<Vec<Event>> {
-        let events = self.0.stream.read().await.get_events(range).await?;
+    pub async fn module_id(&self) -> Hash {
+        self.0.stream.read().await.module_id().await
+    }
+
+    pub async fn raw_set_module(&self, module_id: Hash) -> anyhow::Result<()> {
+        let mut stream = self.0.stream.write().await;
+        let data_dir = STORAGE.data_dir()?;
+        let stream_dir = data_dir.join("streams").join(self.0.id.to_hex().as_str());
+        let (module, module_db) = load_module(&stream_dir, module_id).await?;
+        stream.raw_set_module(module_id).await?;
+        stream.provide_module(module, module_db).await?;
+        stream.raw_catch_up_module().await?;
+        STORAGE
+            .update_stream_current_module(self.0.id, module_id)
+            .await
+            .context("error updating current module for stream")?;
+        Ok(())
+    }
+
+    pub async fn raw_import_events(&self, events: Vec<Event>) -> anyhow::Result<()> {
+        let mut stream = self.0.stream.write().await;
+        stream.raw_import_events(events).await?;
+        STORAGE
+            .set_latest_event(stream.id(), stream.latest_event())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn raw_get_events<R: RangeBounds<i64>>(
+        &self,
+        range: R,
+    ) -> anyhow::Result<Vec<Event>> {
+        let events = self.0.stream.read().await.raw_get_events(range).await?;
         Ok(events)
     }
 

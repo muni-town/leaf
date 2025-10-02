@@ -89,6 +89,11 @@ struct ModuleState {
     /// should stay relatively small.
     params: Vec<u8>,
 }
+impl ModuleState {
+    fn id(&self) -> Hash {
+        self.load.id()
+    }
+}
 
 enum ModuleLoad {
     Unloaded(Hash),
@@ -96,6 +101,14 @@ enum ModuleLoad {
         module: Arc<dyn LeafModule>,
         module_db: libsql::Connection,
     },
+}
+impl ModuleLoad {
+    fn id(&self) -> Hash {
+        match self {
+            ModuleLoad::Unloaded(hash) => *hash,
+            ModuleLoad::Loaded { module, .. } => module.id(),
+        }
+    }
 }
 
 impl std::fmt::Debug for ModuleLoad {
@@ -155,6 +168,28 @@ impl Stream {
 
     pub fn latest_event(&self) -> i64 {
         self.latest_event
+    }
+
+    pub async fn module_id(&self) -> Hash {
+        self.module_state.read().await.id()
+    }
+
+    /// This is a raw method to set the current module of the stream, without any other processing.
+    /// You usually should not use this, but you may need it if you are, for example, importing the
+    /// stream from a backup.
+    pub async fn raw_set_module(&mut self, module_id: Hash) -> anyhow::Result<()> {
+        let mut module_state = self.module_state.write().await;
+        self.db
+            .execute(
+                "update stream_state set module = ?, module_event_cursor = null where id = 1",
+                [module_id.as_bytes().to_vec()],
+            )
+            .await
+            .context("error updating steam module and module event cursor")?;
+        self.module_event_cursor = 0;
+        module_state.load = ModuleLoad::Unloaded(module_id);
+
+        Ok(())
     }
 
     /// Open a stream.
@@ -337,7 +372,7 @@ impl Stream {
                     drop(module_state);
 
                     // Make sure we catch up the new module if it needs it.
-                    self.catch_up_module().await?;
+                    self.raw_catch_up_module().await?;
 
                     // Send our pending event if we had an event that we were waiting to send to
                     // subscribers because we didn't have a module.
@@ -371,8 +406,12 @@ impl Stream {
     /// Make sure that the module has processed all of the events in the stream so far.
     ///
     /// Returns the number of events that were processed while catching up.
+    ///
+    /// > **Note:** You usually don't need to call this yourself, but in some cases, such as after
+    /// > calling [`raw_import_events()`][Self::raw_import_events] and
+    /// > [`raw_set_module()`][Self::raw_set_module].
     #[instrument(skip(self), err)]
-    async fn catch_up_module(&mut self) -> Result<i64, StreamError> {
+    pub async fn raw_catch_up_module(&mut self) -> Result<i64, StreamError> {
         let module_state = self.module_state.read().await;
         let (module, module_db) = Self::ensure_module_loaded(&module_state.load)?;
 
@@ -453,7 +492,7 @@ impl Stream {
         payload: Vec<u8>,
     ) -> Result<Option<Hash>, StreamError> {
         // Make sure the current module is caught up
-        self.catch_up_module()
+        self.raw_catch_up_module()
             .await
             .context("error catching up module")?;
 
@@ -588,16 +627,16 @@ impl Stream {
     ///
     /// This is useful, for example, when doing backups or other processing directly, as opposed to
     /// retrieving the data for a 3rd party.
-    pub async fn get_events<R: RangeBounds<i64>>(
+    pub async fn raw_get_events<R: RangeBounds<i64>>(
         &self,
         range: R,
     ) -> Result<Vec<Event>, StreamError> {
         let min = match range.start_bound() {
             Bound::Included(min) => *min,
             Bound::Excluded(x) => *x + 1,
-            Bound::Unbounded => 0,
+            Bound::Unbounded => 1,
         };
-        let max = match range.start_bound() {
+        let max = match range.end_bound() {
             Bound::Included(max) => *max,
             Bound::Excluded(x) => *x - 1,
             Bound::Unbounded => i64::MAX,
@@ -617,6 +656,26 @@ impl Stream {
             .into_iter()
             .map(|(idx, user, payload)| Event { idx, user, payload })
             .collect())
+    }
+
+    /// Import events directly into the stream without processing.
+    ///
+    /// This is a raw operation that isn't used in normal processing, but can be useful for
+    /// restoring streams from backups, for example.
+    pub async fn raw_import_events(&mut self, events: Vec<Event>) -> anyhow::Result<()> {
+        for event in events {
+            if event.idx != self.latest_event + 1 {
+                anyhow::bail!("Imported event not sequential");
+            }
+            self.db
+                .execute(
+                    "insert into events (id, user, payload) values (?, ?, ?)",
+                    (event.idx, event.user, event.payload),
+                )
+                .await?;
+            self.latest_event += 1;
+        }
+        Ok(())
     }
 
     /// Fetch events, filtering them as appropriate through the module.

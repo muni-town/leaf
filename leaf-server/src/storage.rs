@@ -1,16 +1,20 @@
 use std::{
     collections::HashSet,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, LazyLock, Weak},
     time::Duration,
 };
 
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
-use leaf_stream::{StreamGenesis, modules::wasm::LeafWasmModule, types::Event, validate_wasm};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use leaf_stream::{
+    StreamGenesis, encoding::Encodable, modules::wasm::LeafWasmModule, types::Event, validate_wasm,
+};
 use leaf_utils::convert::{FromRows, ParseRow, ParseRows};
 use libsql::Connection;
-use miniz_oxide::{deflate::compress_to_vec, inflate::decompress_to_vec};
 use parity_scale_codec::{Decode, Encode};
 use reqwest::Url;
 use s3_simple::Bucket;
@@ -55,6 +59,7 @@ pub struct S3BackupConfig {
     pub secret_key: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct ListStreamsItem {
     pub id: Hash,
     pub latest_event: Option<i64>,
@@ -291,7 +296,7 @@ impl Storage {
     ///
     /// This is used internally by the s3 backup script.
     #[instrument(skip(self, data), err)]
-    async fn add_wasm_blob(&self, data: Vec<u8>) -> anyhow::Result<()> {
+    async fn add_wasm_blob(&self, data: Vec<u8>) -> anyhow::Result<Hash> {
         let hash = blake3::hash(&data);
         self.db()
             .await
@@ -300,7 +305,7 @@ impl Storage {
                 ((":hash", hash.as_bytes().to_vec()), (":data", data)),
             )
             .await?;
-        Ok(())
+        Ok(hash)
     }
 
     #[instrument(skip(self, data), err)]
@@ -416,75 +421,258 @@ impl Storage {
             let Some(module) = self.get_wasm_blob(*module_not_in_backup).await? else {
                 continue;
             };
+            let mut compressor = GzEncoder::new(Vec::new(), Compression::default());
+            compressor.write_all(&module)?;
+            let compressed = compressor.finish()?;
             bucket
                 .put(
                     format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}.wasm.gz"),
-                    &compress_to_vec(&module, 6),
+                    &compressed,
                 )
                 .await?;
         }
 
         // Download backup modules that aren't local
-        for module_not_local in modules_local.difference(&modules_in_backup) {
+        for module_not_local in modules_in_backup.difference(&modules_local) {
             let resp = bucket
                 .get(format!("{BUCKET_MODULE_DIR}/{module_not_local}.wasm.gz"))
                 .await?;
-            let data = decompress_to_vec(&resp.bytes().await?).map_err(|e| {
-                anyhow::format_err!("Could not decompress WASM module from s3 backup: {e}")
-            })?;
-            self.add_wasm_blob(data).await?;
+            let resp_bytes = resp.bytes().await?;
+            let mut decompressed = Vec::new();
+            let mut decompressor = GzDecoder::new(&resp_bytes[..]);
+            decompressor.read_to_end(&mut decompressed)?;
+            let hash = blake3::hash(&decompressed);
+            if hash == *module_not_local {
+                self.add_wasm_blob(decompressed).await?;
+            } else {
+                tracing::error!(
+                    actual_hash=%hash,
+                    hash_in_filename=%module_not_local,
+                    "Error importing WASM module from s3: module hash did not match filename."
+                );
+            }
         }
 
-        let streams = self.list_streams().await?;
-        for stream in streams {
-            let latest_event_local = stream.latest_event;
+        // Get the list of streams we have on the server
+        let streams_local = self.list_streams().await?;
+        let stream_ids_local = streams_local.iter().map(|x| x.id).collect::<HashSet<_>>();
 
-            let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream.id);
+        // Get the list of streams that exist on S3
+        let streams_dir = format!("{BUCKET_STREAMS_DIR}/");
+        let stream_ids_on_s3 = bucket
+            .list(&streams_dir, Some("/"))
+            .await?
+            .into_iter()
+            .flat_map(|x| {
+                x.common_prefixes.into_iter().flat_map(|x| {
+                    x.into_iter().filter_map(|x| {
+                        x.prefix
+                            .strip_prefix(&streams_dir)
+                            .and_then(|x| x.strip_suffix("/"))
+                            .map(|x| x.to_owned())
+                    })
+                })
+            })
+            .flat_map(|x| Hash::from_str(&x).ok())
+            .collect::<HashSet<_>>();
+
+        // For each stream we have locally
+        for stream in streams_local {
+            // Get the latest event we have locally. The `0` means that all we have is the genesis,
+            // aka. an empty stream.
+            let latest_event_local = stream.latest_event.unwrap_or(0);
+
             // Get the latest event from the S3 bucket
-            let latest_in_s3 = bucket
+            let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream.id);
+            let ranges_on_s3 = bucket
                 .list(&stream_dir, None)
                 .await?
                 .into_iter()
+                // We get the list of pages
                 .flat_map(|x| x.contents.into_iter())
                 .filter_map(|x| {
+                    // Find the name of the stream
                     let name = x
                         .key
                         .strip_prefix(&format!("{stream_dir}/"))
                         .unwrap_or_default();
-                    let (_start, end) = name.split_once('-')?;
-                    let end = end.parse::<u32>().ok()? as i64;
-                    Some(end)
+                    // And parse the [start]-[end].lvg.gz filename
+                    let (start, end) =
+                        name.strip_suffix(".lvt.gz").unwrap_or("").split_once('-')?;
+                    // And grab start and end
+                    let start = start.parse::<i64>().ok()?;
+                    let end = end.parse::<i64>().ok()?;
+                    Some((start, end))
                 })
-                .max();
+                .collect::<Vec<_>>();
+            let latest_in_s3 = ranges_on_s3.iter().map(|x| x.1).max();
 
-            if let Some(latest_event) = latest_event_local {
-                let range_to_export = match latest_in_s3 {
-                    Some(latest_in_s3) if latest_in_s3 < latest_event => Some(latest_in_s3..),
-                    None => Some(0..),
-                    _ => None,
+            // Check if we need to send new events to S3:
+            // - If there is a latest s3 event, then we need to update it if it is less than our
+            // local latest event.
+            // - If there is no latest event on s3, then we need to send the genesis and latest
+            //   events that we have locally.
+            if latest_in_s3.map(|l| l < latest_event_local).unwrap_or(true) {
+                // Open the local stream
+                let Some(s) = self.open_stream(stream.id).await? else {
+                    continue;
                 };
-                if let Some(range_to_export) = range_to_export
-                    && let Some(s) = self.open_stream(stream.id).await?
-                {
-                    // If this range includes the first event, then include the stream genesis in
-                    // the archive.
-                    let genesis = if range_to_export.start <= 1 {
-                        Some(stream.genesis.clone())
-                    } else {
-                        None
-                    };
-                    let events = s.get_events(range_to_export.clone()).await?;
-                    let events_len = events.len() as i64;
-                    let archive = EventArchive { genesis, events };
-                    let archive_bytes = compress_to_vec(&archive.encode(), 6);
-                    let name = format!(
-                        "{BUCKET_STREAMS_DIR}/{}/{}-{}",
-                        stream.id,
-                        range_to_export.start,
-                        range_to_export.start + events_len - 1
-                    );
+                // Get the events that are newer than the latest s3 event.
+                let events = s
+                    .raw_get_events((latest_in_s3.map(|l| l + 1).unwrap_or(1))..)
+                    .await?;
+                let events_len = events.len() as i64;
 
-                    bucket.put(name, &archive_bytes).await?;
+                // If there is nothing on S3 yet, then we need to also send the genesis
+                let genesis = if latest_in_s3.is_none() {
+                    Some(stream.genesis)
+                } else {
+                    None
+                };
+
+                if events_len == 0 && latest_in_s3.is_some() {
+                    // This should be unreachable, but skip this just in case
+                    tracing::error!(?latest_in_s3, "Hit unreachable condition: ignoring.");
+                    continue;
+                }
+
+                // Create and compress the event archive
+                let archive = EventArchive {
+                    genesis,
+                    events,
+                    module_id: Encodable(s.module_id().await),
+                };
+                let archive_bytes = archive.encode();
+                let mut compressor = GzEncoder::new(Vec::new(), Compression::default());
+                compressor.write_all(&archive_bytes)?;
+                let compressed = compressor.finish()?;
+
+                // Push the archive to s3
+                let name = format!(
+                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.gz",
+                    stream.id,
+                    latest_in_s3.map(|l| l + 1).unwrap_or(0),
+                    latest_in_s3.map(|l| l + events_len).unwrap_or(events_len)
+                );
+                bucket.put(name, &compressed).await?;
+
+            // If s3 has a newer event than we have locally.
+            } else if latest_in_s3
+                .map(|l| l > latest_event_local)
+                .unwrap_or(false)
+            {
+                // For now just log a warning. This shouldn't normally happen, we expect either the
+                // local stream to be completely empty or newer than s3. Having s3 newer means there
+                // is some kind of corruption or an out-of-date local database which shouldn't
+                // happen under normal circumstances.
+                tracing::warn!(
+                    %stream.id,
+                    "There is newer backup data available on S3 than there is locally for a stream. \
+                    This should not normally happen so the s3 backup will not be restored. This should \
+                    be investigated manually."
+                )
+            }
+        }
+
+        // Get the list of streams that are on S3, but not local. These will need to be created.
+        let stream_ids_on_s3_but_not_local = stream_ids_on_s3.difference(&stream_ids_local);
+
+        'stream: for stream_id in stream_ids_on_s3_but_not_local {
+            tracing::info!(
+                stream.id=%stream_id,
+                "Found stream in S3 backup that is not local. Attempting to import."
+            );
+
+            let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream_id);
+            let mut ranges_on_s3 = bucket
+                .list(&stream_dir, None)
+                .await?
+                .into_iter()
+                // We get the list of pages
+                .flat_map(|x| x.contents.into_iter())
+                .filter_map(|x| {
+                    // Find the name of the stream
+                    let name = x
+                        .key
+                        .strip_prefix(&format!("{stream_dir}/"))
+                        .unwrap_or_default();
+                    // And parse the [start]-[end].lvt.gz filename
+                    let (start, end) =
+                        name.strip_suffix(".lvt.gz").unwrap_or("").split_once('-')?;
+                    // And grab start and end
+                    let start = start.parse::<i64>().ok()?;
+                    let end = end.parse::<i64>().ok()?;
+                    Some((start, end))
+                })
+                .collect::<Vec<_>>();
+            ranges_on_s3.sort_by(|x, y| x.0.cmp(&y.0));
+
+            // Make sure ranges are non-overlapping and without holes
+            let mut last_idx = -1;
+            for (start, end) in &ranges_on_s3 {
+                if *start != last_idx + 1 {
+                    tracing::warn!(
+                        stream.id=%stream_id,
+                        "Ranges of events on s3 are not continuous, skipping import."
+                    );
+                    continue 'stream;
+                }
+                last_idx = *end;
+            }
+
+            // Download each archive and apply it to the stream
+            let count = ranges_on_s3.len();
+            let mut stream = None;
+            for (i, (start, end)) in ranges_on_s3.into_iter().enumerate() {
+                let is_last_range = i + 1 == count;
+                let archive_path = format!(
+                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.gz",
+                    stream_id, start, end
+                );
+                let resp = bucket.get(archive_path).await?;
+                let bytes = resp.bytes().await?;
+                let mut decompressed = Vec::new();
+                let mut decompressor = GzDecoder::new(&bytes[..]);
+                decompressor.read_to_end(&mut decompressed)?;
+                let archive = EventArchive::decode(&mut &decompressed[..])?;
+
+                // If this is the initial archive
+                if start == 0 {
+                    // Get the genesis info
+                    let Some(genesis) = archive.genesis else {
+                        tracing::error!(
+                            stream.id=%stream_id,
+                            "Cannot import: first event batch does not contain the stream genesis."
+                        );
+                        continue 'stream;
+                    };
+
+                    // Create the stream
+                    let s = self.create_stream(genesis).await?;
+                    if s.id() != *stream_id {
+                        tracing::error!(
+                            expected_stream_id=%stream_id,
+                            imported_stream_id=%s.id(),
+                            "Imported stream genesis but got different sream ID than expected. \
+                            Aborting import after having created new stream with unexpected ID."
+                        );
+                        continue 'stream;
+                    }
+                    stream = Some(s);
+                }
+
+                // Get the stream
+                let Some(s) = &stream else {
+                    tracing::error!("Stream backup missing genesis");
+                    continue 'stream;
+                };
+
+                // Import the events from the archive
+                s.raw_import_events(archive.events).await?;
+
+                // Set the module and catch it up
+                if is_last_range {
+                    s.raw_set_module(archive.module_id.0).await?;
                 }
             }
         }
@@ -493,8 +681,9 @@ impl Storage {
     }
 }
 
-#[derive(Decode, Encode)]
+#[derive(Decode, Encode, Debug)]
 struct EventArchive {
+    module_id: Encodable<Hash>,
     genesis: Option<StreamGenesis>,
     events: Vec<Event>,
 }
@@ -519,7 +708,7 @@ pub fn start_background_tasks() {
     tokio::spawn(async move {
         loop {
             STORAGE.backup_to_s3().await.ok();
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
 }

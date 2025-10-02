@@ -1245,6 +1245,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ced73b1dacfc750a6db6c0a0c3a3853c8b41997e2e2c563dc90804ae6867959"
 
 [[package]]
+name = "flate2"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a3d7db9596fecd151c5f638c0ee5d5bd487b6e0ea232e5dc96d5250f6f94b1d"
+dependencies = [
+ "crc32fast",
+ "miniz_oxide",
+]
+
+[[package]]
 name = "flume"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2023,12 +2033,12 @@ dependencies = [
  "blake3",
  "bytes",
  "clap",
+ "flate2",
  "futures",
  "futures-util",
  "leaf-stream",
  "leaf-utils",
  "libsql",
- "miniz_oxide",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
