@@ -708,7 +708,7 @@ pub fn start_background_tasks() {
     tokio::spawn(async move {
         loop {
             STORAGE.backup_to_s3().await.ok();
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
 }
