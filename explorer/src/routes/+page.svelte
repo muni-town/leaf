@@ -28,9 +28,11 @@
 		loading = true;
 		try {
 			const info = await backend.streamInfo(streamId.value);
-			events.push(`Stream Info: ${JSON.stringify(info, null, '  ')}`);
+			events.push(
+				`Stream Info: ${JSON.stringify({ ...info, params: new TextDecoder().decode(info.params) }, null, '  ')}`
+			);
 		} catch (e: any) {
-            console.error(e);
+			console.error(e);
 			events.push(`${e}`);
 		}
 		loading = false;
