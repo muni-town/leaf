@@ -8,8 +8,11 @@ use crate::storage::S3BackupConfig;
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// Enable open telemetry - TODO: add otel options
-    #[arg(long)]
+    #[arg(long, env)]
     pub otel: bool,
+    /// Enable profiling to Pyroscope
+    #[arg(long, env)]
+    pub profiling: bool,
     #[clap(subcommand)]
     pub command: Command,
 }

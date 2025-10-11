@@ -1,5 +1,5 @@
 services:
-  minio: 
+  minio:
     image: quay.io/minio/minio
     command: server /data --console-address ":9001"
     ports:
@@ -7,63 +7,59 @@ services:
       - 9001:9001
     volumes:
       - minio:/data
-  openobserve:
-    image: public.ecr.aws/zinclabs/openobserve:latest
-    scale: 0
-    environment:
-      ZO_ROOT_USER_EMAIL: root@example.com
-      ZO_ROOT_USER_PASSWORD: password
-      ZO_ROOT_USER_TOKEN: password
-      ZO_DATA_DIR: /data
-    ports:
-      - 5080:5080
-      - 5081:5081
-    volumes:
-      - openobserve:/data
-    
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    scale: 0
-    command: --config=env:CONFIG
-    ports:
-      - 4317:4317
-      - 4318:4318
-      - 55679:55679
-    environment:
-      CONFIG: |
-        receivers:
-          otlp:
-            protocols:
-              grpc:
-                endpoint: 0.0.0.0:4317
-              http:
-                endpoint: 0.0.0.0:4318
 
-        exporters:
-          otlp/openobserve:
-            endpoint: openobserve:5081
-            headers:
-              Authorization: Basic cm9vdEBleGFtcGxlLmNvbTpwYXNzd29yZA==
-              organization: default
-              stream-name: default
-            tls:
-              insecure: true
-        extensions:
-          zpages:
-            endpoint: 0.0.0.0:55679
-        service:
-          extensions: [zpages]
-          pipelines:
-            logs:
-              receivers: [otlp]
-              exporters: [otlp/openobserve]
-            traces:
-              receivers: [otlp]
-              exporters: [otlp/openobserve]
-            metrics:
-              receivers: [otlp]
-              exporters: [otlp/openobserve]
+  pyroscope:
+    image: grafana/pyroscope:latest
+    ports:
+      - "4040:4040"
+
+  tempo-init:
+    image: &tempoImage grafana/tempo:latest
+    user: root
+    # Tempo runs as user 10001, and docker compose creates the volume as root.
+    # As such, we need to chown the volume in order for Tempo to start correctly.
+    entrypoint:
+      - "chown"
+      - "10001:10001"
+      - "/var/tempo"
+    volumes:
+      - tempo-data:/var/tempo
+
+  tempo:
+    image: *tempoImage
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./compose/tempo.yaml:/etc/tempo.yaml
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200" # tempo
+      - "4317:4317" # otlp grpc
+    depends_on:
+      - tempo-init
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    volumes:
+      - ./compose/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - ./gitignore/ca-certificates.crt:/usr/local/share/ca-certificates/cert.crt
+      # - ./compose/grafana-pyroscope-app:/var/lib/grafana/plugins/grafana-pyroscope-app
+    environment:
+      - http_proxy
+      - https_proxy
+      - no_proxy=pyroscope,tempo
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_INSTALL_PLUGINS=grafana-pyroscope-app
+    user: root
+    entrypoint:
+      - bash
+      - -c
+      - update-ca-certificates && exec bash /run.sh
+    ports:
+      - "3000:3000"
 
 volumes:
-  openobserve:
   minio:
+  tempo-data:

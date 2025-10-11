@@ -18,6 +18,7 @@ leaf-utils = { version = "0.1.0-alpha.1", path = "../leaf-utils" }
 
 # Utils
 weak-table = "0.3.2"
+rand = "0.9.2"
 
 # Web Server & Socket.io
 salvo = { version = "0.82.0", features = ["tower-compat", "logging"] }
@@ -45,6 +46,8 @@ clap = { version = "4.5.45", features = ["derive", "env"] }
 anyhow = "1.0.99"
 
 # Tracing, Metrics, and Logging
+pyroscope = "0.5.8"
+pyroscope_pprofrs = "0.2.10"
 tracing = { version = "0.1.41", features = ["release_max_level_info"] }
 opentelemetry = "0.30.0"
 opentelemetry-otlp = { version = "0.30.0", features = ["grpc-tonic"] }

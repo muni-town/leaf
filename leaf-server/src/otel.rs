@@ -1,17 +1,34 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
+use pyroscope::{PyroscopeAgent, backend::Tag, pyroscope::PyroscopeAgentRunning};
+
+use opentelemetry::{
+    KeyValue,
+    global::{self, ObjectSafeSpan},
+    trace::TracerProvider as _,
+};
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
-    trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
+    trace::{RandomIdGenerator, Sampler, SdkTracerProvider, SpanProcessor},
 };
 use opentelemetry_semantic_conventions::{SCHEMA_URL, attribute::SERVICE_VERSION};
+use pyroscope_pprofrs::{PprofConfig, pprof_backend};
+use rand::{Rng, rng};
 use tracing::Level;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::ARGS;
+
+/// Process ID used as a profile ID for pyroscope
+static PROCESS_ID: LazyLock<String> = LazyLock::new(|| {
+    let bytes = rng().random::<[u8; 8]>();
+    bytes
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>()
+});
 
 // Create a Resource that captures information about the entity for which telemetry is recorded.
 fn resource() -> Resource {
@@ -52,13 +69,35 @@ fn init_meter_provider() -> SdkMeterProvider {
 }
 
 // Construct TracerProvider for OpenTelemetryLayer
-fn init_tracer_provider() -> SdkTracerProvider {
+fn init_tracer_provider(enable_profiling: bool) -> SdkTracerProvider {
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .build()
         .unwrap();
 
-    let provider = SdkTracerProvider::builder()
+    #[derive(Debug)]
+    struct ProfileLinkProcessor;
+    impl SpanProcessor for ProfileLinkProcessor {
+        fn on_start(
+            &self,
+            span: &mut opentelemetry_sdk::trace::Span,
+            _cx: &opentelemetry::Context,
+        ) {
+            span.set_attribute(KeyValue::new("pyroscope.profile.id", PROCESS_ID.clone()));
+        }
+        fn on_end(&self, _span: opentelemetry_sdk::trace::SpanData) {}
+        fn force_flush(&self) -> opentelemetry_sdk::error::OTelSdkResult {
+            Ok(())
+        }
+        fn shutdown_with_timeout(
+            &self,
+            _timeout: std::time::Duration,
+        ) -> opentelemetry_sdk::error::OTelSdkResult {
+            Ok(())
+        }
+    }
+
+    let mut provider_builder = SdkTracerProvider::builder()
         // Customize sampling strategy
         .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
             1.0,
@@ -66,8 +105,11 @@ fn init_tracer_provider() -> SdkTracerProvider {
         // If export trace to AWS X-Ray, you can use XrayIdGenerator
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(resource())
-        .with_batch_exporter(exporter)
-        .build();
+        .with_batch_exporter(exporter);
+    if enable_profiling {
+        provider_builder = provider_builder.with_span_processor(ProfileLinkProcessor);
+    }
+    let provider = provider_builder.build();
 
     global::set_tracer_provider(provider.clone());
 
@@ -89,8 +131,23 @@ pub fn init() -> OtelGuard {
         ))
         .with(tracing_subscriber::fmt::layer());
 
+    let profiler = if ARGS.profiling {
+        let agent = pyroscope::PyroscopeAgent::builder("http://localhost:4040", "leaf-server")
+            .backend(pprof_backend(PprofConfig::new().sample_rate(100)))
+            .build()
+            .expect("Init profiler")
+            .start()
+            .expect("Start profiling agent");
+        agent
+            .add_global_tag(Tag::new("span_id".into(), PROCESS_ID.clone()))
+            .unwrap();
+        Some(agent)
+    } else {
+        None
+    };
+
     let (tracer_provider, meter_provider) = if ARGS.otel {
-        let tracer_provider = Arc::new(init_tracer_provider());
+        let tracer_provider = Arc::new(init_tracer_provider(ARGS.profiling));
         let meter_provider = init_meter_provider();
         let tracer = tracer_provider.tracer("tracing-otel-subscriber");
 
@@ -108,12 +165,14 @@ pub fn init() -> OtelGuard {
     OtelGuard {
         tracer_provider,
         meter_provider,
+        profiler,
     }
 }
 
 pub struct OtelGuard {
     pub tracer_provider: Option<Arc<SdkTracerProvider>>,
     pub meter_provider: Option<SdkMeterProvider>,
+    pub profiler: Option<PyroscopeAgent<PyroscopeAgentRunning>>,
 }
 
 impl Drop for OtelGuard {
@@ -123,6 +182,11 @@ impl Drop for OtelGuard {
         }
         if let Some(Err(err)) = self.meter_provider.take().map(|x| x.shutdown()) {
             eprintln!("{err:?}");
+        }
+        match self.profiler.take().map(|x| x.stop()) {
+            Some(Ok(profiler)) => profiler.shutdown(),
+            Some(Err(e)) => eprintln!("Error stopping profiler: {e}"),
+            None => (),
         }
     }
 }
