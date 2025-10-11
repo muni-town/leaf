@@ -17,7 +17,7 @@ use pyroscope_pprofrs::{PprofConfig, pprof_backend};
 use rand::{Rng, rng};
 use tracing::Level;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{Layer, filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::ARGS;
 
@@ -129,7 +129,10 @@ pub fn init() -> OtelGuard {
         .with(tracing_subscriber::filter::LevelFilter::from_level(
             Level::INFO,
         ))
-        .with(tracing_subscriber::fmt::layer());
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_filter(filter_fn(|meta| !meta.target().starts_with("Pyroscope"))),
+        );
 
     let profiler = if ARGS.profiling {
         let agent = pyroscope::PyroscopeAgent::builder("http://localhost:4040", "leaf-server")
