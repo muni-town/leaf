@@ -17,3 +17,4 @@ description = "Leaf protocol"
 
 [profile.release]
 lto = 'thin'
+debug = 'line-tables-only'
