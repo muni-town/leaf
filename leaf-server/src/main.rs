@@ -53,7 +53,7 @@ async fn main() {
 }
 
 /// Start the leaf server
-#[tracing::instrument(err)]
+#[tracing::instrument(err, name = "run_server")]
 async fn start_server(args: &'static ServerArgs) -> anyhow::Result<()> {
     tracing::info!(args=?&*ARGS, "Starting Leaf server");
 

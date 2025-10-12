@@ -14,7 +14,7 @@ use leaf_stream_types::{
 use leaf_utils::convert::*;
 use libsql::{AuthAction, Authorization, Connection};
 use parity_scale_codec::Encode;
-use tracing::instrument;
+use tracing::{Instrument, instrument};
 use ulid::Ulid;
 
 pub use async_broadcast::Receiver;
@@ -698,19 +698,30 @@ impl Stream {
 
         module_db.authorizer(Some(Arc::new(fetch_module_db_authorizer)))?;
 
-        module.fetch(options, module_db.clone()).await?;
+        module
+            .fetch(options, module_db.clone())
+            .instrument(tracing::info_span!("Module fetch"))
+            .await?;
 
         module_db.authorizer(Some(Arc::new(default_module_db_authorizer)))?;
 
-        let events: Vec<(i64, String, Vec<u8>)> = module_db
-            .query(
-                "select e.id, e.user, e.payload from events e right join fetch on fetch.id = e.id",
-                (),
-            )
-            .await?
-            .parse_rows()
+        let events: Vec<(i64, String, Vec<u8>)> = async move {
+            anyhow::Ok(module_db
+                .query(
+                    "select e.id, e.user, e.payload from fetch join events e on fetch.id = e.id",
+                    (),
+                )
+                .await?
+                .parse_rows()
+                .await?)
+        }
+        .instrument(tracing::info_span!("Query events after module fetch"))
+        .await?;
+
+        module_db
+            .execute("delete from fetch", ())
+            .instrument(tracing::info_span!("Deleting from temporary fetch"))
             .await?;
-        module_db.execute("delete from fetch", ()).await?;
 
         Ok(events
             .into_iter()
