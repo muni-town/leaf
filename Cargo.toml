@@ -15,6 +15,9 @@ repository = "https://github.com/muni-town/leaf"
 license = "PolyForm-Noncommercial-1.0.0"
 description = "Leaf protocol"
 
+[workspace.dependencies]
+libsql = { git = "https://github.com/zicklag/libsql.git", branch = "leaf" }
+
 [profile.release]
 lto = 'thin'
 debug = 'line-tables-only'

@@ -17,7 +17,7 @@ leaf-utils = { version = "0.1.0-alpha.1", path = "../leaf-utils" }
 leaf-stream-types = { version = "0.1.0-alpha.1", path = "../leaf-stream-types" }
 
 # Database
-libsql = { version = "0.9.21", features = ["core"], default-features = false }
+libsql.workspace = true
 
 # Error handling
 thiserror = "2.0.16"
