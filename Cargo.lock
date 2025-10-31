@@ -2348,30 +2348,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
-name = "leaf-module-personal"
-version = "0.1.0-alpha.1"
-dependencies = [
- "leaf-module-sdk",
- "parity-scale-codec",
-]
-
-[[package]]
-name = "leaf-module-public-read-write-admin-upgrade"
-version = "0.1.0-alpha.1"
-dependencies = [
- "leaf-module-sdk",
- "parity-scale-codec",
-]
-
-[[package]]
-name = "leaf-module-sdk"
-version = "0.1.0-alpha.1"
-dependencies = [
- "anyhow",
- "leaf-stream-types",
-]
-
-[[package]]
 name = "leaf-server"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -2437,6 +2413,8 @@ dependencies = [
 name = "leaf-stream-types"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "blake3",
+ "ordered-float",
  "parity-scale-codec",
  "thiserror 2.0.17",
 ]
@@ -2790,25 +2768,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "module-multi-author-private-read-admin-upgrades"
-version = "0.1.0-alpha.1"
-dependencies = [
- "base64 0.22.1",
- "hex",
- "leaf-module-sdk",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "module-single-author-public-read-no-upgrades"
-version = "0.1.0-alpha.1"
-dependencies = [
- "leaf-module-sdk",
- "serde_json",
-]
-
-[[package]]
 name = "moka"
 version = "0.12.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3087,6 +3046,15 @@ dependencies = [
  "rand 0.9.2",
  "serde_json",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "ordered-float"
+version = "5.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f4779c6901a562440c3786d08192c6fbda7c1c2060edd10006b05ee35d10f2d"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
