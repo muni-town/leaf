@@ -17,9 +17,6 @@ use wasmtime::{Config, Engine, FuncType, Linker, Module, Store, Val, ValType};
 
 use crate::LeafModule;
 
-pub static ENGINE: LazyLock<Engine> =
-    LazyLock::new(|| Engine::new(Config::new().async_support(true)).unwrap());
-
 #[derive(Debug)]
 pub struct LeafWasmModule {
     id: Hash,
