@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use blake3::Hash;
 use leaf_stream::{
-    QueryReceiver, Stream, StreamGenesis,
+    Stream, StreamGenesis, SubscriptionResultReceiver,
     modules::wasm::LeafWasmModule,
     types::{Event, LeafQuery},
 };
@@ -28,7 +28,7 @@ impl StreamHandle {
     }
 
     /// Subscribe to events that are sent over this stream.
-    pub async fn subscribe(&self, requesting_user: &str) -> QueryReceiver {
+    pub async fn subscribe(&self, requesting_user: &str) -> SubscriptionResultReceiver {
         self.0.stream.read().await.subscribe(requesting_user).await
     }
 
@@ -145,7 +145,7 @@ impl Streams {
         // Open the stream
         let mut stream = leaf_stream::Stream::open(genesis, stream_db).await?;
         // Spawn background worker task for the stream
-        stream.creat_worker_task().map(tokio::spawn);
+        stream.create_worker_task().map(tokio::spawn);
 
         // Load the stream's module and it's database
         if let Some(module_id) = stream.needs_module().await {

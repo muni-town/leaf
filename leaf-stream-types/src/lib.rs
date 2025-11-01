@@ -114,10 +114,42 @@ pub struct IncomingEvent<Payload = Vec<u8>> {
 pub struct LeafQuery {
     pub query_name: String,
     pub requesting_user: String,
-    pub start: Option<i64>,
-    pub end: Option<i64>,
-    pub limit: Option<i64>,
     pub params: Vec<(String, SqlValue)>,
+    pub start: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+impl LeafQuery {
+    pub fn last_event(&self) -> Option<i64> {
+        self.limit.map(|l| l + self.start.unwrap_or(0))
+    }
+}
+
+#[derive(Decode, Encode, Debug, Clone, Hash, Eq, PartialEq)]
+pub struct LeafSubscribeQuery {
+    pub query_name: String,
+    pub requesting_user: String,
+    pub params: Vec<(String, SqlValue)>,
+    pub start: Option<i64>,
+    pub batch_size: Option<i64>,
+}
+
+impl LeafSubscribeQuery {
+    /// Convert to a [`LeafQuery`] so that you can run it to get a single result instead of a
+    /// subscription.
+    pub fn to_query(&self, latest_event: i64) -> LeafQuery {
+        LeafQuery {
+            query_name: self.query_name.clone(),
+            requesting_user: self.requesting_user.clone(),
+            params: self.params.clone(),
+            start: Some(
+                self.start
+                    .map(|x| x.max(latest_event))
+                    .unwrap_or(latest_event),
+            ),
+            limit: self.batch_size,
+        }
+    }
 }
 
 pub type LeafQueryReponse = SqlRows;
