@@ -1,15 +1,14 @@
 use std::{
-    collections::HashMap,
     ops::{Bound, RangeBounds},
     sync::Arc,
 };
 
 use anyhow::Context;
-use async_lock::RwLock;
+use async_lock::{Mutex, RwLock};
 use blake3::Hash;
 use leaf_stream_types::{
-    Decode, Event, IncomingEvent, LeafModuleDef, LeafQuery, LeafQueryReponse, QueryValidationError,
-    SqlRow, SqlRows, SqlValue,
+    Decode, Event, IncomingEvent, LeafModuleDef, LeafQuery, LeafQueryReponse, LeafSubscribeQuery,
+    QueryValidationError, SqlRow, SqlRows, SqlValue,
 };
 use leaf_utils::convert::*;
 use libsql::{AuthAction, Authorization, Connection, ScalarFunctionDef};
@@ -17,9 +16,9 @@ use parity_scale_codec::Encode;
 use tracing::instrument;
 use ulid::Ulid;
 
-pub use async_broadcast::Receiver;
-pub type QueryReceiver = async_broadcast::Receiver<Result<LeafQueryReponse, StreamError>>;
-pub type QuerySender = async_broadcast::Sender<Result<LeafQueryReponse, StreamError>>;
+pub type SubscriptionResultReceiver =
+    async_channel::Receiver<Result<LeafQueryReponse, StreamError>>;
+pub type SubscriptionResultSender = async_channel::Sender<Result<LeafQueryReponse, StreamError>>;
 
 pub use module::*;
 mod module;
@@ -60,20 +59,42 @@ impl StreamGenesis {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Stream {
+    info: Arc<StreamInfo>,
+    state: Arc<RwLock<StreamState>>,
+}
+
+#[derive(Debug, Clone)]
+struct StreamInfo {
     id: Hash,
-    db: libsql::Connection,
+    genesis: StreamGenesis,
+}
+
+#[derive(Debug)]
+struct StreamState {
     db_filename: String,
-    module_state: Arc<RwLock<ModuleState>>,
+    db: libsql::Connection,
+    module_state: ModuleState,
     latest_event: i64,
     module_event_cursor: i64,
-    /// This is an event that needs to be sent to subscribers but we are waiting until a new module
-    /// is provided to do the filtering on the event.
-    pending_event_for_subscribers: Option<Event>,
-    subscribers: Arc<RwLock<HashMap<LeafQuery, QuerySender>>>,
-    worker_sender: Option<async_channel::Sender<Event>>,
-    genesis: StreamGenesis,
+    subscriptions: Arc<Mutex<Vec<ActiveSubscription>>>,
+    worker_sender: Option<async_channel::Sender<WorkerMessage>>,
+}
+
+enum WorkerMessage {
+    /// We have new events: all subscriptions should be updated.
+    NewEvents,
+    /// A specific subscription needs to be updated.
+    NeedsUpdate(Ulid),
+}
+
+#[derive(Debug, Clone)]
+struct ActiveSubscription {
+    pub sub_id: Ulid,
+    pub subscription_query: LeafSubscribeQuery,
+    pub latest_event: i64,
+    pub result_sender: SubscriptionResultSender,
 }
 
 enum ModuleState {
@@ -144,35 +165,36 @@ pub enum StreamError {
 
 impl Stream {
     pub fn id(&self) -> blake3::Hash {
-        self.id
+        self.info.id
     }
 
     pub fn genesis(&self) -> &StreamGenesis {
-        &self.genesis
+        &self.info.genesis
     }
 
-    pub fn latest_event(&self) -> i64 {
-        self.latest_event
+    pub async fn latest_event(&self) -> i64 {
+        self.state.read().await.latest_event
     }
 
     pub async fn module_id(&self) -> Hash {
-        self.module_state.read().await.id()
+        self.state.read().await.module_state.id()
     }
 
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
     pub async fn raw_set_module(&mut self, module_id: Hash) -> anyhow::Result<()> {
-        let mut module_state = self.module_state.write().await;
-        self.db
+        let mut state = self.state.write().await;
+        state
+            .db
             .execute(
                 "update stream_state set module = ?, module_event_cursor = null where id = 1",
                 [module_id.as_bytes().to_vec()],
             )
             .await
             .context("error updating steam module and module event cursor")?;
-        self.module_event_cursor = 0;
-        *module_state = ModuleState::Unloaded(module_id);
+        state.module_event_cursor = 0;
+        state.module_state = ModuleState::Unloaded(module_id);
 
         Ok(())
     }
@@ -252,8 +274,6 @@ impl Stream {
             module_event_cursor = 0;
         };
 
-        let subscribers = Default::default();
-
         // Get the filename of the passed-in database connection so that we can make sure modules
         // are attached to the same file.
         let files: Vec<String> = db
@@ -269,34 +289,48 @@ impl Stream {
         };
 
         Ok(Self {
-            id,
-            db,
-            db_filename,
-            module_state: Arc::new(RwLock::new(module)),
-            subscribers,
-            module_event_cursor,
-            latest_event,
-            worker_sender: None,
-            pending_event_for_subscribers: None,
-            genesis,
+            info: Arc::new(StreamInfo { id, genesis }),
+            state: Arc::new(RwLock::new(StreamState {
+                db_filename,
+                db,
+                module_state: module,
+                latest_event,
+                module_event_cursor,
+                subscriptions: Default::default(),
+                worker_sender: None,
+            })),
         })
     }
 
-    pub async fn subscribe(&self, query: LeafQuery) -> QueryReceiver {
-        let mut subs = self.subscribers.write().await;
+    pub async fn subscribe(
+        &self,
+        subscription_query: LeafSubscribeQuery,
+    ) -> SubscriptionResultReceiver {
+        let state = self.state.read().await;
+        let mut subscriptions = state.subscriptions.lock().await;
 
         // Take the opportunity to clean up any closed subscriptions
-        subs.retain(|_k, v| !v.is_closed());
+        subscriptions.retain(|v| !v.result_sender.is_closed());
 
-        // Return a new receiver for an existing subscription for the user, or create a new channel.
-        match subs.get(&query) {
-            Some(sender) => sender.new_receiver(),
-            None => {
-                let (sender, receiver) = async_broadcast::broadcast(12);
-                subs.insert(query, sender);
-                receiver
-            }
-        }
+        let (sender, receiver) = async_channel::bounded(12);
+
+        // Create a new subscription
+        let sub_id = Ulid::new();
+        subscriptions.push(ActiveSubscription {
+            sub_id,
+            latest_event: subscription_query.start.map(|s| s - 1).unwrap_or(0),
+            subscription_query,
+            result_sender: sender,
+        });
+
+        // Have the worker update the subscription
+        state
+            .worker_sender
+            .as_ref()
+            .map(|s| s.try_send(WorkerMessage::NeedsUpdate(sub_id)));
+
+        // Return the receiver
+        receiver
     }
 
     /// If this stream needs a Leaf module to be loaded before it can continue processing events,
@@ -305,7 +339,8 @@ impl Stream {
     /// You must then call [`provide_module()`][Self::provide_module] with the module in order to
     /// allow the stream to continue processing.
     pub async fn needs_module(&self) -> Option<blake3::Hash> {
-        match *self.module_state.read().await {
+        let state = self.state.read().await;
+        match state.module_state {
             ModuleState::Unloaded(hash) => Some(hash),
             _ => None,
         }
@@ -317,8 +352,8 @@ impl Stream {
         module: Arc<LeafModule>,
         module_db: libsql::Connection,
     ) -> Result<(), StreamError> {
-        let mut module_state = self.module_state.write().await;
-        match &*module_state {
+        let mut state = self.state.write().await;
+        match &state.module_state {
             ModuleState::Unloaded(hash) => {
                 if module.id() == *hash {
                     // Make sure an `events` database is connected, which must be connected to the
@@ -334,26 +369,18 @@ impl Stream {
                     let Some(db_filename) = files.first() else {
                         return Err(StreamError::ModuleDbMissingEventsAttachment);
                     };
-                    if db_filename != &self.db_filename {
+                    if db_filename != &state.db_filename {
                         return Err(StreamError::ModuleDbEventsAttachmentHasWrongFilename);
                     }
 
                     // Install our user-defined function
                     install_udfs(&module_db)?;
 
-                    *module_state = ModuleState::Loaded { module, module_db };
-                    drop(module_state);
+                    state.module_state = ModuleState::Loaded { module, module_db };
+                    drop(state);
 
                     // Make sure we catch up the new module if it needs it.
                     self.raw_catch_up_module().await?;
-
-                    // Send our pending event if we had an event that we were waiting to send to
-                    // subscribers because we didn't have a module.
-                    if let Some(event) = self.pending_event_for_subscribers.take()
-                        && let Some(sender) = &self.worker_sender
-                    {
-                        sender.try_send(event).ok();
-                    }
 
                     Ok(())
                 } else {
@@ -384,36 +411,33 @@ impl Stream {
     /// > calling [`raw_import_events()`][Self::raw_import_events] and
     /// > [`raw_set_module()`][Self::raw_set_module].
     #[instrument(skip(self), err)]
-    pub async fn raw_catch_up_module(&mut self) -> Result<i64, StreamError> {
-        // NOTE: we use a write lock here because we are starting a transaction and need to make
-        // sure other async tasks don't come and try to use this same database connection while the
-        // transaction is in progress.
-        let module_state = self.module_state.write().await;
-        let (module, module_db) = Self::ensure_module_loaded(&module_state)?;
+    pub async fn raw_catch_up_module(&self) -> Result<i64, StreamError> {
+        let mut state = self.state.write().await;
+        let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
 
         // NOTE the init sql must be idempodent since there are edge cases where this might be
         // called twice.
-        if self.module_event_cursor == 0 {
+        if state.module_event_cursor == 0 {
             module_db.authorizer(Some(Arc::new(module_init_authorizer)))?;
             module_db.execute_batch(&module.def().init_sql).await?;
             module_db.authorizer(None)?;
         }
 
         assert!(
-            self.latest_event >= self.module_event_cursor,
+            state.latest_event >= state.module_event_cursor,
             "Somehow the module event cursor is higher than the latest event."
         );
-        let events_behind = self.latest_event - self.module_event_cursor;
+        let events_behind = state.latest_event - state.module_event_cursor;
         if events_behind == 0 {
             return Ok(events_behind);
         }
 
         // Get all of the events that have not been applied by the module yet.
-        let events: Vec<(i64, String, Vec<u8>)> = self
+        let events: Vec<(i64, String, Vec<u8>)> = state
             .db
             .query(
                 "select id, user, payload from events where id > ?",
-                [self.module_event_cursor],
+                [state.module_event_cursor],
             )
             .await?
             .parse_rows()
@@ -425,7 +449,7 @@ impl Stream {
 
         let result = async {
             for (id, user, payload) in events {
-                assert_eq!(id, self.module_event_cursor + 1);
+                assert_eq!(id, state.module_event_cursor + 1);
 
                 // Setup the temporary `next_event` table to contain the next event to materialize.
                 module_db
@@ -447,7 +471,7 @@ impl Stream {
                 module_db
                     .execute(
                         "update events.stream_state set module_event_cursor = ? where id = 1",
-                        [self.module_event_cursor],
+                        [state.module_event_cursor],
                     )
                     .await?;
             }
@@ -460,12 +484,12 @@ impl Stream {
             module_db.execute("rollback", ()).await?;
             return Err(e.into());
         } else {
-            self.module_event_cursor += even_count as i64;
             module_db.execute("commit", ()).await?;
+            state.module_event_cursor += even_count as i64;
         }
 
         assert_eq!(
-            self.latest_event, self.module_event_cursor,
+            state.latest_event, state.module_event_cursor,
             "Module event cursor still not caught up."
         );
 
@@ -478,9 +502,10 @@ impl Stream {
     /// multiple events act as an atomic transaction.
     #[instrument(skip(self, events), err)]
     pub async fn add_events(
-        &mut self,
+        &self,
         events: Vec<IncomingEvent>,
     ) -> Result<Option<Hash>, StreamError> {
+        let mut state = self.state.write().await;
         let event_count = events.len();
 
         // Make sure the current module is caught up
@@ -491,8 +516,7 @@ impl Stream {
         // NOTE: we use a write lock here because we are starting a transaction and need to make
         // sure other async tasks don't come and try to use this same database connection while the
         // transaction is in progress.
-        let module_state = self.module_state.write().await;
-        let (module, module_db) = Self::ensure_module_loaded(&module_state)?;
+        let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
 
         // Start a new transaction
         module_db.execute("begin immediate", ()).await?;
@@ -530,7 +554,7 @@ impl Stream {
                 module_db
                     .execute(
                         "update events.stream_state set module_event_cursor = ? where id = 1",
-                        [self.module_event_cursor],
+                        [state.module_event_cursor],
                     )
                     .await?;
             }
@@ -543,10 +567,16 @@ impl Stream {
             module_db.execute("rollback", ()).await?;
             return Err(e.into());
         } else {
-            self.latest_event += event_count as i64;
-            self.module_event_cursor += event_count as i64;
             module_db.execute("commit", ()).await?;
+            state.latest_event += event_count as i64;
+            state.module_event_cursor += event_count as i64;
         }
+
+        // Update query subscriptions
+        state
+            .worker_sender
+            .as_ref()
+            .map(|s| s.try_send(WorkerMessage::NewEvents).ok());
 
         // TODO: allow events in the module to update the module, but only if the event that updates
         // the module is the last event in the batch.
@@ -565,6 +595,7 @@ impl Stream {
         &self,
         range: R,
     ) -> Result<Vec<Event>, StreamError> {
+        let state = self.state.read().await;
         let min = match range.start_bound() {
             Bound::Included(min) => *min,
             Bound::Excluded(x) => *x + 1,
@@ -576,7 +607,7 @@ impl Stream {
             Bound::Unbounded => i64::MAX,
         };
 
-        let events: Vec<(i64, String, Vec<u8>)> = self
+        let events: Vec<(i64, String, Vec<u8>)> = state
             .db
             .query(
                 "select id, user, payload from events where id >= ? and id <= ?",
@@ -596,18 +627,20 @@ impl Stream {
     ///
     /// This is a raw operation that isn't used in normal processing, but can be useful for
     /// restoring streams from backups, for example.
-    pub async fn raw_import_events(&mut self, events: Vec<Event>) -> anyhow::Result<()> {
+    pub async fn raw_import_events(&self, events: Vec<Event>) -> anyhow::Result<()> {
+        let mut state = self.state.write().await;
         for event in events {
-            if event.idx != self.latest_event + 1 {
+            if event.idx != state.latest_event + 1 {
                 anyhow::bail!("Imported event not sequential");
             }
-            self.db
+            state
+                .db
                 .execute(
                     "insert into events (id, user, payload) values (?, ?, ?)",
                     (event.idx, event.user, event.payload),
                 )
                 .await?;
-            self.latest_event += 1;
+            state.latest_event += 1;
         }
         Ok(())
     }
@@ -615,9 +648,9 @@ impl Stream {
     /// Query from the stream.
     #[instrument(skip(self), err)]
     pub async fn query(&self, query: LeafQuery) -> Result<SqlRows, StreamError> {
+        let state = self.state.read().await;
         let query_name = &query.query_name;
-        let module_state = self.module_state.read().await;
-        let (module, module_db) = Self::ensure_module_loaded(&module_state)?;
+        let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
 
         // Get the module's query definition by name
         let query_def = module
@@ -643,10 +676,6 @@ impl Stream {
                         (
                             "$start".to_string(),
                             libsql::Value::Integer(query.start.unwrap_or(1)),
-                        ),
-                        (
-                            "$end".to_string(),
-                            libsql::Value::Integer(query.end.unwrap_or(i64::MAX)),
                         ),
                         (
                             "$limit".to_string(),
@@ -685,69 +714,46 @@ impl Stream {
     ///
     /// If you call this function a second time it will return `None` because there may only be one
     /// worker task.
-    pub fn creat_worker_task(&mut self) -> Option<impl Future<Output = ()> + 'static> {
-        let module_state_lock = self.module_state.clone();
-        let subs = self.subscribers.clone();
-        if self.worker_sender.is_some() {
+    pub async fn create_worker_task(&self) -> Option<impl Future<Output = ()> + 'static> {
+        let this = self.clone();
+
+        let mut state = self.state.write().await;
+        if state.worker_sender.is_some() {
             return None;
         };
 
         let (sender, receiver) = async_channel::bounded(16);
-        self.worker_sender = Some(sender);
+        state.worker_sender = Some(sender.clone());
+        drop(state);
 
-        let id = self.id;
         Some(async move {
-            while let Ok(event) = receiver.recv().await {
-                let subscribers = subs.read().await;
-                let module_state = module_state_lock.read().await;
-                let Ok((module, module_db)) = Self::ensure_module_loaded(&module_state) else {
-                    // This shouldn't be able to happen, because we try to only send events here when the module is loaded.
-                    tracing::error!(
-                        "Failed to update notification because the module was not loaded."
-                    );
-                    continue;
+            while let Ok(message) = receiver.recv().await {
+                let subscriptions = this.state.read().await.subscriptions.clone();
+                let mut subscriptions = subscriptions.lock().await;
+
+                let subs = match message {
+                    WorkerMessage::NewEvents => subscriptions.iter_mut().collect::<Vec<_>>(),
+                    WorkerMessage::NeedsUpdate(id) => subscriptions
+                        .iter_mut()
+                        .find(|x| x.sub_id == id)
+                        .into_iter()
+                        .collect::<Vec<_>>(),
                 };
 
-                // if let Err(e) = module_db.authorizer(Some(Arc::new(read_only_module_db_authorizer)))
-                // {
-                //     tracing::warn!("Error setting SQLite authorizer to read only: {e}");
-                // }
-                // let notification_futures = subscribers.iter().map(|(requesting_user, sender)| {
-                //     let requesting_user = requesting_user.clone();
-                //     async {
-                //         let outbound = module
-                //             .filter_outbound(
-                //                 EventRequest {
-                //                     requesting_user,
-                //                     incoming_event: IncomingEvent {
-                //                         payload: event.payload.clone(),
-                //                         params: module_state.params.clone(),
-                //                         user: event.user.clone(),
-                //                     },
-                //                     // TODO: allow you to specify filters on subscriptions.
-                //                     filter: None,
-                //                 },
-                //                 module_db.clone(),
-                //             )
-                //             .await;
-                //         match outbound {
-                //             Ok(o) => match o {
-                //                 Outbound::Allow => {
-                //                     sender.broadcast(event.clone()).await.ok();
-                //                 }
-                //                 Outbound::Block => (),
-                //             },
-                //             Err(e) => tracing::warn!(
-                //                 "Error in outbound filter for stream {id} for event {}: {e}",
-                //                 event.idx
-                //             ),
-                //         }
-                //     }
-                // });
-                // futures::future::join_all(notification_futures).await;
-                if let Err(e) = module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))
-                {
-                    tracing::warn!("Error setting SQLite authorizer to default authorizer: {e}");
+                for sub in subs {
+                    let query = sub.subscription_query.to_query(sub.latest_event);
+                    let query_last_event = query.last_event();
+                    let result = this.query(query).await;
+                    sub.result_sender.try_send(result).unwrap();
+
+                    let stream_latest_event = this.state.read().await.latest_event;
+                    if query_last_event
+                        .map(|l| l < stream_latest_event)
+                        .unwrap_or(false)
+                    {
+                        sender.try_send(WorkerMessage::NeedsUpdate(sub.sub_id)).ok();
+                    }
+                    sub.latest_event = query_last_event.unwrap_or(stream_latest_event);
                 }
             }
         })
@@ -851,13 +857,13 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
 
 impl std::hash::Hash for Stream {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.info.id.hash(state);
     }
 }
 impl std::cmp::Eq for Stream {}
 impl std::cmp::PartialEq for Stream {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.info.id == other.info.id
     }
 }
 
