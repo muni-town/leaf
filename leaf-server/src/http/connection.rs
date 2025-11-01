@@ -4,7 +4,7 @@ use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
 use bytes::Bytes;
 use futures::future::{Either, select};
-use leaf_stream::{StreamGenesis, encoding::Encodable, types::FetchInput};
+use leaf_stream::{StreamGenesis, encoding::Encodable, types::LeafQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use socketioxide::extract::{AckSender, SocketRef, TryData};
@@ -302,7 +302,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 };
 
                 let events = stream
-                    .fetch_events(FetchInput {
+                    .fetch_events(LeafQuery {
                         requesting_user: did_.clone(),
                         start: Some(args.offset.try_into()?),
                         end: None,

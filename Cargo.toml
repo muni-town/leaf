@@ -3,9 +3,7 @@ resolver = "3"
 members = [
     "leaf-stream",
     "leaf-utils",
-    "leaf-module-sdk",
     "leaf-server",
-    "modules/*",
     "leaf-stream-types",
 ]
 

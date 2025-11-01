@@ -7,9 +7,9 @@ use std::{
 use anyhow::Context;
 use blake3::Hash;
 use leaf_stream::{
-    EventReceiver, Stream, StreamGenesis,
+    Stream, StreamGenesis, SubscriptionResultReceiver,
     modules::wasm::LeafWasmModule,
-    types::{Event, FetchInput},
+    types::{Event, LeafQuery},
 };
 use tokio::sync::RwLock;
 use weak_table::{WeakValueHashMap, traits::WeakElement};
@@ -28,13 +28,13 @@ impl StreamHandle {
     }
 
     /// Subscribe to events that are sent over this stream.
-    pub async fn subscribe(&self, requesting_user: &str) -> EventReceiver {
+    pub async fn subscribe(&self, requesting_user: &str) -> SubscriptionResultReceiver {
         self.0.stream.read().await.subscribe(requesting_user).await
     }
 
     pub async fn handle_event(&self, user: String, payload: Vec<u8>) -> anyhow::Result<()> {
         let mut stream = self.0.stream.write().await;
-        let new_module = stream.handle_event(user, payload).await?;
+        let new_module = stream.add_events(user, payload).await?;
 
         // Update the latest event IDx in our streams list
         STORAGE
@@ -96,8 +96,8 @@ impl StreamHandle {
         Ok(events)
     }
 
-    pub async fn fetch_events(&self, options: FetchInput) -> anyhow::Result<Vec<Event>> {
-        let events = self.0.stream.read().await.fetch_events(options).await?;
+    pub async fn fetch_events(&self, options: LeafQuery) -> anyhow::Result<Vec<Event>> {
+        let events = self.0.stream.read().await.query(options).await?;
         Ok(events)
     }
 }
@@ -145,7 +145,7 @@ impl Streams {
         // Open the stream
         let mut stream = leaf_stream::Stream::open(genesis, stream_db).await?;
         // Spawn background worker task for the stream
-        stream.creat_worker_task().map(tokio::spawn);
+        stream.create_worker_task().map(tokio::spawn);
 
         // Load the stream's module and it's database
         if let Some(module_id) = stream.needs_module().await {
