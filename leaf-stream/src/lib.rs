@@ -42,7 +42,7 @@ pub struct StreamGenesis {
     pub stamp: Encodable<Ulid>,
     /// User ID of the user that created the stream.
     pub creator: String,
-    /// The hash of the WASM module that will be used for filtering.
+    /// The initial module definition for the stream.
     pub module: LeafModuleDef,
     /// If this is `true` it means that module updates must be made by the module's materializer.
     ///
@@ -78,13 +78,14 @@ struct StreamState {
     module_state: ModuleState,
     latest_event: i64,
     module_event_cursor: i64,
-    subscriptions: Arc<Mutex<Vec<ActiveSubscription>>>,
+    query_subscriptions: Arc<Mutex<Vec<ActiveSubscription>>>,
+    latest_event_subscriptions: Arc<Mutex<Vec<async_channel::Sender<i64>>>>,
     worker_sender: Option<async_channel::Sender<WorkerMessage>>,
 }
 
 enum WorkerMessage {
     /// We have new events: all subscriptions should be updated.
-    NewEvents,
+    NewEvents { latest_event: i64 },
     /// A specific subscription needs to be updated.
     NeedsUpdate(Ulid),
 }
@@ -183,7 +184,7 @@ impl Stream {
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
-    pub async fn raw_set_module(&mut self, module_id: Hash) -> anyhow::Result<()> {
+    pub async fn raw_set_module(&self, module_id: Hash) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         state
             .db
@@ -296,18 +297,34 @@ impl Stream {
                 module_state: module,
                 latest_event,
                 module_event_cursor,
-                subscriptions: Default::default(),
+                query_subscriptions: Default::default(),
+                latest_event_subscriptions: Arc::new(Mutex::new(Vec::new())),
                 worker_sender: None,
             })),
         })
     }
 
+    /// Get a subscription to the latest event index in the stream.
+    /// 
+    /// Every time new events are added to this stream, the new latest event will be sent to the
+    /// receiver.
+    pub async fn subscribe_latest_event(&self) -> async_channel::Receiver<i64> {
+        let state = self.state.read().await;
+        let mut latest_event_subscriptions = state.latest_event_subscriptions.lock().await;
+
+        let (sender, receiver) = async_channel::bounded(12);
+        latest_event_subscriptions.push(sender);
+
+        receiver
+    }
+
+    /// Subscribe to the result of a leaf query.
     pub async fn subscribe(
         &self,
         subscription_query: LeafSubscribeQuery,
     ) -> SubscriptionResultReceiver {
         let state = self.state.read().await;
-        let mut subscriptions = state.subscriptions.lock().await;
+        let mut subscriptions = state.query_subscriptions.lock().await;
 
         // Take the opportunity to clean up any closed subscriptions
         subscriptions.retain(|v| !v.result_sender.is_closed());
@@ -348,7 +365,7 @@ impl Stream {
 
     /// Provide the stream it's module, if it is needed.
     pub async fn provide_module(
-        &mut self,
+        &self,
         module: Arc<LeafModule>,
         module_db: libsql::Connection,
     ) -> Result<(), StreamError> {
@@ -573,10 +590,12 @@ impl Stream {
         }
 
         // Update query subscriptions
-        state
-            .worker_sender
-            .as_ref()
-            .map(|s| s.try_send(WorkerMessage::NewEvents).ok());
+        state.worker_sender.as_ref().map(|s| {
+            s.try_send(WorkerMessage::NewEvents {
+                latest_event: state.latest_event,
+            })
+            .ok()
+        });
 
         // TODO: allow events in the module to update the module, but only if the event that updates
         // the module is the last event in the batch.
@@ -728,12 +747,25 @@ impl Stream {
 
         Some(async move {
             while let Ok(message) = receiver.recv().await {
-                let subscriptions = this.state.read().await.subscriptions.clone();
-                let mut subscriptions = subscriptions.lock().await;
+                let (query_subscriptions, latest_event_subscriptions) = {
+                    let state = this.state.read().await;
+                    (
+                        state.query_subscriptions.clone(),
+                        state.latest_event_subscriptions.clone(),
+                    )
+                };
+                let mut query_subscriptions = query_subscriptions.lock().await;
+                let mut latest_event_subscriptions = latest_event_subscriptions.lock().await;
 
                 let subs = match message {
-                    WorkerMessage::NewEvents => subscriptions.iter_mut().collect::<Vec<_>>(),
-                    WorkerMessage::NeedsUpdate(id) => subscriptions
+                    WorkerMessage::NewEvents { latest_event } => {
+                        latest_event_subscriptions.retain(|x| !x.is_closed());
+                        for sub in &*latest_event_subscriptions {
+                            sub.try_send(latest_event).ok();
+                        }
+                        query_subscriptions.iter_mut().collect::<Vec<_>>()
+                    }
+                    WorkerMessage::NeedsUpdate(id) => query_subscriptions
                         .iter_mut()
                         .find(|x| x.sub_id == id)
                         .into_iter()
@@ -889,4 +921,12 @@ fn libsql_value_to_leaf(value: libsql::Value) -> SqlValue {
         V::Text(t) => S::Text(t),
         V::Blob(b) => S::Blob(b),
     }
+}
+
+/// Check that the provided bytes represent a valid WASM file.
+///
+/// This doesn't check that the imports/exports of the module are compatible with Leaf, it just does
+/// a very quick check that the bytes are valid according to the WASM binary file format.
+pub fn validate_wasm(bytes: &[u8]) -> anyhow::Result<()> {
+    wasmtime::Module::validate(&ENGINE, bytes)
 }

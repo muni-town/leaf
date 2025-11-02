@@ -11,7 +11,10 @@ use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use leaf_stream::{
-    StreamGenesis, encoding::Encodable, modules::wasm::LeafWasmModule, types::Event, validate_wasm,
+    LeafModule, StreamGenesis,
+    encoding::Encodable,
+    types::{Event, LeafModuleDef},
+    validate_wasm,
 };
 use leaf_utils::convert::{FromRows, ParseRow, ParseRows};
 use libsql::Connection;
@@ -31,7 +34,7 @@ pub static GLOBAL_SQLITE_PRAGMA: &str = "pragma synchronous = normal; pragma jou
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
-static WASM_MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafWasmModule>>>> =
+static MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafModule>>>> =
     LazyLock::new(|| RwLock::new(WeakValueHashMap::new()));
 
 pub static BUCKET_MODULE_DIR: &str = "modules";
@@ -81,6 +84,7 @@ impl Storage {
         }
     }
 
+    /// Initialize the storage singleton
     #[instrument(skip(self), err)]
     pub async fn initialize(
         &self,
@@ -135,7 +139,7 @@ impl Storage {
     /// Returns the list of hashes that could be found in the database out of the list that is
     /// provided to search for.
     #[instrument(skip(self, hash), err)]
-    pub async fn has_blob(&self, hash: Hash) -> anyhow::Result<bool> {
+    pub async fn has_wasm_blob(&self, hash: Hash) -> anyhow::Result<bool> {
         let mut rows = self
             .db()
             .await
@@ -147,6 +151,7 @@ impl Storage {
         return Ok(rows.next().await?.is_some());
     }
 
+    // Get a WASM blob from the database
     #[instrument(skip(self), err)]
     pub async fn get_wasm_blob(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
         let mut blobs = Vec::<Vec<u8>>::from_rows(
@@ -162,24 +167,8 @@ impl Storage {
         Ok(blobs.pop())
     }
 
-    #[instrument(skip(self), err)]
-    pub async fn get_wasm_module(&self, id: Hash) -> anyhow::Result<Option<Arc<LeafWasmModule>>> {
-        let modules = WASM_MODULES.upgradable_read().await;
-        if let Some(module) = modules.get(&id) {
-            return Ok(Some(module));
-        }
-        let Some(blob) = self.get_wasm_blob(id).await? else {
-            return Ok(None);
-        };
-        let module = Arc::new(LeafWasmModule::new(&blob)?);
-        let mut modules = RwLockUpgradableReadGuard::upgrade(modules).await;
-        modules.insert(id, module.clone());
-
-        Ok(Some(module))
-    }
-
-    /// List the WASM module blobs
-    pub async fn list_wasm_modules(&self) -> anyhow::Result<HashSet<Hash>> {
+    /// List the WASM blobs in the database
+    pub async fn list_wasm_blobs(&self) -> anyhow::Result<HashSet<Hash>> {
         let modules: Vec<Hash> = self
             .db()
             .await
@@ -190,12 +179,68 @@ impl Storage {
         Ok(modules.into_iter().collect())
     }
 
+    /// Get a module from the database
+    pub async fn get_module(&self, module_id: Hash) -> anyhow::Result<Option<Arc<LeafModule>>> {
+        let modules = MODULES.upgradable_read().await;
+        if let Some(module) = modules.get(&module_id) {
+            return Ok(Some(module));
+        }
+
+        let definition_bytes: Vec<Vec<u8>> = self
+            .db()
+            .await
+            .query(
+                "select definition from modules where hash = ?",
+                module_id.as_bytes().to_vec(),
+            )
+            .await?
+            .parse_rows()
+            .await?;
+        let Some(definition) = definition_bytes
+            .first()
+            .map(|x| LeafModuleDef::decode(&mut &x[..]))
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+
+        let wasm = if let Some(id) = definition.wasm_module {
+            let id = Hash::from_bytes(id);
+            Some(
+                self.get_wasm_blob(id)
+                    .await?
+                    .ok_or_else(|| anyhow::format_err!("WASM requested by module not found"))?,
+            )
+        } else {
+            None
+        };
+        let module = Arc::new(LeafModule::new(definition, wasm.as_deref())?);
+
+        let mut modules = RwLockUpgradableReadGuard::upgrade(modules).await;
+        modules.insert(module_id, module.clone());
+
+        Ok(Some(module))
+    }
+
+    /// Add a module to the database
+    pub async fn add_module(&self, module_def: &LeafModuleDef) -> anyhow::Result<()> {
+        let (id, bytes) = module_def.module_id_and_bytes();
+        self.db()
+            .await
+            .execute(
+                "insert into modules (hash, definition) values (?, ?) on conflict ignore",
+                (id.as_bytes().to_vec(), bytes),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Create a new stream
     #[instrument(skip(self), err)]
     pub async fn create_stream(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
         let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
         let creator = genesis.creator.clone();
-        let genesis_module = genesis.module;
-
+        let (module_id, _) = genesis.module.module_id_and_bytes();
         let stream = STREAMS.load(genesis).await?;
 
         self.db()
@@ -207,7 +252,7 @@ impl Storage {
                     (":id", id.as_bytes().to_vec()),
                     (":creator", creator),
                     (":genesis", genesis_bytes),
-                    (":current_module", genesis_module.0.as_bytes().to_vec()),
+                    (":current_module", module_id.as_bytes().to_vec()),
                 ),
             )
             .await?;
@@ -333,7 +378,7 @@ impl Storage {
     }
 
     #[instrument(skip(self), err)]
-    pub async fn garbage_collect_wasm(&self) -> anyhow::Result<()> {
+    pub async fn garbage_collect_wasm_and_modules(&self) -> anyhow::Result<()> {
         let mut deleted = self
             .db()
             .await
@@ -345,6 +390,9 @@ impl Storage {
                         union
                     select 1 from streams s where s.current_module=wasm_blobs.hash
                 ) returning hash;
+                delete from modules where not exists (
+                    select 1 from modules m where m.hash = streams.current_module_id
+                );
                 "#,
             )
             .await?;
@@ -414,7 +462,7 @@ impl Storage {
             .collect::<HashSet<_>>();
 
         // List wasm modules we have locally
-        let modules_local = self.list_wasm_modules().await?;
+        let modules_local = self.list_wasm_blobs().await?;
 
         // Upload local modules not in backup
         for module_not_in_backup in modules_local.difference(&modules_in_backup) {
@@ -699,7 +747,7 @@ pub fn start_background_tasks() {
     // Garbage collect WASM files periodically
     tokio::spawn(async move {
         loop {
-            STORAGE.garbage_collect_wasm().await.ok();
+            STORAGE.garbage_collect_wasm_and_modules().await.ok();
             tokio::time::sleep(Duration::from_secs(500)).await;
         }
     });
