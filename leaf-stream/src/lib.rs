@@ -99,7 +99,7 @@ struct ActiveSubscription {
 }
 
 enum ModuleState {
-    Unloaded(Hash),
+    Unloaded(LeafModuleDef),
     Loaded {
         module: Arc<LeafModule>,
         module_db: libsql::Connection,
@@ -108,7 +108,7 @@ enum ModuleState {
 impl ModuleState {
     fn id(&self) -> Hash {
         match self {
-            ModuleState::Unloaded(hash) => *hash,
+            ModuleState::Unloaded(def) => def.module_id_and_bytes().0,
             ModuleState::Loaded { module, .. } => module.id(),
         }
     }
@@ -139,6 +139,8 @@ pub enum StreamError {
     ModuleNotNeeded,
     #[error("The stream's module has not been provided: {0}")]
     ModuleNotProvided(Hash),
+    #[error("The stream module could not be decoded from the database: {0}")]
+    ModuleDecodeError(parity_scale_codec::Error),
     #[error(
         "Attempted to provide module with different ID than the one needed \
         by the stream. Needed {needed} but got {provided}"
@@ -184,18 +186,18 @@ impl Stream {
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
-    pub async fn raw_set_module(&self, module_id: Hash) -> anyhow::Result<()> {
+    pub async fn raw_set_module(&self, module_def: LeafModuleDef) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         state
             .db
             .execute(
-                "update stream_state set module = ?, module_event_cursor = null where id = 1",
-                [module_id.as_bytes().to_vec()],
+                "update stream_state set module_def = ?, module_event_cursor = null where id = 1",
+                [module_def.encode()],
             )
             .await
             .context("error updating steam module and module event cursor")?;
         state.module_event_cursor = 0;
-        state.module_state = ModuleState::Unloaded(module_id);
+        state.module_state = ModuleState::Unloaded(module_def);
 
         Ok(())
     }
@@ -228,7 +230,7 @@ impl Stream {
         // Load the stream state from the database
         let row = db
             .query(
-                "select stream_id, module, params, module_event_cursor \
+                "select stream_id, module_def, module_event_cursor \
                 from stream_state where id=1",
                 (),
             )
@@ -243,35 +245,38 @@ impl Stream {
         let module;
         let module_event_cursor;
         if let Some(row) = row {
-            let (db_stream_id, db_module, db_module_event_cursor): (Hash, Hash, Option<i64>) = row
-                .parse_row()
-                .await
-                .context("error parsing stream state")?;
+            let (db_stream_id, module_def, db_module_event_cursor): (Hash, Vec<u8>, Option<i64>) =
+                row.parse_row()
+                    .await
+                    .context("error parsing stream state")?;
             if db_stream_id != id {
                 return Err(StreamError::IdMismatch {
                     expected_id: id,
                     database_id: db_stream_id,
                 });
             }
-            module = ModuleState::Unloaded(db_module);
+            module = ModuleState::Unloaded(
+                LeafModuleDef::decode(&mut &module_def[..])
+                    .map_err(StreamError::ModuleDecodeError)?,
+            );
             module_event_cursor = db_module_event_cursor.unwrap_or(0);
         } else {
-            let module_id = genesis.module.module_id_and_bytes().0;
+            let (_id, module_def) = genesis.module.module_id_and_bytes();
             // Initialize the stream state
             db.execute(
                 "insert into stream_state \
-                (id, creator, stream_id, module_id, module_event_cursor) values \
-                (1, :creator, :stream_id, :module, :params, null) ",
+                (id, creator, stream_id, module_def, module_event_cursor) values \
+                (1, :creator, :stream_id, :module_def, :params, null) ",
                 (
                     (":stream_id", id.as_bytes().to_vec()),
                     (":creator", genesis.creator.clone()),
-                    (":module", module_id.as_bytes().to_vec()),
+                    (":module_def", module_def),
                 ),
             )
             .await
             .context("error initializing stream state")?;
 
-            module = ModuleState::Unloaded(module_id);
+            module = ModuleState::Unloaded(genesis.module.clone());
             module_event_cursor = 0;
         };
 
@@ -305,7 +310,7 @@ impl Stream {
     }
 
     /// Get a subscription to the latest event index in the stream.
-    /// 
+    ///
     /// Every time new events are added to this stream, the new latest event will be sent to the
     /// receiver.
     pub async fn subscribe_latest_event(&self) -> async_channel::Receiver<i64> {
@@ -355,10 +360,10 @@ impl Stream {
     ///
     /// You must then call [`provide_module()`][Self::provide_module] with the module in order to
     /// allow the stream to continue processing.
-    pub async fn needs_module(&self) -> Option<blake3::Hash> {
+    pub async fn needs_module(&self) -> Option<LeafModuleDef> {
         let state = self.state.read().await;
-        match state.module_state {
-            ModuleState::Unloaded(hash) => Some(hash),
+        match &state.module_state {
+            ModuleState::Unloaded(module_def) => Some(module_def.clone()),
             _ => None,
         }
     }
@@ -371,8 +376,9 @@ impl Stream {
     ) -> Result<(), StreamError> {
         let mut state = self.state.write().await;
         match &state.module_state {
-            ModuleState::Unloaded(hash) => {
-                if module.id() == *hash {
+            ModuleState::Unloaded(module_def) => {
+                let needed_id = module_def.module_id_and_bytes().0;
+                if module.id() == needed_id {
                     // Make sure an `events` database is connected, which must be connected to the
                     // same database with the same virtual filesystem.
                     let files: Vec<String> = module_db
@@ -402,7 +408,7 @@ impl Stream {
                     Ok(())
                 } else {
                     Err(StreamError::InvalidModuleId {
-                        needed: *hash,
+                        needed: needed_id,
                         provided: module.id(),
                     })
                 }
@@ -415,7 +421,9 @@ impl Stream {
         module: &ModuleState,
     ) -> Result<(&LeafModule, &Connection), StreamError> {
         match module {
-            ModuleState::Unloaded(hash) => Err(StreamError::ModuleNotProvided(*hash)),
+            ModuleState::Unloaded(module_def) => Err(StreamError::ModuleNotProvided(
+                module_def.module_id_and_bytes().0,
+            )),
             ModuleState::Loaded { module, module_db } => Ok((module.as_ref(), module_db)),
         }
     }

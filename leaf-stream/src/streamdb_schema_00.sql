@@ -15,8 +15,8 @@ create table if not exists "stream_state" (
     "creator"               text not null,
     -- The ID of this stream
     "stream_id"             blob not null,
-    -- The ID of the current module
-    "module_id"             blob not null,
+    -- The encoded definition of the stream's current module
+    "module_def"             blob not null,
     -- The latest event that has been processed by the current module
     "module_event_cursor"   integer references events(id)
 )

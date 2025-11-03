@@ -18,14 +18,6 @@ create table if not exists "staged_wasm" (
     "timestamp" integer not null default (unixepoch())
 );
 
--- The list of modules used by streams
-create table if not exists "modules" (
-    -- The hash of the module definition
-    "hash"          blob not null primary key,
-    -- The encoded module definition
-    "definition"    blob not null
-)
-
 -- The list of streams
 create table if not exists "streams" (
     -- The stream ID
@@ -34,9 +26,9 @@ create table if not exists "streams" (
     "creator" text not null,
     -- The encoded genesis config of the stream.
     "genesis" blob not null,
-    -- ID of the module currently used by the stream
-    "current_module_id" blob not null references modules(hash),
+    -- ID of the WASM module needed by this stream, if any
+    "wasm_module_hash" blob references wasm_blobs(hash),
     -- The index of the latest event in the stream
     "latest_event" integer,
     unique (id, creator)
-);
+)
