@@ -12,7 +12,6 @@ use blake3::Hash;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use leaf_stream::{
     LeafModule, StreamGenesis,
-    encoding::Encodable,
     types::{Event, LeafModuleDef},
     validate_wasm,
 };
@@ -180,31 +179,17 @@ impl Storage {
     }
 
     /// Get a module from the database
-    pub async fn get_module(&self, module_id: Hash) -> anyhow::Result<Option<Arc<LeafModule>>> {
+    pub async fn get_module(
+        &self,
+        module_def: LeafModuleDef,
+    ) -> anyhow::Result<Option<Arc<LeafModule>>> {
         let modules = MODULES.upgradable_read().await;
+        let module_id = module_def.module_id_and_bytes().0;
         if let Some(module) = modules.get(&module_id) {
             return Ok(Some(module));
         }
 
-        let definition_bytes: Vec<Vec<u8>> = self
-            .db()
-            .await
-            .query(
-                "select definition from modules where hash = ?",
-                module_id.as_bytes().to_vec(),
-            )
-            .await?
-            .parse_rows()
-            .await?;
-        let Some(definition) = definition_bytes
-            .first()
-            .map(|x| LeafModuleDef::decode(&mut &x[..]))
-            .transpose()?
-        else {
-            return Ok(None);
-        };
-
-        let wasm = if let Some(id) = definition.wasm_module {
+        let wasm = if let Some(id) = module_def.wasm_module {
             let id = Hash::from_bytes(id);
             Some(
                 self.get_wasm_blob(id)
@@ -214,7 +199,7 @@ impl Storage {
         } else {
             None
         };
-        let module = Arc::new(LeafModule::new(definition, wasm.as_deref())?);
+        let module = Arc::new(LeafModule::new(module_def, wasm.as_deref())?);
 
         let mut modules = RwLockUpgradableReadGuard::upgrade(modules).await;
         modules.insert(module_id, module.clone());
@@ -222,37 +207,24 @@ impl Storage {
         Ok(Some(module))
     }
 
-    /// Add a module to the database
-    pub async fn add_module(&self, module_def: &LeafModuleDef) -> anyhow::Result<()> {
-        let (id, bytes) = module_def.module_id_and_bytes();
-        self.db()
-            .await
-            .execute(
-                "insert into modules (hash, definition) values (?, ?) on conflict ignore",
-                (id.as_bytes().to_vec(), bytes),
-            )
-            .await?;
-        Ok(())
-    }
-
     /// Create a new stream
     #[instrument(skip(self), err)]
     pub async fn create_stream(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
         let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
         let creator = genesis.creator.clone();
-        let (module_id, _) = genesis.module.module_id_and_bytes();
+        let (_id, module_def) = genesis.module.module_id_and_bytes();
         let stream = STREAMS.load(genesis).await?;
 
         self.db()
             .await
             .execute(
-                "insert into streams (id, creator, genesis, current_module) \
-                values (:id, :creator, :genesis, :current_module)",
+                "insert into streams (id, creator, genesis, module_def) \
+                values (:id, :creator, :genesis, :module_def)",
                 (
                     (":id", id.as_bytes().to_vec()),
                     (":creator", creator),
                     (":genesis", genesis_bytes),
-                    (":current_module", module_id.as_bytes().to_vec()),
+                    (":module_def", module_def),
                 ),
             )
             .await?;
@@ -299,17 +271,17 @@ impl Storage {
     /// This should be called after a module change has been made to the stream so that the database
     /// can avoid garbage collecting the new WASM module that it depends on.
     #[instrument(skip(self), err)]
-    pub async fn update_stream_current_module(
+    pub async fn update_stream_wasm_module(
         &self,
         stream: Hash,
-        current_module: Hash,
+        wasm_module_hash: Option<Hash>,
     ) -> anyhow::Result<()> {
         self.db()
             .await
             .execute(
-                "update streams set current_module = :module where id = :id",
+                "update streams set wasm_module_hash = :module where id = :id",
                 (
-                    (":module", current_module.as_bytes().to_vec()),
+                    (":module", wasm_module_hash.map(|x| x.as_bytes().to_vec())),
                     (":id", stream.as_bytes().to_vec()),
                 ),
             )
@@ -388,11 +360,8 @@ impl Storage {
                 delete from wasm_blobs where not exists (
                     select 1 from staged_wasm s where s.hash=wasm_blobs.hash
                         union
-                    select 1 from streams s where s.current_module=wasm_blobs.hash
+                    select 1 from streams s where s.wasm_module_hash=wasm_blobs.hash
                 ) returning hash;
-                delete from modules where not exists (
-                    select 1 from modules m where m.hash = streams.current_module_id
-                );
                 "#,
             )
             .await?;
@@ -442,6 +411,10 @@ impl Storage {
         let Some(bucket) = &*self.backup_bucket.read().await else {
             return Ok(());
         };
+
+        anyhow::bail!(
+            "TODO: s3 backup not implemented yet. Modules are not properly included in the archive yet"
+        );
 
         // List wasm modules in the bucket
         let modules_in_backup = bucket
@@ -585,11 +558,7 @@ impl Storage {
                 }
 
                 // Create and compress the event archive
-                let archive = EventArchive {
-                    genesis,
-                    events,
-                    module_id: Encodable(s.module_id().await),
-                };
+                let archive = EventArchive { genesis, events };
                 let archive_bytes = archive.encode();
                 let mut compressor = GzEncoder::new(Vec::new(), Compression::default());
                 compressor.write_all(&archive_bytes)?;
@@ -720,7 +689,8 @@ impl Storage {
 
                 // Set the module and catch it up
                 if is_last_range {
-                    s.raw_set_module(archive.module_id.0).await?;
+                    // FIXME： we need the module definition to be included here.
+                    // s.raw_set_module(archive.module_def).await?;
                 }
             }
         }
@@ -731,7 +701,7 @@ impl Storage {
 
 #[derive(Decode, Encode, Debug)]
 struct EventArchive {
-    module_id: Encodable<Hash>,
+    // FIXME： we need the module definition to be included here.
     genesis: Option<StreamGenesis>,
     events: Vec<Event>,
 }

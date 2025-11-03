@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use blake3::Hash;
-use leaf_stream::{LeafModule, Stream, StreamGenesis};
+use leaf_stream::{LeafModule, Stream, StreamGenesis, types::LeafModuleDef};
 use tokio::sync::RwLock;
 use weak_table::WeakValueHashMap;
 
@@ -53,10 +53,23 @@ impl Streams {
         stream.create_worker_task().await.map(tokio::spawn);
 
         // Load the stream's module and it's database
-        if let Some(module_id) = stream.needs_module().await {
-            let (module, module_db) = load_module(&stream_dir, module_id).await?;
+        if let Some(module_def) = stream.needs_module().await {
+            STORAGE
+                .update_stream_wasm_module(id, module_def.wasm_module.map(Hash::from_bytes))
+                .await?;
+            let (module, module_db) = load_module(&stream_dir, module_def).await?;
             stream.provide_module(module, module_db).await?;
         }
+
+        // Spawn a task that will watch the latest event in the stream and update the main database
+        let latest_event_rx = stream.subscribe_latest_event().await;
+        tokio::spawn(async move {
+            while let Ok(latest_event) = latest_event_rx.recv().await {
+                if let Err(e) = STORAGE.set_latest_event(id, latest_event).await {
+                    tracing::error!("Error updating latest event for stream in database: {e}");
+                }
+            }
+        });
 
         // Store the stream handle in the cache
         let handle = Arc::new(stream);
@@ -69,9 +82,10 @@ impl Streams {
 
 async fn load_module(
     stream_dir: &Path,
-    module_id: Hash,
+    module_def: LeafModuleDef,
 ) -> anyhow::Result<(Arc<LeafModule>, libsql::Connection)> {
-    let Some(module) = STORAGE.get_module(module_id).await? else {
+    let module_id = module_def.module_id_and_bytes().0;
+    let Some(module) = STORAGE.get_module(module_def).await? else {
         anyhow::bail!("Could not load module needed by stream: {}", module_id);
     };
     let module_db_path = stream_dir.join(format!("module_{}.db", module_id.to_hex().as_str()));
