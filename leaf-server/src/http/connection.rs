@@ -43,10 +43,10 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span_ = span.clone();
     socket.on(
         "wasm/has",
-        async move |TryData::<String>(hash_hex), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(hash_hex), ack: AckSender| {
             let result = async {
-                let hash_hex = hash_hex?;
-                let hash = Hash::from_hex(hash_hex)?;
+                let hash_bytes: [u8; 32] = hash_hex?.as_ref().try_into()?;
+                let hash = Hash::from_bytes(hash_bytes);
                 let has_module = STORAGE.has_wasm_blob(hash).await?;
                 anyhow::Ok(has_module)
             }
@@ -188,7 +188,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                         if socket_.connected() {
                             if let Err(e) = socket_.emit(
                                 "stream/subscription_response",
-                                &StreamQueryResp {
+                                &StreamSubscribeNotification {
                                     subscription_id: Encodable(subscription_id),
                                     response: event.map_err(|e| e.to_string()),
                                 }
@@ -295,7 +295,7 @@ struct StreamQueryArgs {
 }
 
 #[derive(Encode)]
-struct StreamQueryResp {
+struct StreamSubscribeNotification {
     subscription_id: Encodable<Ulid>,
     response: Result<SqlRows, String>,
 }
