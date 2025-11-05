@@ -476,16 +476,18 @@ impl Stream {
             for (id, user, payload) in events {
                 assert_eq!(id, state.module_event_cursor + 1);
 
-                // Setup the temporary `next_event` table to contain the next event to materialize.
+                // Setup the temporary `event` table to contain the next event to materialize.
                 module_db
-                    .execute("drop table if exists temp.next_event", ())
+                    .execute("drop table if exists temp.event", ())
                     .await?;
-                module_db.execute(
-                    r#"
-                        create temp table if not exists next_event as select (? as user, ? as payload)
+                module_db
+                    .execute(
+                        r#"
+                        create temp table if not exists event as select ? as use, ? as payload
                     "#,
-                    (user, payload),
-                ).await?;
+                        (user, payload),
+                    )
+                    .await?;
 
                 // Execute the materializer for the event
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
@@ -530,13 +532,13 @@ impl Stream {
         &self,
         events: Vec<IncomingEvent>,
     ) -> Result<Option<Hash>, StreamError> {
-        let mut state = self.state.write().await;
-        let event_count = events.len();
-
         // Make sure the current module is caught up
         self.raw_catch_up_module()
             .await
             .context("error catching up module")?;
+
+        let mut state = self.state.write().await;
+        let event_count = events.len();
 
         // NOTE: we use a write lock here because we are starting a transaction and need to make
         // sure other async tasks don't come and try to use this same database connection while the
@@ -548,16 +550,18 @@ impl Stream {
 
         let result = async {
             for IncomingEvent { user, payload } in events {
-                // Setup the temporary `next_event` table to contain the next event to authorize / materialize.
+                // Setup the temporary `event` table to contain the next event to authorize / materialize.
                 module_db
-                    .execute("drop table if exists temp.next_event", ())
+                    .execute("drop table if exists temp.event", ())
                     .await?;
-                module_db.execute(
-                    r#"
-                        create temp table if not exists next_event as select (? as user, ? as payload)
+                module_db
+                    .execute(
+                        r#"
+                        create temp table if not exists event as select ? as user, ? as payload
                     "#,
-                    (user, payload),
-                ).await?;
+                        (user, payload),
+                    )
+                    .await?;
 
                 // Execute the authorizer
                 module_db.authorizer(Some(Arc::new(module_authorize_authorizer)))?;
@@ -565,10 +569,12 @@ impl Stream {
                 module_db.authorizer(None)?;
 
                 // Insert the event into the events table
-                module_db.execute(
-                    "insert into events.events select (user, payload) from next_event)",
-                    ()
-                ).await?;
+                module_db
+                    .execute(
+                        "insert into events.events select null as id, user, payload from event",
+                        (),
+                    )
+                    .await?;
 
                 // Execute the materializer for the event
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
@@ -578,17 +584,23 @@ impl Stream {
                 // Increment the module event cursor
                 module_db
                     .execute(
-                        "update events.stream_state set module_event_cursor = ? where id = 1",
-                        [state.module_event_cursor],
+                        r#"
+                            update events.stream_state
+                            set module_event_cursor = module_event_cursor + 1
+                            where id = 1
+                        "#,
+                        (),
                     )
                     .await?;
             }
 
             anyhow::Ok(())
-        }.await;
+        }
+        .await;
 
         // Handle errors by rolling back the transaction
         if let Err(e) = result {
+            module_db.authorizer(None)?;
             module_db.execute("rollback", ()).await?;
             return Err(e.into());
         } else {
@@ -822,6 +834,34 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
         }),
     })?;
 
+    db.create_scalar_function(ScalarFunctionDef {
+        name: "unauthorized".to_string(),
+        num_args: -1,
+        deterministic: true,
+        innocuous: false,
+        direct_only: true,
+        callback: Arc::new(|values| {
+            anyhow::bail!(
+                "Event failed authorization: {}",
+                values
+                    .into_iter()
+                    .map(|x| match x {
+                        libsql::Value::Null => "NULL".to_string(),
+                        libsql::Value::Integer(i) => i.to_string(),
+                        libsql::Value::Real(r) => r.to_string(),
+                        libsql::Value::Text(t) => t.to_string(),
+                        libsql::Value::Blob(bytes) => bytes
+                            .iter()
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<String>>()
+                            .join(""),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }),
+    })?;
+
     Ok(())
 }
 
@@ -885,6 +925,12 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
         libsql::AuthAction::Read { .. } | libsql::AuthAction::Select => {
             libsql::Authorization::Allow
         }
+        libsql::AuthAction::Function { function_name } => match function_name {
+            "unauthorized" => libsql::Authorization::Allow,
+            "->>" => libsql::Authorization::Allow,
+            "->" => libsql::Authorization::Allow,
+            _ => libsql::Authorization::Deny,
+        },
         op => {
             tracing::warn!(
                 ?op,
