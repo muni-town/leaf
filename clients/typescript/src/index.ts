@@ -21,11 +21,13 @@ const f64 = enhanceCodec(
   Bytes(4),
   (n: number) => {
     let buffer = new ArrayBuffer(4);
+    console.log(buffer);
     let view = new DataView(buffer);
     view.setFloat64(0, n, true);
     return new Uint8Array(buffer);
   },
   (b) => {
+    console.log(b.buffer);
     let view = new DataView(b.buffer);
     return view.getFloat64(0, true);
   },
@@ -33,6 +35,39 @@ const f64 = enhanceCodec(
 
 export const Hash = enhanceCodec(Bytes(32), hex.decode, hex.encode);
 export const Ulid = enhanceCodec(Bytes(16), crockfordDecode, crockfordEncode);
+
+const LeafModuleQueryParamKind = Enum({
+  integer: _void,
+  real: _void,
+  text: _void,
+  blob: _void,
+  any: _void,
+});
+const LeafModuleQueryParamDef = Struct({
+  name: str,
+  kind: LeafModuleQueryParamKind,
+  optional: bool,
+});
+const LeafModuleQueryDef = Struct({
+  name: str,
+  sql: str,
+  params: Vector(LeafModuleQueryParamDef),
+  limits: Vector(_void),
+});
+const LeafModuleDef = Struct({
+  init_sql: str,
+  authorizer: str,
+  materializer: str,
+  queries: Vector(LeafModuleQueryDef),
+  wasm_hash: Option(Hash),
+});
+export type StreamGenesis = CodecType<typeof StreamGenesis>;
+const StreamGenesis = Struct({
+  stamp: Ulid,
+  creator: str,
+  module: LeafModuleDef,
+  strict_module_updates: bool,
+});
 
 const SqlValue = Enum({
   null: _void,
@@ -193,7 +228,7 @@ export class LeafClient {
   async hasModule(wasmId: string): Promise<boolean> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "wasm/has",
-      Hash.enc(wasmId),
+      Hash.enc(wasmId).buffer,
     );
     const resp = HasWasmResp.dec(data);
     if (!resp.success) {
@@ -202,18 +237,15 @@ export class LeafClient {
     return resp.value;
   }
 
-  async createStream(
-    ulid: string,
-    wasmId: string,
-    params: ArrayBuffer,
-  ): Promise<string> {
-    const data: Uint8Array = await this.socket.emitWithAck("stream/create", {
-      ulid,
-      module: wasmId,
-      params,
-    });
+  async createStream(genesis: StreamGenesis): Promise<string> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "stream/create",
+      StreamGenesis.enc(genesis).buffer,
+    );
+    console.log(data);
     const resp = Result(Hash, str).dec(data);
     if (!resp.success) {
+      console.error(resp);
       throw new Error(resp.value);
     }
     return resp.value;
@@ -222,25 +254,26 @@ export class LeafClient {
   /** Helper to create a stream from a WASM module at a given URL, avoiding uploading / downloading
    * the WASM if the module ID already exists on the server. */
   async createStreamFromModuleUrl(
-    ulid: string,
-    moduleId: string,
+    genesis: StreamGenesis,
     url: string,
-    params: ArrayBuffer,
   ): Promise<string> {
-    const hasModule = await this.hasModule(moduleId);
+    if (!genesis.module.wasm_hash)
+      throw "No WASM module specified in stream genesis";
+
+    const hasModule = await this.hasModule(genesis.module.wasm_hash);
 
     if (!hasModule) {
       const resp = await fetch(url);
       const data = await resp.blob();
       const buffer = await data.arrayBuffer();
       const uploadedId = await this.uploadModule(buffer);
-      if (uploadedId !== moduleId)
+      if (uploadedId !== genesis.module.wasm_hash)
         throw new Error(
-          `The module ID that was uploaded didn't match the expected module ID. Expected ${moduleId} got ${uploadedId}`,
+          `The module ID that was uploaded didn't match the expected module ID. Expected ${genesis.module.wasm_hash} got ${uploadedId}`,
         );
     }
 
-    return await this.createStream(ulid, moduleId, params);
+    return await this.createStream(genesis);
   }
 
   async sendEvent(streamId: string, event: IncomingEvent): Promise<void> {
@@ -250,7 +283,7 @@ export class LeafClient {
   async sendEvents(streamId: string, events: IncomingEvent[]): Promise<void> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/event_batch",
-      StreamEventBatchArgs.enc({ streamId, events }),
+      StreamEventBatchArgs.enc({ streamId, events }).buffer,
     );
     const resp = Result(_void, str).dec(data);
     if (!resp.success) {
@@ -266,7 +299,7 @@ export class LeafClient {
   ): Promise<() => Promise<void>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/subscribe",
-      StreamSubscribeArgs.enc({ streamId, query }),
+      StreamSubscribeArgs.enc({ streamId, query }).buffer,
     );
     const resp = Result(Ulid, str).dec(data);
     if (!resp.success) {
@@ -278,7 +311,7 @@ export class LeafClient {
     return async () => {
       const data: Uint8Array = await this.socket.emitWithAck(
         "stream/unsubscribe",
-        Ulid.enc(subId),
+        Ulid.enc(subId).buffer,
       );
       this.#querySubscriptions.delete(subId);
       const resp = Result(bool, str).dec(data);
@@ -298,7 +331,7 @@ export class LeafClient {
   async query(streamId: string, query: LeafQuery): Promise<SqlRows> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/fetch",
-      StreamQueryArgs.enc({ streamId, query }),
+      StreamQueryArgs.enc({ streamId, query }).buffer,
     );
     const resp = StreamQueryResp.dec(data);
     if (!resp.success) {

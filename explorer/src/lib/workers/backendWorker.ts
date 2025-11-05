@@ -185,7 +185,10 @@ if (isSharedWorker) {
 	connectMessagePort(globalThis);
 }
 
+const subscriptionBroadcast = new BroadcastChannel('leaf-events');
 function connectMessagePort(port: MessagePortApi) {
+	const unsubscribers: Map<string, () => Promise<void>> = new Map();
+
 	// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 	messagePortInterface<BackendInterface, {}>(port, {
 		async getProfile(did) {
@@ -217,8 +220,8 @@ function connectMessagePort(port: MessagePortApi) {
 		async logout() {
 			state.logout();
 		},
-		async sendEvent(streamId, payload) {
-			await state.leafClient?.sendEvent(streamId, payload);
+		async sendEvents(streamId, events) {
+			await state.leafClient?.sendEvents(streamId, events);
 		},
 		async hasModule(moduleId) {
 			return (await state.leafClient?.hasModule(moduleId)) || false;
@@ -226,30 +229,28 @@ function connectMessagePort(port: MessagePortApi) {
 		async uploadModule(buffer) {
 			return await state.leafClient!.uploadModule(buffer);
 		},
-		async createStream(moduleId: string, params: ArrayBuffer) {
+		async createStream(genesis) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
-			return await state.leafClient.createStream(ulid(), moduleId, params);
+			return await state.leafClient.createStream(genesis);
 		},
-		async subscribe(streamId) {
-			state.leafClient?.subscribe(streamId);
+		async subscribe(streamId, query) {
+			if (!state.leafClient) throw 'No leaf client';
+			const subId = ulid();
+			const unsub = await state.leafClient.subscribe(streamId, query, (resp) => {
+				subscriptionBroadcast.postMessage({ subId, resp });
+			});
+			unsubscribers.set(subId, unsub);
+
+			return subId;
 		},
-		async unsubscribe(streamId) {
-			state.leafClient?.unsubscribe(streamId);
+		async unsubscribe(subId) {
+			await unsubscribers.get(subId)?.();
+			unsubscribers.delete(subId);
 		},
-		async streamInfo(streamId) {
-			if (!state.leafClient) throw new Error('Leaf not connected');
-      console.log(state.leafClient);
-			return state.leafClient.streamInfo(streamId);
-		},
-		async fetchEvents(streamId, offset, limit) {
+		async query(streamId, query) {
 			if (!state.leafClient) throw 'Leaf client not initialized';
-			const events = (await state.leafClient?.fetchEvents(streamId, { offset, limit }))?.map(
-				(x) => ({
-					...x,
-					stream: streamId
-				})
-			);
-			return events;
+			const resp = await state.leafClient.query(streamId, query);
+			return resp;
 		},
 		async addClient(port) {
 			connectMessagePort(port);
@@ -301,7 +302,6 @@ async function createOauthClient(): Promise<OAuthClient> {
 	return workerOauthClient(clientMetadata);
 }
 
-const eventBroadcast = new BroadcastChannel('leaf-events');
 async function initializeLeafClient(client: LeafClient) {
 	status.leafConnected = false;
 	const url = state.leafUrl;
@@ -315,8 +315,5 @@ async function initializeLeafClient(client: LeafClient) {
 	});
 	client.on('authenticated', (did) => {
 		console.log('Leaf: authenticated as', did, url);
-	});
-	client.on('event', (event) => {
-		eventBroadcast.postMessage(event);
 	});
 }
