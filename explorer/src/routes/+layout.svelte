@@ -4,7 +4,7 @@
 	import { backend, backendStatus } from '$lib/workers';
 	import { onMount, setContext } from 'svelte';
 	import { page } from '$app/state';
-	import type { IncomingEvent } from '@muni-town/leaf-client';
+	import type { StreamGenesis } from '../../../clients/typescript/dist';
 
 	let leafUrl = $state(localStorage.getItem('leaf-url') || 'https://leaf-dev.muni.town');
 	onMount(() => {
@@ -15,7 +15,7 @@
 
 	const leafEventsChanel = new BroadcastChannel('leaf-events');
 	leafEventsChanel.onmessage = (ev) => {
-		const event: IncomingEvent = ev.data;
+		const event: any = ev.data;
 
 		leafEvents.push(
 			`sub ${event.idx}(${event.user}) - ${event.stream}\n    ${new TextDecoder().decode(event.payload)}`
@@ -52,7 +52,7 @@
 				window.location.href = '/';
 			})
 			.catch((e) => {
-                console.error(e);
+				console.error(e);
 				oauthCallbackError = e.toString();
 			});
 	});
@@ -114,10 +114,6 @@
 			<label class="flex items-center gap-2">
 				Stream ID
 				<input class="input" bind:value={streamId} />
-				<button class="btn" onclick={() => backend.subscribe(streamId)}>Subscribe</button>
-				<button class="btn" onclick={() => backend.unsubscribe(streamId)}
-					>Unsubscribe</button
-				>
 				<div class="grow"></div>
 				<button
 					class="btn"
@@ -128,17 +124,7 @@
 			</label>
 		</div>
 
-		<div class="flex min-h-0 min-w-0 shrink flex-row gap-3 px-5">
-			<div
-				class="border-accent bg-base-100 thin-scroll w-[24em] shrink overflow-y-auto shadow-md"
-			>
-				{@render children?.()}
-			</div>
-			<pre
-				class="bg-base-100 thin-scroll min-w-[20em] grow overflow-auto shadow-md">{leafEvents
-					.map((x) => x)
-					.join('\n')}</pre>
-		</div>
+		{@render children?.()}
 	{:else if oauthCallbackError}
 		<div class="flex h-full w-full grow items-center justify-center">
 			<div role="alert" class="alert alert-error">

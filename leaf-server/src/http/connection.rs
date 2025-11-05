@@ -14,6 +14,10 @@ use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 use ulid::Ulid;
 
+fn bytes<O: AsRef<[u8]> + Sync + Send + 'static>(o: O) -> bytes::Bytes {
+    bytes::Bytes::from_owner(o)
+}
+
 use crate::{error::LogError, storage::STORAGE};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
@@ -35,7 +39,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/upload"))
             .await;
 
-            ack.send(&Encodable(result.map(Encodable)).encode())
+            ack.send(&bytes(Encodable(result.map(Encodable)).encode()))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -53,7 +57,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/has"))
             .await;
 
-            ack.send(&Encodable(result).encode())
+            ack.send(&bytes(Encodable(result).encode()))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -81,7 +85,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
             .await;
 
-            ack.send(&Encodable(result.map(Encodable)).encode())
+            ack.send(&bytes(Encodable(result.map(Encodable)).encode()))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -127,7 +131,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/event"))
             .await;
 
-            ack.send(&Encodable(result).encode())
+            ack.send(&bytes(Encodable(result).encode()))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -211,7 +215,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/subscribe"))
             .await;
 
-            ack.send(&Encodable(result).encode())
+            ack.send(&bytes(Encodable(result).encode()))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -232,7 +236,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
             .await;
 
-            ack.send(&Encodable(result).encode())
+            ack.send(&bytes(Encodable(result).encode()))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -275,7 +279,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
             .await;
 
-            ack.send(&Encodable(result).encode())
+            ack.send(&bytes(Encodable(result).encode()))
                 .log_error("Internal error sending response")
                 .ok();
         },

@@ -1,7 +1,13 @@
 import type { ProfileViewDetailed } from '@atproto/api/dist/client/types/app/bsky/actor/defs';
 import { messagePortInterface, reactiveWorkerState } from './workerMessaging';
 import backendWorkerUrl from './backendWorker.ts?worker&url';
-import type { IncomingEvent, StreamGenesis } from '@muni-town/leaf-client';
+import type {
+	IncomingEvent,
+	LeafQuery,
+	LeafSubscribeQuery,
+	SqlRows,
+	StreamGenesis
+} from '@muni-town/leaf-client';
 
 // Force page reload when hot reloading this file to avoid confusion if the workers get mixed up.
 if (import.meta.hot) {
@@ -26,14 +32,13 @@ export type BackendInterface = {
 	logout(): Promise<void>;
 	oauthCallback(searchParams: string): Promise<void>;
 	getProfile(did?: string): Promise<ProfileViewDetailed | undefined>;
-	fetchEvents(streamId: string, offset: number, limit: number): Promise<IncomingEvent[]>;
+	query(streamId: string, query: LeafQuery): Promise<SqlRows>;
 	hasModule(moduleId: string): Promise<boolean>;
-	createStream(moduleId: string, params: ArrayBuffer): Promise<string>;
-	streamInfo(streamId: string): Promise<StreamGenesis>;
-	subscribe(streamId: string): Promise<void>;
-	unsubscribe(streamId: string): Promise<void>;
+	createStream(genesis: StreamGenesis): Promise<string>;
+	subscribe(streamId: string, query: LeafSubscribeQuery): Promise<string>;
+	unsubscribe(subId: string): Promise<void>;
 	uploadModule(buffer: ArrayBuffer): Promise<string>;
-	sendEvent(streamId: string, payload: ArrayBuffer): Promise<void>;
+	sendEvents(streamId: string, events: IncomingEvent[]): Promise<void>;
 	setLeafUrl(url: string): Promise<void>;
 	/** Adds a new message port connection to the backend that can call the backend interface. */
 	addClient(port: MessagePort): Promise<void>;

@@ -266,7 +266,7 @@ impl Stream {
             db.execute(
                 "insert into stream_state \
                 (id, creator, stream_id, module_def, module_event_cursor) values \
-                (1, :creator, :stream_id, :module_def, :params, null) ",
+                (1, :creator, :stream_id, :module_def, null) ",
                 (
                     (":stream_id", id.as_bytes().to_vec()),
                     (":creator", genesis.creator.clone()),
@@ -805,14 +805,14 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
     // A panic function that can be used to intentionally stop a transaction such as in the event
     // authorizer.
     db.create_scalar_function(ScalarFunctionDef {
-        name: "panic".to_string(),
+        name: "throw".to_string(),
         num_args: -1,
         deterministic: true,
         innocuous: false,
         direct_only: true,
         callback: Arc::new(|values| {
             anyhow::bail!(
-                "Panic from SQL: {}",
+                "Exception thrown from SQL: {}",
                 values
                     .into_iter()
                     .map(|x| format!("{:?}", x))
