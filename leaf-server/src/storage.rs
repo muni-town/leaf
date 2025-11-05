@@ -212,19 +212,19 @@ impl Storage {
     pub async fn create_stream(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
         let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
         let creator = genesis.creator.clone();
-        let (_id, module_def) = genesis.module.module_id_and_bytes();
+        let wasm_module_hash = genesis.module.wasm_module;
         let stream = STREAMS.load(genesis).await?;
 
         self.db()
             .await
             .execute(
-                "insert into streams (id, creator, genesis, module_def) \
-                values (:id, :creator, :genesis, :module_def)",
+                "insert into streams (id, creator, genesis, wasm_module_hash) \
+                values (:id, :creator, :genesis, :wasm_module_hash)",
                 (
                     (":id", id.as_bytes().to_vec()),
                     (":creator", creator),
                     (":genesis", genesis_bytes),
-                    (":module_def", module_def),
+                    (":wasm_module_hash", wasm_module_hash.map(|x| x.to_vec())),
                 ),
             )
             .await?;

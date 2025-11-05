@@ -2,12 +2,14 @@
 	import EventList from '$lib/components/EventList.svelte';
 	import CodeMirror from 'svelte-codemirror-editor';
 	import { sql as sqlLang } from '@codemirror/lang-sql';
+	import { json as jsonLang } from '@codemirror/lang-json';
 	import { oneDark as oneDarkTheme } from '@codemirror/theme-one-dark';
 
 	import { backend, backendStatus } from '$lib/workers';
 	import { getContext } from 'svelte';
 	import type { StreamGenesis } from '@muni-town/leaf-client';
 	import { ulid } from 'ulidx';
+	import { page } from '$app/state';
 
 	let loading = $state(false);
 
@@ -25,7 +27,7 @@
 	let moduleFileInput = $state(undefined) as undefined | FileList;
 
 	const tabs = ['Query', 'Create Stream'] as const;
-	let currentTab = $state('Create Stream') as (typeof tabs)[number];
+	let currentTab = $derived(page.params.tab || '' in tabs ? page.params.tab : 'Query');
 
 	let payload = $state('');
 
@@ -54,17 +56,21 @@
 		newStreamGenesis.creator = backendStatus.did;
 		streamId.value = await backend.createStream($state.snapshot(newStreamGenesis));
 	}
+
+	async function sendEvent() {
+		if (!backendStatus.did) return;
+		await backend.sendEvents(streamId.value, [
+			{ user: backendStatus.did, payload: new TextEncoder().encode(payload) }
+		]);
+	}
 </script>
 
 <div class="flex min-h-0 min-w-0 shrink flex-row gap-3 px-5">
 	<div class="border-accent bg-base-100 thin-scroll w-[24em] shrink overflow-y-auto shadow-md">
 		<div role="tablist" class="tabs tabs-border">
 			{#each tabs as tab}
-				<button
-					role="tab"
-					class="tab"
-					class:tab-active={currentTab == tab}
-					onclick={() => (currentTab = tab)}>{tab}</button
+				<a href={`#/${tab}`} role="tab" class="tab" class:tab-active={currentTab == tab}
+					>{tab}</a
 				>
 			{/each}
 		</div>
@@ -158,7 +164,19 @@
 
 	<div class="bg-base-100 thin-scroll min-w-[20em] grow overflow-auto shadow-md">
 		{#if currentTab == 'Query'}
-			<EventList />
+			<div class="flex h-full flex-col gap-3">
+				<h2 class="text-md m-2 flex items-center justify-between font-bold">
+					Payload <button class="btn btn-sm" onclick={sendEvent}>Send Event</button>
+				</h2>
+				<CodeMirror
+					lang={jsonLang()}
+					bind:value={payload}
+					lineNumbers={false}
+					theme={oneDarkTheme}
+					placeholder={`{"hello": "world"}`}
+				/>
+				<EventList />
+			</div>
 		{:else if currentTab == 'Create Stream'}
 			<div>
 				<h2 class="m-3 text-xl font-bold">Init SQL</h2>
@@ -180,7 +198,7 @@
 						To access the event that is being authorized you can query the <code
 							>user</code
 						>
-						and <code>payload</code> from the <code>next_event</code> table.
+						and <code>payload</code> from the <code>event</code> table.
 					</p>
 				</div>
 				<CodeMirror
@@ -192,12 +210,15 @@
 				/>
 				<h2 class="m-3 text-xl font-bold">Materializer SQL</h2>
 				<div class="m-3 gap-2 text-sm opacity-40">
-					<p>SQL used to authorize new events before the are accepted into the stream.</p>
+					<p>
+						SQL used to materialize new events after they have been accepted into the
+						stream.
+					</p>
 					<p>
 						To access the event that is being materialized you can query the <code
 							>user</code
 						>
-						and <code>payload</code> from the <code>next_event</code> table.
+						and <code>payload</code> from the <code>event</code> table.
 					</p>
 				</div>
 				<CodeMirror

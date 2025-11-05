@@ -128,7 +128,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
 
                 anyhow::Ok(())
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/event"))
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/event_batch"))
             .await;
 
             ack.send(&bytes(Encodable(result).encode()))
