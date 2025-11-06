@@ -444,8 +444,9 @@ impl Stream {
         // called twice.
         if state.module_event_cursor == 0 {
             module_db.authorizer(Some(Arc::new(module_init_authorizer)))?;
-            module_db.execute_batch(&module.def().init_sql).await?;
+            let init_result = module_db.execute_batch(&module.def().init_sql).await;
             module_db.authorizer(None)?;
+            init_result?;
         }
 
         assert!(
@@ -473,8 +474,8 @@ impl Stream {
         module_db.execute("begin immediate", ()).await?;
 
         let result = async {
-            for (id, user, payload) in events {
-                assert_eq!(id, state.module_event_cursor + 1);
+            for (i, (id, user, payload)) in events.into_iter().enumerate() {
+                assert_eq!(id, state.module_event_cursor + 1 + i as i64);
 
                 // Setup the temporary `event` table to contain the next event to materialize.
                 module_db
@@ -483,22 +484,23 @@ impl Stream {
                 module_db
                     .execute(
                         r#"
-                        create temp table if not exists event as select ? as use, ? as payload
-                    "#,
+                            create temp table if not exists event as select ? as user, ? as payload
+                        "#,
                         (user, payload),
                     )
                     .await?;
 
                 // Execute the materializer for the event
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
-                module_db.execute_batch(&module.def().materializer).await?;
+                let result = module_db.execute_batch(&module.def().materializer).await;
                 module_db.authorizer(None)?;
+                result?;
 
                 // Increment the event cursor
                 module_db
                     .execute(
                         "update events.stream_state set module_event_cursor = ? where id = 1",
-                        [state.module_event_cursor],
+                        [state.module_event_cursor + 1 + i as i64],
                     )
                     .await?;
             }
@@ -704,9 +706,9 @@ impl Stream {
 
         // Execute the query
         module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
-        let mut query_result = module_db
+        let query_result = module_db
             .query(
-                &module.def().materializer,
+                &query_def.sql,
                 query
                     .params
                     .into_iter()
@@ -723,8 +725,9 @@ impl Stream {
                     ])
                     .collect::<Vec<_>>(),
             )
-            .await?;
+            .await;
         module_db.authorizer(None)?;
+        let mut query_result = query_result?;
 
         // Convert the query result to our Leaf SqlRows type
         let column_count = query_result.column_count();

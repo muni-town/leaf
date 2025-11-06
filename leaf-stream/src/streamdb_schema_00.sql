@@ -10,7 +10,6 @@ create table if not exists "events" (
 create table if not exists "stream_state" (
     -- Primary key for this table, which is always 1
     "id"                    integer primary key check (id = 1),
-
     -- The ID of the user that created the stream
     "creator"               text not null,
     -- The ID of this stream

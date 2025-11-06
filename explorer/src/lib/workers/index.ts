@@ -3,6 +3,7 @@ import { messagePortInterface, reactiveWorkerState } from './workerMessaging';
 import backendWorkerUrl from './backendWorker.ts?worker&url';
 import type {
 	IncomingEvent,
+	LeafModuleDef,
 	LeafQuery,
 	LeafSubscribeQuery,
 	SqlRows,
@@ -35,6 +36,7 @@ export type BackendInterface = {
 	query(streamId: string, query: LeafQuery): Promise<SqlRows>;
 	hasModule(moduleId: string): Promise<boolean>;
 	createStream(genesis: StreamGenesis): Promise<string>;
+	updateModule(streamId: string, moduleDef: LeafModuleDef): Promise<void>;
 	subscribe(streamId: string, query: LeafSubscribeQuery): Promise<string>;
 	unsubscribe(subId: string): Promise<void>;
 	uploadModule(buffer: ArrayBuffer): Promise<string>;

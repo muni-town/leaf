@@ -7,7 +7,7 @@
 
 	import { backend, backendStatus } from '$lib/workers';
 	import { getContext } from 'svelte';
-	import type { StreamGenesis } from '@muni-town/leaf-client';
+	import type { LeafQuery, StreamGenesis } from '@muni-town/leaf-client';
 	import { ulid } from 'ulidx';
 	import { page } from '$app/state';
 
@@ -29,7 +29,10 @@
 	const tabs = ['Query', 'Create Stream'] as const;
 	let currentTab = $derived(page.params.tab || '' in tabs ? page.params.tab : 'Query');
 
-	let payload = $state('');
+	let payload = $state(localStorage.getItem('payload') || '');
+	$effect(() => {
+		localStorage.setItem('payload', payload);
+	});
 
 	const defaultGenesis: StreamGenesis = {
 		stamp: '',
@@ -50,11 +53,54 @@
 		localStorage.setItem('streamGenesis', JSON.stringify(newStreamGenesis || defaultGenesis));
 	});
 
+	const defaultQuery: LeafQuery = {
+		query_name: '',
+		requesting_user: '',
+		params: []
+	};
+	const storedQuery = localStorage.getItem('query');
+	let query: LeafQuery = $state(
+		JSON.parse(
+			storedQuery && storedQuery !== 'undefined' ? storedQuery : JSON.stringify(defaultQuery)
+		)
+	);
+	$effect(() => {
+		localStorage.setItem('query', JSON.stringify(query || defaultQuery));
+	});
+
 	async function createStream() {
 		if (!backendStatus.did) return;
 		newStreamGenesis.stamp = ulid();
 		newStreamGenesis.creator = backendStatus.did;
 		streamId.value = await backend.createStream($state.snapshot(newStreamGenesis));
+	}
+	async function updateModule() {
+		if (!backendStatus.did) return;
+		await backend.updateModule(streamId.value, $state.snapshot(newStreamGenesis.module));
+	}
+
+	async function runQuery() {
+		if (!backendStatus.did) return;
+		const q: typeof query = $state.snapshot(query) as any;
+		q.requesting_user = backendStatus.did;
+		for (const [_name, param] of q.params) {
+			// The forms don't assign the proper data types to non-text params, so we convert them here.
+			if (param.tag == 'blob') {
+				param.value = new TextEncoder().encode(param.value as any);
+			} else if (param.tag == 'integer') {
+				param.value = BigInt(param.value);
+			} else if (param.tag == 'real') {
+				param.value = parseFloat(param.value as any);
+			}
+		}
+		const result = await backend.query(streamId.value, q);
+		events.push(
+			JSON.stringify(
+				result,
+				(_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+				'  '
+			)
+		);
 	}
 
 	async function sendEvent() {
@@ -112,7 +158,53 @@
 				<button class="btn btn-outline" disabled={loading}>Send</button>
 			</form> -->
 
-			<!-- Upload Module -->
+			<form class="m-8 flex flex-col gap-2" onsubmit={runQuery}>
+				<h2 class="mb-4 text-xl font-bold">Query</h2>
+
+				Name
+				<input class="input" placeholder="query name" bind:value={query.query_name} />
+
+				<h3 class="flex items-center text-lg font-bold">
+					Params
+					<div class="grow"></div>
+					<button
+						class="btn"
+						type="button"
+						onclick={() => {
+							query.params.push([
+								'$param',
+								{
+									tag: 'text',
+									value: ''
+								}
+							]);
+						}}>+</button
+					>
+				</h3>
+
+				{#each query.params as [_name, value], i}
+					<div class="flex items-center gap-3">
+						<input class="input" bind:value={query.params[i][0]} placeholder="name" />
+						<select class="select" bind:value={query.params[i][1].tag}>
+							<option selected value="">Any</option>
+							<option value={{ tag: 'integer', value: undefined }}>Integer</option>
+							<option value={{ tag: 'real', value: undefined }}>Real</option>
+							<option value={{ tag: 'text', value: undefined }}>Text</option>
+							<option value={{ tag: 'blob', value: undefined }}>Blob</option>
+						</select>
+						<input class="input" bind:value={value.value} />
+						<button
+							type="button"
+							onclick={() => query.params.splice(i, 1)}
+							class="btn btn-sm">X</button
+						>
+					</div>
+				{/each}
+
+				<button type="submit" class="btn btn-outline">Submit</button>
+			</form>
+
+			<!-- Upload WASM -->
 			<form
 				class="m-8 flex flex-col gap-2"
 				onsubmit={async () => {
@@ -130,13 +222,12 @@
 					loading = false;
 				}}
 			>
-				<h2 class="mb-4 text-xl font-bold">Create Module</h2>
-				Module
+				<h2 class="mb-4 text-xl font-bold">Upload WASM</h2>
 				<input class="file-input" bind:files={moduleFileInput} type="file" accept=".wasm" />
 				<button class="btn btn-outline" disabled={loading}>Upload</button>
 			</form>
 
-			<!-- Has Module -->
+			<!-- Has WASM -->
 			<form
 				class="m-8 flex flex-col gap-2"
 				onsubmit={async () => {
@@ -152,13 +243,15 @@
 					loading = false;
 				}}
 			>
-				<h2 class="mb-4 text-xl font-bold">Has Module</h2>
-				Module
-				<input class="input w-full" bind:value={moduleId} />
+				<h2 class="mb-4 text-xl font-bold">Has WASM</h2>
+				<input class="input w-full" bind:value={moduleId} placeholder="wasm hash" />
 				<button class="btn btn-outline" disabled={loading}>Check</button>
 			</form>
 		{:else if currentTab == 'Create Stream'}
-			<button class="btn m-3 w-40" onclick={createStream}>Create Stream</button>
+			<div class="m-3 flex flex-col gap-2">
+				<button class="btn w-40" onclick={createStream}>Create Stream</button>
+				<button class="btn w-40" onclick={updateModule}>Update Module</button>
+			</div>
 		{/if}
 	</div>
 

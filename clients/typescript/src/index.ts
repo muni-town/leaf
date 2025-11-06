@@ -54,6 +54,7 @@ const LeafModuleQueryDef = Struct({
   params: Vector(LeafModuleQueryParamDef),
   limits: Vector(_void),
 });
+export type LeafModuleDef = CodecType<typeof LeafModuleDef>;
 const LeafModuleDef = Struct({
   init_sql: str,
   authorizer: str,
@@ -96,6 +97,9 @@ const LeafQuery = Struct({
   query_name: str,
   requesting_user: str,
   params: Vector(Tuple(str, SqlValue)),
+  start: Option(i64),
+  end: Option(i64),
+  limit: Option(i64),
 });
 
 const StreamEventBatchArgs = Struct({
@@ -213,7 +217,7 @@ export class LeafClient {
     ) as any;
   }
 
-  async uploadModule(wasm_data: ArrayBuffer): Promise<string> {
+  async uploadWasm(wasm_data: ArrayBuffer): Promise<string> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "wasm/upload",
       wasm_data,
@@ -225,7 +229,7 @@ export class LeafClient {
     return resp.value;
   }
 
-  async hasModule(wasmId: string): Promise<boolean> {
+  async hasWasm(wasmId: string): Promise<boolean> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "wasm/has",
       Hash.enc(wasmId).buffer,
@@ -251,6 +255,26 @@ export class LeafClient {
     return resp.value;
   }
 
+  async updateModule(
+    streamId: string,
+    moduleDef: LeafModuleDef,
+  ): Promise<void> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "stream/update_module",
+      Struct({
+        streamId: Hash,
+        moduleDef: LeafModuleDef,
+      }).enc({ streamId, moduleDef }).buffer,
+    );
+    console.log(data);
+    const resp = Result(_void, str).dec(data);
+    if (!resp.success) {
+      console.error(resp);
+      throw new Error(resp.value);
+    }
+    return resp.value;
+  }
+
   /** Helper to create a stream from a WASM module at a given URL, avoiding uploading / downloading
    * the WASM if the module ID already exists on the server. */
   async createStreamFromModuleUrl(
@@ -260,13 +284,13 @@ export class LeafClient {
     if (!genesis.module.wasm_hash)
       throw "No WASM module specified in stream genesis";
 
-    const hasModule = await this.hasModule(genesis.module.wasm_hash);
+    const hasModule = await this.hasWasm(genesis.module.wasm_hash);
 
     if (!hasModule) {
       const resp = await fetch(url);
       const data = await resp.blob();
       const buffer = await data.arrayBuffer();
-      const uploadedId = await this.uploadModule(buffer);
+      const uploadedId = await this.uploadWasm(buffer);
       if (uploadedId !== genesis.module.wasm_hash)
         throw new Error(
           `The module ID that was uploaded didn't match the expected module ID. Expected ${genesis.module.wasm_hash} got ${uploadedId}`,
@@ -330,7 +354,7 @@ export class LeafClient {
 
   async query(streamId: string, query: LeafQuery): Promise<SqlRows> {
     const data: Uint8Array = await this.socket.emitWithAck(
-      "stream/fetch",
+      "stream/query",
       StreamQueryArgs.enc({ streamId, query }).buffer,
     );
     const resp = StreamQueryResp.dec(data);
