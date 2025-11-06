@@ -78,9 +78,35 @@ impl Streams {
         // Return the stream handle
         Ok(handle)
     }
+
+    pub async fn update_module(
+        &self,
+        stream: Arc<Stream>,
+        module_def: LeafModuleDef,
+    ) -> anyhow::Result<()> {
+        let data_dir = STORAGE.data_dir()?;
+        let stream_dir = data_dir.join("streams").join(stream.id().to_hex().as_str());
+
+        let wasm_hash = module_def.wasm_module.map(Hash::from_bytes);
+        if let Some(hash) = wasm_hash
+            && !STORAGE.has_wasm_blob(hash).await?
+        {
+            anyhow::bail!("WASM module not found and must be uploaded first: {hash}");
+        }
+        stream.raw_set_module(module_def.clone()).await?;
+
+        let (module, db) = load_module(&stream_dir, module_def).await?;
+        stream.provide_module(module, db).await?;
+
+        STORAGE
+            .update_stream_wasm_module(stream.id(), wasm_hash)
+            .await?;
+
+        Ok(())
+    }
 }
 
-async fn load_module(
+pub async fn load_module(
     stream_dir: &Path,
     module_def: LeafModuleDef,
 ) -> anyhow::Result<(Arc<LeafModule>, libsql::Connection)> {

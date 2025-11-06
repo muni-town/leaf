@@ -116,6 +116,7 @@ pub struct LeafQuery {
     pub requesting_user: String,
     pub params: Vec<(String, SqlValue)>,
     pub start: Option<i64>,
+    pub end: Option<i64>,
     pub limit: Option<i64>,
 }
 
@@ -131,6 +132,7 @@ pub struct LeafSubscribeQuery {
     pub requesting_user: String,
     pub params: Vec<(String, SqlValue)>,
     pub start: Option<i64>,
+    pub end: Option<i64>,
     pub batch_size: Option<i64>,
 }
 
@@ -147,6 +149,7 @@ impl LeafSubscribeQuery {
                     .map(|x| x.max(latest_event))
                     .unwrap_or(latest_event),
             ),
+            end: self.end,
             limit: self.batch_size,
         }
     }

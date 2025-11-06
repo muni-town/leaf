@@ -6,7 +6,7 @@ use futures::future::{Either, select};
 use leaf_stream::{
     StreamGenesis,
     encoding::Encodable,
-    types::{IncomingEvent, LeafQuery, LeafSubscribeQuery, SqlRows},
+    types::{IncomingEvent, LeafModuleDef, LeafQuery, LeafSubscribeQuery, SqlRows},
 };
 use parity_scale_codec::{Decode, Encode};
 use socketioxide::extract::{AckSender, SocketRef, TryData};
@@ -18,7 +18,7 @@ fn bytes<O: AsRef<[u8]> + Sync + Send + 'static>(o: O) -> bytes::Bytes {
     bytes::Bytes::from_owner(o)
 }
 
-use crate::{error::LogError, storage::STORAGE};
+use crate::{error::LogError, storage::STORAGE, streams::STREAMS};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let span = Span::current();
@@ -92,6 +92,45 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     );
 
     let span_ = span.clone();
+    let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/update_module",
+        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+            let result = async {
+                // Create the stream
+                let input = data?;
+                let StreamUpdateModuleArgs {
+                    stream_id,
+                    module_def,
+                } = StreamUpdateModuleArgs::decode(&mut &input[..])?;
+                let stream_id = stream_id.0;
+
+                let open_streams = open_streams_.upgradable_read().await;
+                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                    stream.clone()
+                } else {
+                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
+                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
+                    };
+                    let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
+                    open_streams.insert(stream_id, stream.clone());
+                    stream
+                };
+
+                STREAMS.update_module(stream, module_def).await?;
+
+                anyhow::Ok(())
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/update_module"))
+            .await;
+
+            ack.send(&bytes(Encodable(result).encode()))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
     let did_ = did.clone();
     let open_streams_ = open_streams.clone();
     socket.on(
@@ -112,7 +151,6 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 }
 
                 let open_streams = open_streams_.upgradable_read().await;
-
                 let stream = if let Some(stream) = open_streams.get(&stream_id) {
                     stream.clone()
                 } else {
@@ -276,7 +314,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
 
                 anyhow::Ok(response)
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/query"))
             .await;
 
             ack.send(&bytes(Encodable(result).encode()))
@@ -284,6 +322,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 .ok();
         },
     );
+}
+
+#[derive(Decode)]
+struct StreamUpdateModuleArgs {
+    stream_id: Encodable<Hash>,
+    module_def: LeafModuleDef,
 }
 
 #[derive(Decode)]

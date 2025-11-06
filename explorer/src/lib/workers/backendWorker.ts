@@ -224,14 +224,18 @@ function connectMessagePort(port: MessagePortApi) {
 			await state.leafClient?.sendEvents(streamId, events);
 		},
 		async hasModule(moduleId) {
-			return (await state.leafClient?.hasModule(moduleId)) || false;
+			return (await state.leafClient?.hasWasm(moduleId)) || false;
 		},
 		async uploadModule(buffer) {
-			return await state.leafClient!.uploadModule(buffer);
+			return await state.leafClient!.uploadWasm(buffer);
 		},
 		async createStream(genesis) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
 			return await state.leafClient.createStream(genesis);
+		},
+		async updateModule(streamId, moduleDef) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			await state.leafClient.updateModule(streamId, moduleDef);
 		},
 		async subscribe(streamId, query) {
 			if (!state.leafClient) throw 'No leaf client';
@@ -249,6 +253,7 @@ function connectMessagePort(port: MessagePortApi) {
 		},
 		async query(streamId, query) {
 			if (!state.leafClient) throw 'Leaf client not initialized';
+			console.log('Query', query);
 			const resp = await state.leafClient.query(streamId, query);
 			return resp;
 		},
