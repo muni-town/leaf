@@ -68,7 +68,7 @@ impl Decode for Encodable<blake3::Hash> {
     }
 }
 
-impl<V: Encode> Encode for Encodable<Result<V, anyhow::Error>> {
+impl<V: Encode, D: std::fmt::Display> Encode for Encodable<Result<V, D>> {
     fn size_hint(&self) -> usize {
         match &self.0 {
             Ok(v) => Ok::<_, String>(v).size_hint(),

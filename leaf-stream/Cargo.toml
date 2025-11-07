@@ -42,3 +42,4 @@ wasmtime = { version = "36.0.2", optional = true, features = [
 async-channel = "2.5.0"
 async-lock = "3.4.1"
 futures = "0.3.31"
+regex = "1.12.2"

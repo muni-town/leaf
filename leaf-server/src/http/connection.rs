@@ -20,7 +20,7 @@ fn bytes<O: AsRef<[u8]> + Sync + Send + 'static>(o: O) -> bytes::Bytes {
 
 use crate::{error::LogError, storage::STORAGE, streams::STREAMS};
 
-pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
+pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let span = Span::current();
 
     let open_streams = Arc::new(RwLock::new(HashMap::new()));
@@ -32,6 +32,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
         "wasm/upload",
         async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
             let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can upload WASM");
+                };
                 let data = data?;
                 let hash = STORAGE.upload_wasm(&did_, data.to_vec()).await?;
                 anyhow::Ok(hash)
@@ -70,6 +73,10 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
         "stream/create",
         async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
             let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can create_streams");
+                };
+
                 // Create the stream
                 let input = data?;
                 let genesis = StreamGenesis::decode(&mut &input[..])?;
@@ -92,11 +99,16 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     );
 
     let span_ = span.clone();
+    let did_ = did.clone();
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/update_module",
         async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
-            let result = async {
+            let result = async move {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only the stream creator can update its module");
+                };
+
                 // Create the stream
                 let input = data?;
                 let StreamUpdateModuleArgs {
@@ -116,6 +128,10 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                     open_streams.insert(stream_id, stream.clone());
                     stream
                 };
+
+                if stream.genesis().creator != did_ {
+                    anyhow::bail!("Only the stream creator can update its module");
+                }
 
                 STREAMS.update_module(stream, module_def).await?;
 
@@ -137,6 +153,10 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
         "stream/event_batch",
         async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
             let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can send events");
+                };
+
                 let bytes = data?;
                 let request = StreamEventBatchArgs::decode(&mut &bytes[..])?;
                 let stream_id = request.stream_id.0;
@@ -174,6 +194,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                 .ok();
         },
     );
+
+    // TODO: right now there's a weird situation where, even if you get an unauthorized error when
+    // subscribing to a query, it will just keep returning a new unauthorized result every time a
+    // new event comes in, which gives you info about the frequency of events and lets you leech
+    // server resources a bit. Not sure if we need to adjust that or not yet. Rate limiting would
+    // probably be good.
 
     let span_ = span.clone();
     let did_ = did.clone();

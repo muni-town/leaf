@@ -95,7 +95,7 @@ const IncomingEvent = Struct({
 export type LeafQuery = CodecType<typeof LeafQuery>;
 const LeafQuery = Struct({
   query_name: str,
-  requesting_user: str,
+  requesting_user: Option(str),
   params: Vector(Tuple(str, SqlValue)),
   start: Option(i64),
   limit: Option(i64),
@@ -134,7 +134,7 @@ const HasWasmResp = Result(bool, str);
 type EventMap = {
   connect: () => void;
   disconnect: () => void;
-  authenticated: (did: string) => void;
+  authenticated: (did?: string) => void;
   error: (error: string) => void;
 };
 
@@ -163,11 +163,11 @@ export class LeafClient {
    * });
    * ```
    */
-  constructor(url: string, authenticator: () => Promise<string>) {
+  constructor(url: string, authenticator?: () => Promise<string>) {
     this.socket = io(url, {
       parser,
       async auth(cb) {
-        const token = await authenticator();
+        const token = authenticator ? await authenticator() : undefined;
         cb({ token });
       },
     });
@@ -177,7 +177,7 @@ export class LeafClient {
       this.#emit("connect");
     });
     this.socket.on("disconnect", () => this.#emit("disconnect"));
-    this.socket.on("authenticated", (data: { did: string }) => {
+    this.socket.on("authenticated", (data: { did?: string }) => {
       this.#emit("authenticated", data.did);
     });
     this.socket.on("error", (error) => {
@@ -185,9 +185,7 @@ export class LeafClient {
     });
     this.socket.on("stream/subscription_response", (data: Uint8Array) => {
       const notification = StreamSubscribeNotification.dec(data);
-      console.log('notif', notification);
       const sub = this.#querySubscriptions.get(notification.subscription_id);
-      console.log('sub', sub);
       if (sub) {
         sub(notification.response);
       }
@@ -319,7 +317,6 @@ export class LeafClient {
       StreamSubscribeArgs.enc({ streamId, query }).buffer,
     );
     const resp = Result(Ulid, str).dec(data);
-    console.log('sub resp', resp)
     if (!resp.success) {
       throw new Error(resp.value);
     }

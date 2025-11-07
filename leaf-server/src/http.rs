@@ -80,9 +80,11 @@ pub static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::ne
 async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
     // Get the auth token from incomming connection
     let did = async move {
-        let token = get_token(&data)?;
+        let Some(token) = get_token(&data).ok() else {
+            return Ok(None);
+        };
         let did = verify_auth_token(token).await?;
-        anyhow::Ok(did)
+        anyhow::Ok(Some(did))
     }
     .await;
     let did = match did {
@@ -98,9 +100,12 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
         }
     };
 
-    tracing::info!(%did, "Successfully authenticated user");
+    tracing::info!(?did, "Authenticated user");
     let span = Span::current();
-    span.set_attribute("did", did.clone());
+    span.set_attribute("anonymous", did.is_none());
+    if let Some(did) = &did {
+        span.set_attribute("did", did.clone());
+    }
 
     // Send authenticated message to client
     socket

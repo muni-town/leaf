@@ -397,6 +397,17 @@
 								>Delete Query</button
 							>
 						</div>
+						<div class="m-3 gap-2 text-sm opacity-40">
+							<p>
+								SQL used to return the query results.
+							</p>
+							<p>
+								To access the user that is making the query you can use the <code
+								>$requesting_user</code > placeholder, as well as and
+								<code>$start</code> and <code>$limit</code> in order to limit
+								results based on the event index and count.
+							</p>
+						</div>
 						<CodeMirror
 							lang={sqlLang()}
 							bind:value={query.sql}

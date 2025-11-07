@@ -113,7 +113,7 @@ pub struct IncomingEvent<Payload = Vec<u8>> {
 #[derive(Decode, Encode, Debug, Clone, Hash, Eq, PartialEq)]
 pub struct LeafQuery {
     pub query_name: String,
-    pub requesting_user: String,
+    pub requesting_user: Option<String>,
     pub params: Vec<(String, SqlValue)>,
     pub start: Option<i64>,
     pub limit: Option<i64>,

@@ -1,6 +1,6 @@
 use std::{
     ops::{Bound, RangeBounds},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use anyhow::Context;
@@ -13,6 +13,7 @@ use leaf_stream_types::{
 use leaf_utils::convert::*;
 use libsql::{AuthAction, Authorization, Connection, ScalarFunctionDef};
 use parity_scale_codec::Encode;
+use regex::Regex;
 use tracing::instrument;
 use ulid::Ulid;
 
@@ -30,6 +31,9 @@ pub use blake3;
 pub use leaf_stream_types as types;
 pub use libsql;
 pub use ulid;
+
+static SQL_COMMENT_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"--.*$|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/").unwrap());
 
 /// The genesis configuration of an event stream.
 #[derive(Encode, Decode, Debug, Clone)]
@@ -127,6 +131,8 @@ impl std::fmt::Debug for ModuleState {
 pub enum StreamError {
     #[error("LibSQL error: {0}")]
     Libsql(#[from] libsql::Error),
+    #[error("Query does not contain any SQL statements")]
+    EmptyQuery,
     #[error(
         "The opened database is for a stream with a different ID. \
         The expected ID was {expected_id} but the ID in the database was {database_id}."
@@ -701,47 +707,95 @@ impl Stream {
         // Make sure the query is valid for it's definition
         query_def.validate_query(&query)?;
 
-        // Execute the query
-        module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
-        let query_result = module_db
-            .query(
-                &query_def.sql,
-                query
-                    .params
-                    .into_iter()
-                    .map(|(k, v)| (format!("${k}"), leaf_sql_value_to_libsql(v)))
-                    .chain([
-                        (
-                            "$start".to_string(),
-                            libsql::Value::Integer(query.start.unwrap_or(1)),
-                        ),
-                        (
-                            "$limit".to_string(),
-                            libsql::Value::Integer(query.limit.unwrap_or(100)),
-                        ),
-                    ])
-                    .collect::<Vec<_>>(),
-            )
-            .await;
-        module_db.authorizer(None)?;
-        let mut query_result = query_result?;
+        // Start a new read transaction
+        module_db.execute("begin deferred", ()).await?;
 
-        // Convert the query result to our Leaf SqlRows type
-        let column_count = query_result.column_count();
-        let column_names = (0..column_count)
-            .map(|i| query_result.column_name(i).unwrap_or("").to_string())
+        // TODO: replace this with a less naïve statement splitter
+        let sql_statements = SQL_COMMENT_REGEX.replace_all(&query_def.sql, "");
+        let sql_statements = sql_statements
+            .split(";")
+            .filter(|x| !x.is_empty())
             .collect::<Vec<_>>();
-        let mut rows = Vec::new();
-        while let Some(row) = query_result.next().await? {
-            rows.push(SqlRow {
-                values: (0..column_count)
-                    .map(|i| row.get_value(i).map(libsql_value_to_leaf))
-                    .collect::<Result<Vec<_>, _>>()?,
-            })
+
+        // Execute the query statements
+        let mut query_result = None;
+        for statement in sql_statements {
+            module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
+            let r = module_db
+                .query(
+                    statement,
+                    query
+                        .params
+                        .clone()
+                        .into_iter()
+                        .map(|(k, v)| (format!("${k}"), leaf_sql_value_to_libsql(v)))
+                        .chain([
+                            (
+                                "$start".to_string(),
+                                libsql::Value::Integer(query.start.unwrap_or(1)),
+                            ),
+                            (
+                                "$limit".to_string(),
+                                libsql::Value::Integer(query.limit.unwrap_or(100)),
+                            ),
+                            (
+                                "$requesting_user".to_string(),
+                                match query.requesting_user.clone() {
+                                    Some(t) => libsql::Value::Text(t),
+                                    None => libsql::Value::Null,
+                                },
+                            ),
+                        ])
+                        .collect::<Vec<_>>(),
+                )
+                .await;
+            module_db.authorizer(None)?;
+
+            match r {
+                Ok(mut r) => {
+                    let parsed = async {
+                        // Convert the query result to our Leaf SqlRows type
+                        let column_count = r.column_count();
+                        let column_names = (0..column_count)
+                            .map(|i| r.column_name(i).unwrap_or("").to_string())
+                            .collect::<Vec<_>>();
+                        let mut rows = Vec::new();
+                        while let Some(row) = r.next().await? {
+                            rows.push(SqlRow {
+                                values: (0..column_count)
+                                    .map(|i| row.get_value(i).map(libsql_value_to_leaf))
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            })
+                        }
+                        Ok::<_, libsql::Error>(Some(SqlRows { rows, column_names }))
+                    };
+                    match parsed.await {
+                        // NOTE: only the last query result will be kept and returned. Having
+                        // multiple statements, though, allows you to do read authorization more
+                        // easily.
+                        Ok(result) => query_result = result,
+                        Err(e) => {
+                            module_db.execute("commit", ()).await?;
+                            return Err(e.into());
+                        }
+                    }
+                }
+                Err(e) => {
+                    module_db.execute("commit", ()).await?;
+                    return Err(e.into());
+                }
+            }
         }
 
+        let Some(query_result) = query_result else {
+            return Err(StreamError::EmptyQuery);
+        };
+
+        // Finish the read transaction
+        module_db.execute("commit", ()).await?;
+
         // Return the result
-        Ok(SqlRows { rows, column_names })
+        Ok(query_result)
     }
 
     /// This function returns a future that must be awaited on in order for subscriptions to the
