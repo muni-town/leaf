@@ -7,8 +7,8 @@ use anyhow::Context;
 use async_lock::{Mutex, RwLock};
 use blake3::Hash;
 use leaf_stream_types::{
-    Decode, Event, IncomingEvent, LeafModuleDef, LeafQuery, LeafQueryReponse, LeafSubscribeQuery,
-    QueryValidationError, SqlRow, SqlRows, SqlValue,
+    Decode, Event, IncomingEvent, LeafModuleDef, LeafQuery, LeafQueryReponse, QueryValidationError,
+    SqlRow, SqlRows, SqlValue,
 };
 use leaf_utils::convert::*;
 use libsql::{AuthAction, Authorization, Connection, ScalarFunctionDef};
@@ -93,7 +93,7 @@ enum WorkerMessage {
 #[derive(Debug, Clone)]
 struct ActiveSubscription {
     pub sub_id: Ulid,
-    pub subscription_query: LeafSubscribeQuery,
+    pub subscription_query: LeafQuery,
     pub latest_event: i64,
     pub result_sender: SubscriptionResultSender,
 }
@@ -324,10 +324,7 @@ impl Stream {
     }
 
     /// Subscribe to the result of a leaf query.
-    pub async fn subscribe(
-        &self,
-        subscription_query: LeafSubscribeQuery,
-    ) -> SubscriptionResultReceiver {
+    pub async fn subscribe(&self, subscription_query: LeafQuery) -> SubscriptionResultReceiver {
         let state = self.state.read().await;
         let mut subscriptions = state.query_subscriptions.lock().await;
 
@@ -780,9 +777,12 @@ impl Stream {
                 let mut query_subscriptions = query_subscriptions.lock().await;
                 let mut latest_event_subscriptions = latest_event_subscriptions.lock().await;
 
+                // Clean up any close subscriptions
+                query_subscriptions.retain(|x| !x.result_sender.is_closed());
+                latest_event_subscriptions.retain(|x| !x.is_closed());
+
                 let subs = match message {
                     WorkerMessage::NewEvents { latest_event } => {
-                        latest_event_subscriptions.retain(|x| !x.is_closed());
                         for sub in &*latest_event_subscriptions {
                             sub.try_send(latest_event).ok();
                         }
@@ -795,20 +795,27 @@ impl Stream {
                         .collect::<Vec<_>>(),
                 };
 
+                let stream_latest_event = this.state.read().await.latest_event;
                 for sub in subs {
-                    let query = sub.subscription_query.to_query(sub.latest_event);
-                    let query_last_event = query.last_event();
-                    let result = this.query(query).await;
-                    sub.result_sender.try_send(result).unwrap();
+                    let query = sub
+                        .subscription_query
+                        .update_for_subscription(sub.latest_event + 1);
+                    let query_last_event = query
+                        .last_event()
+                        .map(|x| x.min(stream_latest_event))
+                        .unwrap_or(stream_latest_event);
 
-                    let stream_latest_event = this.state.read().await.latest_event;
-                    if query_last_event
-                        .map(|l| l < stream_latest_event)
-                        .unwrap_or(false)
-                    {
+                    let result = this.query(query).await;
+                    let is_empty = result.as_ref().map(|x| x.rows.is_empty()).unwrap_or(false);
+
+                    if !is_empty {
+                        sub.result_sender.try_send(result).ok();
+                    }
+
+                    if query_last_event < stream_latest_event {
                         sender.try_send(WorkerMessage::NeedsUpdate(sub.sub_id)).ok();
                     }
-                    sub.latest_event = query_last_event.unwrap_or(stream_latest_event);
+                    sub.latest_event = query_last_event;
                 }
             }
         })
@@ -929,9 +936,7 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
             libsql::Authorization::Allow
         }
         libsql::AuthAction::Function { function_name } => match function_name {
-            "unauthorized" => libsql::Authorization::Allow,
-            "->>" => libsql::Authorization::Allow,
-            "->" => libsql::Authorization::Allow,
+            "unauthorized" | "coalesce" | "->>" | "->" => libsql::Authorization::Allow,
             _ => libsql::Authorization::Deny,
         },
         op => {

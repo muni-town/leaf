@@ -5,7 +5,6 @@ import type {
 	IncomingEvent,
 	LeafModuleDef,
 	LeafQuery,
-	LeafSubscribeQuery,
 	SqlRows,
 	StreamGenesis
 } from '@muni-town/leaf-client';
@@ -37,7 +36,7 @@ export type BackendInterface = {
 	hasModule(moduleId: string): Promise<boolean>;
 	createStream(genesis: StreamGenesis): Promise<string>;
 	updateModule(streamId: string, moduleDef: LeafModuleDef): Promise<void>;
-	subscribe(streamId: string, query: LeafSubscribeQuery): Promise<string>;
+	subscribe(streamId: string, query: LeafQuery): Promise<string>;
 	unsubscribe(subId: string): Promise<void>;
 	uploadModule(buffer: ArrayBuffer): Promise<string>;
 	sendEvents(streamId: string, events: IncomingEvent[]): Promise<void>;

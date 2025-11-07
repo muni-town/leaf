@@ -98,7 +98,6 @@ const LeafQuery = Struct({
   requesting_user: str,
   params: Vector(Tuple(str, SqlValue)),
   start: Option(i64),
-  end: Option(i64),
   limit: Option(i64),
 });
 
@@ -124,18 +123,10 @@ const StreamSubscribeNotification = Struct({
   response: StreamQueryResp,
 });
 
-export type LeafSubscribeQuery = CodecType<typeof LeafSubscribeQuery>;
-const LeafSubscribeQuery = Struct({
-  query_name: str,
-  requesting_user: str,
-  params: Vector(Tuple(str, SqlValue)),
-  start: Option(i64),
-  batch_size: Option(i64),
-});
 export type StreamSubscribeArgs = CodecType<typeof StreamSubscribeArgs>;
 const StreamSubscribeArgs = Struct({
   streamId: Hash,
-  query: LeafSubscribeQuery,
+  query: LeafQuery,
 });
 
 const HasWasmResp = Result(bool, str);
@@ -194,7 +185,9 @@ export class LeafClient {
     });
     this.socket.on("stream/subscription_response", (data: Uint8Array) => {
       const notification = StreamSubscribeNotification.dec(data);
+      console.log('notif', notification);
       const sub = this.#querySubscriptions.get(notification.subscription_id);
+      console.log('sub', sub);
       if (sub) {
         sub(notification.response);
       }
@@ -318,7 +311,7 @@ export class LeafClient {
   /** Returns a function that can be called to unsubscribe the query. */
   async subscribe(
     streamId: string,
-    query: LeafSubscribeQuery,
+    query: LeafQuery,
     handler: (resp: StreamQueryResp) => Promise<void> | void,
   ): Promise<() => Promise<void>> {
     const data: Uint8Array = await this.socket.emitWithAck(
@@ -326,6 +319,7 @@ export class LeafClient {
       StreamSubscribeArgs.enc({ streamId, query }).buffer,
     );
     const resp = Result(Ulid, str).dec(data);
+    console.log('sub resp', resp)
     if (!resp.success) {
       throw new Error(resp.value);
     }
@@ -333,14 +327,16 @@ export class LeafClient {
     const subId = resp.value;
     this.#querySubscriptions.set(subId, handler);
     return async () => {
+      console.log(subId, Ulid.enc(subId));
       const data: Uint8Array = await this.socket.emitWithAck(
         "stream/unsubscribe",
         Ulid.enc(subId).buffer,
       );
       this.#querySubscriptions.delete(subId);
+      console.log("data", data);
       const resp = Result(bool, str).dec(data);
       if (!resp.success) {
-        throw new Error(`Error unsubscribing stream query: ${resp.value}`);
+        throw new Error(`Error unsubscribing to query: ${resp.value}`);
       }
     };
   }
