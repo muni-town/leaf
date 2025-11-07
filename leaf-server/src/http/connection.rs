@@ -6,7 +6,7 @@ use futures::future::{Either, select};
 use leaf_stream::{
     StreamGenesis,
     encoding::Encodable,
-    types::{IncomingEvent, LeafModuleDef, LeafQuery, LeafSubscribeQuery, SqlRows},
+    types::{IncomingEvent, LeafModuleDef, LeafQuery, SqlRows},
 };
 use parity_scale_codec::{Decode, Encode};
 use socketioxide::extract::{AckSender, SocketRef, TryData};
@@ -230,11 +230,13 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                         if socket_.connected() {
                             if let Err(e) = socket_.emit(
                                 "stream/subscription_response",
-                                &StreamSubscribeNotification {
-                                    subscription_id: Encodable(subscription_id),
-                                    response: event.map_err(|e| e.to_string()),
-                                }
-                                .encode(),
+                                &bytes(
+                                    StreamSubscribeNotification {
+                                        subscription_id: Encodable(subscription_id),
+                                        response: event.map_err(|e| e.to_string()),
+                                    }
+                                    .encode(),
+                                ),
                             ) {
                                 // TODO: better error message
                                 tracing::error!("Error sending event, unsubscribing: {e}");
@@ -248,7 +250,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
                     }
                 });
 
-                anyhow::Ok(subscription_id.to_string())
+                anyhow::Ok(Encodable(subscription_id))
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/subscribe"))
             .await;
@@ -263,9 +265,10 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: String) {
     let unsubscribers_ = unsubscribers.clone();
     socket.on(
         "stream/unsubscribe",
-        async move |TryData::<Ulid>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
             let result = async {
-                let subscription_id = data?;
+                let data = data?;
+                let subscription_id = Encodable::<Ulid>::decode(&mut &data[..])?.0;
                 let unsubscriber = unsubscribers_.lock().await.remove(&subscription_id);
                 let was_subscribed = unsubscriber.is_some();
                 unsubscriber.map(|x| x.send(()));
@@ -351,5 +354,5 @@ struct StreamSubscribeNotification {
 #[derive(Decode)]
 struct StreamSubscribeArgs {
     stream_id: Encodable<Hash>,
-    query: LeafSubscribeQuery,
+    query: LeafQuery,
 }

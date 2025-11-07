@@ -14,28 +14,28 @@ impl Decode for Encodable<Ulid> {
     fn decode<I: parity_scale_codec::Input>(
         input: &mut I,
     ) -> Result<Self, parity_scale_codec::Error> {
-        Ok(Encodable(Ulid(u128::decode(input)?)))
+        Ok(Encodable(Ulid::from_bytes(<[u8; 16]>::decode(input)?)))
     }
 }
 impl Encode for Encodable<Ulid> {
     fn size_hint(&self) -> usize {
-        u128::size_hint(&self.0.0)
+        <[u8; 16]>::size_hint(&self.0.to_bytes())
     }
 
     fn encode_to<T: parity_scale_codec::Output + ?Sized>(&self, dest: &mut T) {
-        u128::encode_to(&self.0.0, dest);
+        <[u8; 16]>::encode_to(&self.0.to_bytes(), dest);
     }
 
     fn encode(&self) -> Vec<u8> {
-        u128::encode(&self.0.0)
+        <[u8; 16]>::encode(&self.0.to_bytes())
     }
 
     fn using_encoded<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
-        u128::using_encoded(&self.0.0, f)
+        <[u8; 16]>::using_encoded(&self.0.to_bytes(), f)
     }
 
     fn encoded_size(&self) -> usize {
-        u128::encoded_size(&self.0.0)
+        <[u8; 16]>::encoded_size(&self.0.to_bytes())
     }
 }
 type H = [u8; 32];

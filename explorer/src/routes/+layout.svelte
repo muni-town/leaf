@@ -4,7 +4,6 @@
 	import { backend, backendStatus } from '$lib/workers';
 	import { onMount, setContext } from 'svelte';
 	import { page } from '$app/state';
-	import type { StreamGenesis } from '../../../clients/typescript/dist';
 
 	let leafUrl = $state(localStorage.getItem('leaf-url') || 'https://leaf-dev.muni.town');
 	onMount(() => {
@@ -15,10 +14,14 @@
 
 	const leafEventsChanel = new BroadcastChannel('leaf-events');
 	leafEventsChanel.onmessage = (ev) => {
-		const event: any = ev.data;
+		const event = ev.data;
 
 		leafEvents.push(
-			`sub ${event.idx}(${event.user}) - ${event.stream}\n    ${new TextDecoder().decode(event.payload)}`
+			JSON.stringify(
+				event,
+				(_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+				'  '
+			)
 		);
 	};
 	let leafEvents = $state([]) as string[];

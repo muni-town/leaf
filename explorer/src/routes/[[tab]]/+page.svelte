@@ -56,9 +56,12 @@
 	const defaultQuery: LeafQuery = {
 		query_name: '',
 		requesting_user: '',
-		params: []
+		params: [],
+		start: undefined,
+		limit: undefined
 	};
 	const storedQuery = localStorage.getItem('query');
+	let subscriptionId = $state('');
 	let query: LeafQuery = $state(
 		JSON.parse(
 			storedQuery && storedQuery !== 'undefined' ? storedQuery : JSON.stringify(defaultQuery)
@@ -101,6 +104,29 @@
 				'  '
 			)
 		);
+	}
+
+	async function subscribe() {
+		if (!backendStatus.did) return;
+		const q: typeof query = $state.snapshot(query) as any;
+		q.requesting_user = backendStatus.did;
+		for (const [_name, param] of q.params) {
+			// The forms don't assign the proper data types to non-text params, so we convert them here.
+			if (param.tag == 'blob') {
+				param.value = new TextEncoder().encode(param.value as any);
+			} else if (param.tag == 'integer') {
+				param.value = BigInt(param.value);
+			} else if (param.tag == 'real') {
+				param.value = parseFloat(param.value as any);
+			}
+		}
+		subscriptionId = await backend.subscribe(streamId.value, q);
+	}
+
+	async function unsubscribe() {
+		if (!subscriptionId) throw 'no subscription';
+		await backend.unsubscribe(subscriptionId);
+		subscriptionId = '';
 	}
 
 	async function sendEvent() {
@@ -158,11 +184,23 @@
 				<button class="btn btn-outline" disabled={loading}>Send</button>
 			</form> -->
 
-			<form class="m-8 flex flex-col gap-2" onsubmit={runQuery}>
+			<form class="m-8 flex flex-col gap-2">
 				<h2 class="mb-4 text-xl font-bold">Query</h2>
 
 				Name
 				<input class="input" placeholder="query name" bind:value={query.query_name} />
+				<div class="flex gap-2">
+					<input
+						class="input input-sm"
+						placeholder="start"
+						bind:value={() => query.start, (v) => (query.start = v || undefined)}
+					/>
+					<input
+						class="input input-sm"
+						placeholder="limit"
+						bind:value={() => query.limit, (v) => (query.limit = v || undefined)}
+					/>
+				</div>
 
 				<h3 class="flex items-center text-lg font-bold">
 					Params
@@ -187,10 +225,10 @@
 						<input class="input" bind:value={query.params[i][0]} placeholder="name" />
 						<select class="select" bind:value={query.params[i][1].tag}>
 							<option selected value="">Any</option>
-							<option value={{ tag: 'integer', value: undefined }}>Integer</option>
-							<option value={{ tag: 'real', value: undefined }}>Real</option>
-							<option value={{ tag: 'text', value: undefined }}>Text</option>
-							<option value={{ tag: 'blob', value: undefined }}>Blob</option>
+							<option value="integer">Integer</option>
+							<option value="real">Real</option>
+							<option value="text">Text</option>
+							<option value="blob">Blob</option>
 						</select>
 						<input class="input" bind:value={value.value} />
 						<button
@@ -201,7 +239,17 @@
 					</div>
 				{/each}
 
-				<button type="submit" class="btn btn-outline">Submit</button>
+				<button type="submit" class="btn btn-outline" onclick={runQuery}>Query</button>
+				{#if subscriptionId}
+					Subscribed: {subscriptionId}
+					<button type="submit" class="btn btn-outline" onclick={unsubscribe}
+						>Unsubscribe</button
+					>
+				{:else}
+					<button type="submit" class="btn btn-outline" onclick={subscribe}
+						>Subscribe</button
+					>
+				{/if}
 			</form>
 
 			<!-- Upload WASM -->
