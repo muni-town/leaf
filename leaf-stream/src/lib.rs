@@ -24,6 +24,8 @@ pub type SubscriptionResultSender = async_channel::Sender<Result<LeafQueryRepons
 pub use module::*;
 mod module;
 
+mod scale;
+
 pub mod encoding;
 use encoding::Encodable;
 
@@ -31,6 +33,8 @@ pub use blake3;
 pub use leaf_stream_types as types;
 pub use libsql;
 pub use ulid;
+
+use crate::scale::ScaleExtractExpr;
 
 static SQL_COMMENT_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"--.*$|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/").unwrap());
@@ -878,6 +882,8 @@ impl Stream {
 
 /// Install Leaf's user-defined functions on the database connection
 fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
+    use libsql::Value;
+
     // A panic function that can be used to intentionally stop a transaction such as in the event
     // authorizer.
     db.create_scalar_function(ScalarFunctionDef {
@@ -888,10 +894,20 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
         direct_only: true,
         callback: Arc::new(|values| {
             anyhow::bail!(
-                "Exception thrown from SQL: {}",
+                "Exception thrown: {}",
                 values
                     .into_iter()
-                    .map(|x| format!("{:?}", x))
+                    .map(|x| match x {
+                        Value::Null => "NULL".to_string(),
+                        Value::Integer(i) => i.to_string(),
+                        Value::Real(r) => r.to_string(),
+                        Value::Text(t) => t.to_string(),
+                        Value::Blob(bytes) => bytes
+                            .iter()
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<String>>()
+                            .join(""),
+                    })
                     .collect::<Vec<_>>()
                     .join(" ")
             );
@@ -906,15 +922,15 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
         direct_only: true,
         callback: Arc::new(|values| {
             anyhow::bail!(
-                "Event failed authorization: {}",
+                "Unauthorized: {}",
                 values
                     .into_iter()
                     .map(|x| match x {
-                        libsql::Value::Null => "NULL".to_string(),
-                        libsql::Value::Integer(i) => i.to_string(),
-                        libsql::Value::Real(r) => r.to_string(),
-                        libsql::Value::Text(t) => t.to_string(),
-                        libsql::Value::Blob(bytes) => bytes
+                        Value::Null => "NULL".to_string(),
+                        Value::Integer(i) => i.to_string(),
+                        Value::Real(r) => r.to_string(),
+                        Value::Text(t) => t.to_string(),
+                        Value::Blob(bytes) => bytes
                             .iter()
                             .map(|b| format!("{:02X}", b))
                             .collect::<Vec<String>>()
@@ -923,6 +939,29 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
                     .collect::<Vec<_>>()
                     .join(" ")
             );
+        }),
+    })?;
+
+    db.create_scalar_function(ScalarFunctionDef {
+        name: "scale_extract".to_string(),
+        num_args: 2,
+        deterministic: true,
+        innocuous: true,
+        direct_only: false,
+        callback: Arc::new(|values| {
+            let Value::Blob(blob) = values.first().unwrap() else {
+                anyhow::bail!("First argument to scale_extract must be blob");
+            };
+            let Value::Text(path) = values.get(1).unwrap() else {
+                anyhow::bail!("Second argument to scale_extract must be sring");
+            };
+            let extractor = path
+                .parse::<ScaleExtractExpr>()
+                .context("Could not parse scale_extract path")?;
+
+            extractor
+                .extract(&mut &blob[..])
+                .context("Could not extract value from SCALE")
         }),
     })?;
 
@@ -990,7 +1029,7 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
             libsql::Authorization::Allow
         }
         libsql::AuthAction::Function { function_name } => match function_name {
-            "unauthorized" | "coalesce" | "->>" | "->" => libsql::Authorization::Allow,
+            "unauthorized" | "throw" | "coalesce" | "->>" | "->" => libsql::Authorization::Allow,
             _ => libsql::Authorization::Deny,
         },
         op => {
