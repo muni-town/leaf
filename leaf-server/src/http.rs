@@ -163,6 +163,17 @@ async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
         )
     }
 
+    // Verify that the LXM matches if the token specifies one
+    if let Some(lxm) = claims.private.get("lxm") {
+        let serde_json::Value::String(lxm) = lxm else {
+            anyhow::bail!("Invalid type for lxm claim in JWT token: expected string");
+        };
+        static AUTH_LXM: &str = "town.muni.leaf.authenticate";
+        if lxm != AUTH_LXM {
+            anyhow::bail!("Invalid lxm in JWT: `{lxm}` expected `{AUTH_LXM}");
+        }
+    };
+
     // Make sure the authenticating user is specified
     let Some(did) = claims.jose.issuer else {
         anyhow::bail!("JWT token issuer is missing")
