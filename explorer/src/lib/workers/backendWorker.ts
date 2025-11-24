@@ -224,10 +224,11 @@ function connectMessagePort(port: MessagePortApi) {
 			await state.leafClient?.sendEvents(streamId, events);
 		},
 		async hasModule(moduleId) {
-			return (await state.leafClient?.hasWasm(moduleId)) || false;
+			return (await state.leafClient?.hasModule(moduleId)) || false;
 		},
-		async uploadModule(buffer) {
-			return await state.leafClient!.uploadWasm(buffer);
+		async uploadModule(module) {
+      console.log('uploading module');
+			return await state.leafClient!.uploadBasicModule(module);
 		},
 		async createStream(genesis) {
 			if (!state.leafClient) throw new Error('Leaf not connected');

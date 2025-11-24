@@ -2,8 +2,8 @@ import type { ProfileViewDetailed } from '@atproto/api/dist/client/types/app/bsk
 import { messagePortInterface, reactiveWorkerState } from './workerMessaging';
 import backendWorkerUrl from './backendWorker.ts?worker&url';
 import type {
+	BasicModuleDef,
 	IncomingEvent,
-	LeafModuleDef,
 	LeafQuery,
 	SqlRows,
 	StreamGenesis
@@ -35,10 +35,10 @@ export type BackendInterface = {
 	query(streamId: string, query: LeafQuery): Promise<SqlRows>;
 	hasModule(moduleId: string): Promise<boolean>;
 	createStream(genesis: StreamGenesis): Promise<string>;
-	updateModule(streamId: string, moduleDef: LeafModuleDef): Promise<void>;
+	updateModule(streamId: string, moduleId: string): Promise<void>;
 	subscribe(streamId: string, query: LeafQuery): Promise<string>;
 	unsubscribe(subId: string): Promise<void>;
-	uploadModule(buffer: ArrayBuffer): Promise<string>;
+	uploadModule(buffer: BasicModuleDef): Promise<string>;
 	sendEvents(streamId: string, events: IncomingEvent[]): Promise<void>;
 	setLeafUrl(url: string): Promise<void>;
 	/** Adds a new message port connection to the backend that can call the backend interface. */

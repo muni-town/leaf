@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    io::{Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock, Weak},
@@ -9,12 +8,7 @@ use std::{
 
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
-use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use leaf_stream::{
-    LeafModule, StreamGenesis,
-    types::{Event, LeafModuleDef},
-    validate_wasm,
-};
+use leaf_stream::{BasicModule, LeafModule, LeafModuleCodec, StreamGenesis, types::Event};
 use leaf_utils::convert::{FromRows, ParseRow, ParseRows};
 use libsql::Connection;
 use parity_scale_codec::{Decode, Encode};
@@ -33,7 +27,7 @@ pub static GLOBAL_SQLITE_PRAGMA: &str = "pragma synchronous = normal; pragma jou
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
-static MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<LeafModule>>>> =
+static MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<dyn LeafModule>>>> =
     LazyLock::new(|| RwLock::new(WeakValueHashMap::new()));
 
 pub static BUCKET_MODULE_DIR: &str = "modules";
@@ -138,26 +132,26 @@ impl Storage {
     /// Returns the list of hashes that could be found in the database out of the list that is
     /// provided to search for.
     #[instrument(skip(self, hash), err)]
-    pub async fn has_wasm_blob(&self, hash: Hash) -> anyhow::Result<bool> {
+    pub async fn has_module_blob(&self, hash: Hash) -> anyhow::Result<bool> {
         let mut rows = self
             .db()
             .await
             .query(
-                "select hash from wasm_blobs where hash = ?",
+                "select hash from module_blobs where hash = ?",
                 [hash.as_bytes().to_vec()],
             )
             .await?;
         return Ok(rows.next().await?.is_some());
     }
 
-    // Get a WASM blob from the database
+    // Get a moudle blob from the database
     #[instrument(skip(self), err)]
-    pub async fn get_wasm_blob(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
+    pub async fn get_module_blob(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
         let mut blobs = Vec::<Vec<u8>>::from_rows(
             self.db()
                 .await
                 .query(
-                    "select data from wasm_blobs where hash=?",
+                    "select data from module_blobs where hash=?",
                     [id.as_bytes().to_vec()],
                 )
                 .await?,
@@ -166,12 +160,12 @@ impl Storage {
         Ok(blobs.pop())
     }
 
-    /// List the WASM blobs in the database
-    pub async fn list_wasm_blobs(&self) -> anyhow::Result<HashSet<Hash>> {
+    /// List the module blobs in the database
+    pub async fn list_module_blobs(&self) -> anyhow::Result<HashSet<Hash>> {
         let modules: Vec<Hash> = self
             .db()
             .await
-            .query("select hash from wasm_blobs", ())
+            .query("select hash from module_blobs", ())
             .await?
             .parse_rows()
             .await?;
@@ -179,27 +173,24 @@ impl Storage {
     }
 
     /// Get a module from the database
-    pub async fn get_module(
-        &self,
-        module_def: LeafModuleDef,
-    ) -> anyhow::Result<Option<Arc<LeafModule>>> {
+    pub async fn get_module(&self, module_id: Hash) -> anyhow::Result<Option<Arc<dyn LeafModule>>> {
         let modules = MODULES.upgradable_read().await;
-        let module_id = module_def.module_id_and_bytes().0;
         if let Some(module) = modules.get(&module_id) {
             return Ok(Some(module));
         }
 
-        let wasm = if let Some(id) = module_def.wasm_module {
-            let id = Hash::from_bytes(id);
-            Some(
-                self.get_wasm_blob(id)
-                    .await?
-                    .ok_or_else(|| anyhow::format_err!("WASM requested by module not found"))?,
-            )
-        } else {
-            None
+        let blob = self
+            .get_module_blob(module_id)
+            .await?
+            .ok_or_else(|| anyhow::format_err!("module blob not found"))?;
+        let codec = LeafModuleCodec::decode(&mut &blob[..])?;
+
+        let module = match &codec.module_type_id {
+            x if x == BasicModule::module_type_id() => {
+                Arc::new(BasicModule::load(codec)?) as Arc<dyn LeafModule>
+            }
+            _ => anyhow::bail!("cannot load module: unrecognized module type ID"),
         };
-        let module = Arc::new(LeafModule::new(module_def, wasm.as_deref())?);
 
         let mut modules = RwLockUpgradableReadGuard::upgrade(modules).await;
         modules.insert(module_id, module.clone());
@@ -212,19 +203,19 @@ impl Storage {
     pub async fn create_stream(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
         let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
         let creator = genesis.creator.clone();
-        let wasm_module_hash = genesis.module.wasm_module;
+        let module_hash = genesis.module_hash.0;
         let stream = STREAMS.load(genesis).await?;
 
         self.db()
             .await
             .execute(
-                "insert into streams (id, creator, genesis, wasm_module_hash) \
-                values (:id, :creator, :genesis, :wasm_module_hash)",
+                "insert into streams (id, creator, genesis, module_hash) \
+                values (:id, :creator, :genesis, :module_hash)",
                 (
                     (":id", id.as_bytes().to_vec()),
                     (":creator", creator),
                     (":genesis", genesis_bytes),
-                    (":wasm_module_hash", wasm_module_hash.map(|x| x.to_vec())),
+                    (":module_hash", module_hash.as_bytes().to_vec()),
                 ),
             )
             .await?;
@@ -269,19 +260,19 @@ impl Storage {
     /// Update the recorded current module for the stream in the leaf database.
     ///
     /// This should be called after a module change has been made to the stream so that the database
-    /// can avoid garbage collecting the new WASM module that it depends on.
+    /// can avoid garbage collecting the new module that it depends on.
     #[instrument(skip(self), err)]
-    pub async fn update_stream_wasm_module(
+    pub async fn update_stream_module(
         &self,
         stream: Hash,
-        wasm_module_hash: Option<Hash>,
+        module_hash: Hash,
     ) -> anyhow::Result<()> {
         self.db()
             .await
             .execute(
-                "update streams set wasm_module_hash = :module where id = :id",
+                "update streams set module_hash = :module where id = :id",
                 (
-                    (":module", wasm_module_hash.map(|x| x.as_bytes().to_vec())),
+                    (":module", module_hash.as_bytes().to_vec()),
                     (":id", stream.as_bytes().to_vec()),
                 ),
             )
@@ -309,16 +300,16 @@ impl Storage {
         Ok(Some(STREAMS.load(genesis).await?))
     }
 
-    /// Add a WASM blob directly.
+    /// Add a module blob directly.
     ///
     /// This is used internally by the s3 backup script.
     #[instrument(skip(self, data), err)]
-    async fn add_wasm_blob(&self, data: Vec<u8>) -> anyhow::Result<Hash> {
+    async fn add_module_blob(&self, data: Vec<u8>) -> anyhow::Result<Hash> {
         let hash = blake3::hash(&data);
         self.db()
             .await
             .execute(
-                r#"insert or ignore into wasm_blobs (hash, data) values (:hash, :data)"#,
+                r#"insert or ignore into module_blobs (hash, data) values (:hash, :data)"#,
                 ((":hash", hash.as_bytes().to_vec()), (":data", data)),
             )
             .await?;
@@ -326,22 +317,25 @@ impl Storage {
     }
 
     #[instrument(skip(self, data), err)]
-    pub async fn upload_wasm(&self, creator: &str, data: Vec<u8>) -> anyhow::Result<blake3::Hash> {
+    pub async fn upload_module(
+        &self,
+        creator: &str,
+        data: Vec<u8>,
+    ) -> anyhow::Result<blake3::Hash> {
         if data.len() > 1024 * 1024 * 10 {
-            anyhow::bail!("WASM module larger than 10MB maximum size.");
+            anyhow::bail!("Module larger than 10MB maximum size.");
         }
-        validate_wasm(&data)?;
         let trans = self.db().await.transaction().await?;
         let hash = blake3::hash(&data);
         trans
             .execute(
-                r#"insert or ignore into wasm_blobs (hash, data) values (:hash, :data)"#,
+                r#"insert or ignore into module_blobs (hash, data) values (:hash, :data)"#,
                 ((":hash", hash.as_bytes().to_vec()), (":data", data)),
             )
             .await?;
         trans
             .execute(
-                r#"insert into staged_wasm (creator, hash) values (:creator, :hash)"#,
+                r#"insert into staged_modules (creator, hash) values (:creator, :hash)"#,
                 ((":creator", creator), (":hash", hash.as_bytes().to_vec())),
             )
             .await?;
@@ -350,17 +344,17 @@ impl Storage {
     }
 
     #[instrument(skip(self), err)]
-    pub async fn garbage_collect_wasm_and_modules(&self) -> anyhow::Result<()> {
+    pub async fn garbage_collect_modules(&self) -> anyhow::Result<()> {
         let mut deleted = self
             .db()
             .await
             .execute_batch(
                 r#"
-                delete from staged_wasm where (unixepoch() - timestamp) > 500 returning creator, hash;
-                delete from wasm_blobs where not exists (
-                    select 1 from staged_wasm s where s.hash=wasm_blobs.hash
+                delete from staged_modules where (unixepoch() - timestamp) > 500 returning creator, hash;
+                delete from module_blobs where not exists (
+                    select 1 from staged_modules s where s.hash=module_blobs.hash
                         union
-                    select 1 from streams s where s.wasm_module_hash=wasm_blobs.hash
+                    select 1 from streams s where s.module_hash=module_blobs.hash
                 ) returning hash;
                 "#,
             )
@@ -389,19 +383,19 @@ impl Storage {
         }
 
         if let Err(error) = r {
-            tracing::warn!(%error, "Error parsing deleted WASM blobs")
+            tracing::warn!(%error, "Error parsing deleted module blobs")
         }
 
         if !deleted_staged.is_empty() || !deleted_blobs.is_empty() {
             tracing::info!(
-                deleted_staged_wasm_modules=?deleted_staged,
-                deleted_wasm_blobs=?deleted_blobs,
-                "Garbage collected WASM records"
+                deleted_staged_modules=?deleted_staged,
+                deleted_module_blobs=?deleted_blobs,
+                "Garbage collected modules"
             );
         }
         let span = Span::current();
-        span.set_attribute("wasm_blobs_deleted", deleted_staged.len() as i64);
-        span.set_attribute("staged_wasm_modules_deleted", deleted_blobs.len() as i64);
+        span.set_attribute("module_blobs_deleted", deleted_staged.len() as i64);
+        span.set_attribute("staged_modules_deleted", deleted_blobs.len() as i64);
 
         Ok(())
     }
@@ -412,11 +406,7 @@ impl Storage {
             return Ok(());
         };
 
-        anyhow::bail!(
-            "TODO: s3 backup not implemented yet. Modules are not properly included in the archive yet"
-        );
-
-        // List wasm modules in the bucket
+        // List modules in the bucket
         let modules_in_backup = bucket
             .list(BUCKET_MODULE_DIR, None)
             .await?
@@ -427,27 +417,25 @@ impl Storage {
                     x.key
                         .strip_prefix(&format!("{BUCKET_MODULE_DIR}/"))
                         .unwrap_or_default()
-                        .strip_suffix(".wasm.gz")
+                        .strip_suffix(".module.zstd")
                         .unwrap_or_default(),
                 )
                 .ok()
             })
             .collect::<HashSet<_>>();
 
-        // List wasm modules we have locally
-        let modules_local = self.list_wasm_blobs().await?;
+        // List modules we have locally
+        let modules_local = self.list_module_blobs().await?;
 
         // Upload local modules not in backup
         for module_not_in_backup in modules_local.difference(&modules_in_backup) {
-            let Some(module) = self.get_wasm_blob(*module_not_in_backup).await? else {
+            let Some(module) = self.get_module_blob(*module_not_in_backup).await? else {
                 continue;
             };
-            let mut compressor = GzEncoder::new(Vec::new(), Compression::default());
-            compressor.write_all(&module)?;
-            let compressed = compressor.finish()?;
+            let compressed = zstd::encode_all(&module[..], 0)?;
             bucket
                 .put(
-                    format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}.wasm.gz"),
+                    format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}.module.zstd"),
                     &compressed,
                 )
                 .await?;
@@ -456,20 +444,20 @@ impl Storage {
         // Download backup modules that aren't local
         for module_not_local in modules_in_backup.difference(&modules_local) {
             let resp = bucket
-                .get(format!("{BUCKET_MODULE_DIR}/{module_not_local}.wasm.gz"))
+                .get(format!(
+                    "{BUCKET_MODULE_DIR}/{module_not_local}.module.zstd"
+                ))
                 .await?;
             let resp_bytes = resp.bytes().await?;
-            let mut decompressed = Vec::new();
-            let mut decompressor = GzDecoder::new(&resp_bytes[..]);
-            decompressor.read_to_end(&mut decompressed)?;
+            let decompressed = zstd::decode_all(&resp_bytes[..])?;
             let hash = blake3::hash(&decompressed);
             if hash == *module_not_local {
-                self.add_wasm_blob(decompressed).await?;
+                self.add_module_blob(decompressed).await?;
             } else {
                 tracing::error!(
                     actual_hash=%hash,
                     hash_in_filename=%module_not_local,
-                    "Error importing WASM module from s3: module hash did not match filename."
+                    "Error importing module from s3: module hash did not match filename."
                 );
             }
         }
@@ -517,9 +505,11 @@ impl Storage {
                         .key
                         .strip_prefix(&format!("{stream_dir}/"))
                         .unwrap_or_default();
-                    // And parse the [start]-[end].lvg.gz filename
-                    let (start, end) =
-                        name.strip_suffix(".lvt.gz").unwrap_or("").split_once('-')?;
+                    // And parse the [start]-[end].lvg.zstd filename
+                    let (start, end) = name
+                        .strip_suffix(".lvt.zstd")
+                        .unwrap_or("")
+                        .split_once('-')?;
                     // And grab start and end
                     let start = start.parse::<i64>().ok()?;
                     let end = end.parse::<i64>().ok()?;
@@ -560,13 +550,11 @@ impl Storage {
                 // Create and compress the event archive
                 let archive = EventArchive { genesis, events };
                 let archive_bytes = archive.encode();
-                let mut compressor = GzEncoder::new(Vec::new(), Compression::default());
-                compressor.write_all(&archive_bytes)?;
-                let compressed = compressor.finish()?;
+                let compressed = zstd::encode_all(&archive_bytes[..], 0)?;
 
                 // Push the archive to s3
                 let name = format!(
-                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.gz",
+                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
                     stream.id,
                     latest_in_s3.map(|l| l + 1).unwrap_or(0),
                     latest_in_s3.map(|l| l + events_len).unwrap_or(events_len)
@@ -613,9 +601,11 @@ impl Storage {
                         .key
                         .strip_prefix(&format!("{stream_dir}/"))
                         .unwrap_or_default();
-                    // And parse the [start]-[end].lvt.gz filename
-                    let (start, end) =
-                        name.strip_suffix(".lvt.gz").unwrap_or("").split_once('-')?;
+                    // And parse the [start]-[end].lvt.zstd filename
+                    let (start, end) = name
+                        .strip_suffix(".lvt.zstd")
+                        .unwrap_or("")
+                        .split_once('-')?;
                     // And grab start and end
                     let start = start.parse::<i64>().ok()?;
                     let end = end.parse::<i64>().ok()?;
@@ -643,14 +633,12 @@ impl Storage {
             for (i, (start, end)) in ranges_on_s3.into_iter().enumerate() {
                 let is_last_range = i + 1 == count;
                 let archive_path = format!(
-                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.gz",
+                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
                     stream_id, start, end
                 );
                 let resp = bucket.get(archive_path).await?;
                 let bytes = resp.bytes().await?;
-                let mut decompressed = Vec::new();
-                let mut decompressor = GzDecoder::new(&bytes[..]);
-                decompressor.read_to_end(&mut decompressed)?;
+                let decompressed = zstd::decode_all(&bytes[..])?;
                 let archive = EventArchive::decode(&mut &decompressed[..])?;
 
                 // If this is the initial archive
@@ -714,10 +702,10 @@ pub async fn run_database_migrations(db: &Connection) -> anyhow::Result<()> {
 }
 
 pub fn start_background_tasks() {
-    // Garbage collect WASM files periodically
+    // Garbage collect modules periodically
     tokio::spawn(async move {
         loop {
-            STORAGE.garbage_collect_wasm_and_modules().await.ok();
+            STORAGE.garbage_collect_modules().await.ok();
             tokio::time::sleep(Duration::from_secs(500)).await;
         }
     });

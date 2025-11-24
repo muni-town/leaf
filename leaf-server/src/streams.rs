@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use blake3::Hash;
-use leaf_stream::{LeafModule, Stream, StreamGenesis, types::LeafModuleDef};
+use leaf_stream::{LeafModule, Stream, StreamGenesis};
 use tokio::sync::RwLock;
 use weak_table::WeakValueHashMap;
 
@@ -53,11 +53,9 @@ impl Streams {
         stream.create_worker_task().await.map(tokio::spawn);
 
         // Load the stream's module and it's database
-        if let Some(module_def) = stream.needs_module().await {
-            STORAGE
-                .update_stream_wasm_module(id, module_def.wasm_module.map(Hash::from_bytes))
-                .await?;
-            let (module, module_db) = load_module(&stream_dir, module_def).await?;
+        if let Some(module_hash) = stream.needs_module().await {
+            STORAGE.update_stream_module(id, module_hash).await?;
+            let (module, module_db) = load_module(&stream_dir, module_hash).await?;
             stream.provide_module(module, module_db).await?;
         }
 
@@ -79,28 +77,14 @@ impl Streams {
         Ok(handle)
     }
 
-    pub async fn update_module(
-        &self,
-        stream: Arc<Stream>,
-        module_def: LeafModuleDef,
-    ) -> anyhow::Result<()> {
+    pub async fn update_module(&self, stream: Arc<Stream>, module_id: Hash) -> anyhow::Result<()> {
         let data_dir = STORAGE.data_dir()?;
         let stream_dir = data_dir.join("streams").join(stream.id().to_hex().as_str());
 
-        let wasm_hash = module_def.wasm_module.map(Hash::from_bytes);
-        if let Some(hash) = wasm_hash
-            && !STORAGE.has_wasm_blob(hash).await?
-        {
-            anyhow::bail!("WASM module not found and must be uploaded first: {hash}");
-        }
-        stream.raw_set_module(module_def.clone()).await?;
-
-        let (module, db) = load_module(&stream_dir, module_def).await?;
+        stream.raw_set_module(module_id).await?;
+        let (module, db) = load_module(&stream_dir, module_id).await?;
         stream.provide_module(module, db).await?;
-
-        STORAGE
-            .update_stream_wasm_module(stream.id(), wasm_hash)
-            .await?;
+        STORAGE.update_stream_module(stream.id(), module_id).await?;
 
         Ok(())
     }
@@ -108,10 +92,9 @@ impl Streams {
 
 pub async fn load_module(
     stream_dir: &Path,
-    module_def: LeafModuleDef,
-) -> anyhow::Result<(Arc<LeafModule>, libsql::Connection)> {
-    let module_id = module_def.module_id_and_bytes().0;
-    let Some(module) = STORAGE.get_module(module_def).await? else {
+    module_id: Hash,
+) -> anyhow::Result<(Arc<dyn LeafModule>, libsql::Connection)> {
+    let Some(module) = STORAGE.get_module(module_id).await? else {
         anyhow::bail!("Could not load module needed by stream: {}", module_id);
     };
     let module_db_path = stream_dir.join(format!("module_{}.db", module_id.to_hex().as_str()));

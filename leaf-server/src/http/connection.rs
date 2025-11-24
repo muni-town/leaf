@@ -6,7 +6,7 @@ use futures::future::{Either, select};
 use leaf_stream::{
     StreamGenesis,
     encoding::Encodable,
-    types::{IncomingEvent, LeafModuleDef, LeafQuery, SqlRows},
+    types::{IncomingEvent, LeafQuery, SqlRows},
 };
 use parity_scale_codec::{Decode, Encode};
 use socketioxide::extract::{AckSender, SocketRef, TryData};
@@ -29,17 +29,17 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let did_ = did.clone();
     let span_ = span.clone();
     socket.on(
-        "wasm/upload",
+        "module/upload",
         async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
             let result = async {
                 let Some(did_) = did_ else {
-                    anyhow::bail!("Only authenticated users can upload WASM");
+                    anyhow::bail!("Only authenticated users can upload module");
                 };
                 let data = data?;
-                let hash = STORAGE.upload_wasm(&did_, data.to_vec()).await?;
+                let hash = STORAGE.upload_module(&did_, data.to_vec()).await?;
                 anyhow::Ok(hash)
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/upload"))
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle module/upload"))
             .await;
 
             ack.send(&bytes(Encodable(result.map(Encodable)).encode()))
@@ -49,15 +49,15 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     );
     let span_ = span.clone();
     socket.on(
-        "wasm/has",
+        "module/exists",
         async move |TryData::<bytes::Bytes>(hash_hex), ack: AckSender| {
             let result = async {
                 let hash_bytes: [u8; 32] = hash_hex?.as_ref().try_into()?;
                 let hash = Hash::from_bytes(hash_bytes);
-                let has_module = STORAGE.has_wasm_blob(hash).await?;
+                let has_module = STORAGE.has_module_blob(hash).await?;
                 anyhow::Ok(has_module)
             }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle wasm/has"))
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle module/exists"))
             .await;
 
             ack.send(&bytes(Encodable(result).encode()))
@@ -113,7 +113,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let input = data?;
                 let StreamUpdateModuleArgs {
                     stream_id,
-                    module_def,
+                    module_id,
                 } = StreamUpdateModuleArgs::decode(&mut &input[..])?;
                 let stream_id = stream_id.0;
 
@@ -133,7 +133,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only the stream creator can update its module");
                 }
 
-                STREAMS.update_module(stream, module_def).await?;
+                STREAMS.update_module(stream, module_id.0).await?;
 
                 anyhow::Ok(())
             }
@@ -356,7 +356,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 #[derive(Decode)]
 struct StreamUpdateModuleArgs {
     stream_id: Encodable<Hash>,
-    module_def: LeafModuleDef,
+    module_id: Encodable<Hash>,
 }
 
 #[derive(Decode)]
