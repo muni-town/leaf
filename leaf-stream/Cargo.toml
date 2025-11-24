@@ -8,8 +8,8 @@ repository.workspace = true
 license.workspace = true
 
 [features]
-default = ["module-wasm"]
-module-wasm = ["dep:wasmtime"]
+default = []
+#module-wasm = ["dep:wasmtime"]
 
 [dependencies]
 # Leaf
@@ -27,20 +27,22 @@ anyhow = "1.0.99"
 blake3 = "1.8.2"
 parity-scale-codec = { version = "3.7.5", features = ["derive"] }
 ulid = "1.2.1"
+regex = "1.12.2"
+peg = "0.8.5"
 
 # Logging
 tracing = "0.1.41"
 
-# Module backends
-wasmtime = { version = "36.0.2", optional = true, features = [
-    "cranelift",
-    "runtime",
-    "parallel-compilation",
-    "std",
-    "async",
-], default-features = false }
+# Async
 async-channel = "2.5.0"
 async-lock = "3.4.1"
 futures = "0.3.31"
-regex = "1.12.2"
-peg = "0.8.5"
+
+# Module backends
+# wasmtime = { version = "36.0.2", optional = true, features = [
+#     "cranelift",
+#     "runtime",
+#     "parallel-compilation",
+#     "std",
+#     "async",
+# ], default-features = false }

@@ -36,6 +36,10 @@ const f64 = enhanceCodec(
 export const Hash = enhanceCodec(Bytes(32), hex.decode, hex.encode);
 export const Ulid = enhanceCodec(Bytes(16), crockfordDecode, crockfordEncode);
 
+const LeafModuleCodec = Struct({
+  moduleTypeId: str,
+  data: Bytes(),
+});
 const LeafModuleQueryParamKind = Enum({
   integer: _void,
   real: _void,
@@ -54,20 +58,19 @@ const LeafModuleQueryDef = Struct({
   params: Vector(LeafModuleQueryParamDef),
   limits: Vector(_void),
 });
-export type LeafModuleDef = CodecType<typeof LeafModuleDef>;
-const LeafModuleDef = Struct({
+export type BasicModuleDef = CodecType<typeof BasicModuleDef>;
+const BasicModuleDef = Struct({
   init_sql: str,
   authorizer: str,
   materializer: str,
   queries: Vector(LeafModuleQueryDef),
-  wasm_hash: Option(Hash),
 });
 export type StreamGenesis = CodecType<typeof StreamGenesis>;
 const StreamGenesis = Struct({
   stamp: Ulid,
   creator: str,
-  module: LeafModuleDef,
-  strict_module_updates: bool,
+  module: Hash,
+  options: Vector(Enum({})),
 });
 
 const SqlValue = Enum({
@@ -129,7 +132,7 @@ const StreamSubscribeArgs = Struct({
   query: LeafQuery,
 });
 
-const HasWasmResp = Result(bool, str);
+const HasModuleResp = Result(bool, str);
 
 type EventMap = {
   connect: () => void;
@@ -208,10 +211,19 @@ export class LeafClient {
     ) as any;
   }
 
-  async uploadWasm(wasm_data: ArrayBuffer): Promise<string> {
+  async uploadBasicModule(module: BasicModuleDef): Promise<string> {
+    return this.uploadModule(
+      LeafModuleCodec.enc({
+        moduleTypeId: "muni.town.leaf.module.basic.0",
+        data: BasicModuleDef.enc(module),
+      }).buffer,
+    );
+  }
+
+  async uploadModule(module: ArrayBufferLike): Promise<string> {
     const data: Uint8Array = await this.socket.emitWithAck(
-      "wasm/upload",
-      wasm_data,
+      "module/upload",
+      module,
     );
     const resp = Result(Hash, str).dec(data);
     if (!resp.success) {
@@ -220,12 +232,12 @@ export class LeafClient {
     return resp.value;
   }
 
-  async hasWasm(wasmId: string): Promise<boolean> {
+  async hasModule(moduleId: string): Promise<boolean> {
     const data: Uint8Array = await this.socket.emitWithAck(
-      "wasm/has",
-      Hash.enc(wasmId).buffer,
+      "module/exists",
+      Hash.enc(moduleId).buffer,
     );
-    const resp = HasWasmResp.dec(data);
+    const resp = HasModuleResp.dec(data);
     if (!resp.success) {
       throw new Error(resp.value);
     }
@@ -246,16 +258,13 @@ export class LeafClient {
     return resp.value;
   }
 
-  async updateModule(
-    streamId: string,
-    moduleDef: LeafModuleDef,
-  ): Promise<void> {
+  async updateModule(streamId: string, moduleId: string): Promise<void> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/update_module",
       Struct({
         streamId: Hash,
-        moduleDef: LeafModuleDef,
-      }).enc({ streamId, moduleDef }).buffer,
+        moduleId: Hash,
+      }).enc({ streamId, moduleId }).buffer,
     );
     console.log(data);
     const resp = Result(_void, str).dec(data);
@@ -272,19 +281,16 @@ export class LeafClient {
     genesis: StreamGenesis,
     url: string,
   ): Promise<string> {
-    if (!genesis.module.wasm_hash)
-      throw "No WASM module specified in stream genesis";
-
-    const hasModule = await this.hasWasm(genesis.module.wasm_hash);
+    const hasModule = await this.hasModule(genesis.module);
 
     if (!hasModule) {
       const resp = await fetch(url);
       const data = await resp.blob();
       const buffer = await data.arrayBuffer();
-      const uploadedId = await this.uploadWasm(buffer);
-      if (uploadedId !== genesis.module.wasm_hash)
+      const uploadedId = await this.uploadModule(buffer);
+      if (uploadedId !== genesis.module)
         throw new Error(
-          `The module ID that was uploaded didn't match the expected module ID. Expected ${genesis.module.wasm_hash} got ${uploadedId}`,
+          `The module ID that was uploaded didn't match the expected module ID. Expected ${genesis.module} got ${uploadedId}`,
         );
     }
 

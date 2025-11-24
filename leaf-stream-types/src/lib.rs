@@ -5,7 +5,7 @@ pub use parity_scale_codec::{Decode, Encode};
 ///
 /// Modules are responsible for providing the logic for writing to and querying from the stream.
 #[derive(Debug, Clone, Decode, Encode)]
-pub struct LeafModuleDef {
+pub struct BasicModuleDef {
     /// Idempodent initialization SQL that will be used to setup the module's SQLite database.
     ///
     /// This may be multiple statements separated by semicolons;
@@ -22,14 +22,9 @@ pub struct LeafModuleDef {
     ///
     /// Clients will be able to execute queries from this list by name.
     pub queries: Vec<LeafModuleQueryDef>,
-
-    /// The hash of the WASM module that should be loaded along with this module to provide
-    /// additional user-defined functions that can be called in the queries, authorizer, and
-    /// materializer.
-    pub wasm_module: Option<[u8; 32]>,
 }
 
-impl LeafModuleDef {
+impl BasicModuleDef {
     /// Calculate the module ID and get the encoded bytes representation
     pub fn module_id_and_bytes(&self) -> (blake3::Hash, Vec<u8>) {
         let bytes = self.encode();

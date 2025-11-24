@@ -1,19 +1,17 @@
 use std::{
     ops::{Bound, RangeBounds},
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use anyhow::Context;
 use async_lock::{Mutex, RwLock};
 use blake3::Hash;
 use leaf_stream_types::{
-    Decode, Event, IncomingEvent, LeafModuleDef, LeafQuery, LeafQueryReponse, QueryValidationError,
-    SqlRow, SqlRows, SqlValue,
+    Decode, Event, IncomingEvent, LeafQuery, LeafQueryReponse, QueryValidationError, SqlRows,
 };
 use leaf_utils::convert::*;
-use libsql::{AuthAction, Authorization, Connection, ScalarFunctionDef};
+use libsql::{AuthAction, Authorization, Connection};
 use parity_scale_codec::Encode;
-use regex::Regex;
 use tracing::instrument;
 use ulid::Ulid;
 
@@ -34,11 +32,6 @@ pub use leaf_stream_types as types;
 pub use libsql;
 pub use ulid;
 
-use crate::scale::ScaleExtractExpr;
-
-static SQL_COMMENT_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"--.*$|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/").unwrap());
-
 /// The genesis configuration of an event stream.
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct StreamGenesis {
@@ -51,13 +44,20 @@ pub struct StreamGenesis {
     /// User ID of the user that created the stream.
     pub creator: String,
     /// The initial module definition for the stream.
-    pub module: LeafModuleDef,
-    /// If this is `true` it means that module updates must be made by the module's materializer.
+    pub module_hash: Encodable<Hash>,
+    /// List of additional options that can be added to configure the stream.
     ///
-    /// If this is `false`, the module may also be updated at any time by the user that created the
-    /// stream.
-    pub strict_module_updates: bool,
+    /// Making this a vector allows us to add new option types in the future without breaking
+    /// backward compatibility.
+    pub options: Vec<StreamGenesisOption>,
 }
+
+/// A stream configuration option.
+///
+/// We don't have any option types yet, but having this here allows us to add options in the future
+/// while maintaining backward compatibility.
+#[derive(Encode, Decode, Debug, Clone)]
+pub enum StreamGenesisOption {}
 
 impl StreamGenesis {
     /// Compute the stream ID of this stream based on it's genesis config.
@@ -107,17 +107,17 @@ struct ActiveSubscription {
 }
 
 enum ModuleState {
-    Unloaded(LeafModuleDef),
+    Unloaded(Hash),
     Loaded {
-        module: Arc<LeafModule>,
+        module: Arc<dyn LeafModule>,
         module_db: libsql::Connection,
     },
 }
 impl ModuleState {
     fn id(&self) -> Hash {
         match self {
-            ModuleState::Unloaded(def) => def.module_id_and_bytes().0,
-            ModuleState::Loaded { module, .. } => module.id(),
+            ModuleState::Unloaded(hash) => *hash,
+            ModuleState::Loaded { module, .. } => module.module_id(),
         }
     }
 }
@@ -149,8 +149,8 @@ pub enum StreamError {
     ModuleNotNeeded,
     #[error("The stream's module has not been provided: {0}")]
     ModuleNotProvided(Hash),
-    #[error("The stream module could not be decoded from the database: {0}")]
-    ModuleDecodeError(parity_scale_codec::Error),
+    #[error("The stream module hash could not be decoded from the database")]
+    ModuleHashDecodeError,
     #[error(
         "Attempted to provide module with different ID than the one needed \
         by the stream. Needed {needed} but got {provided}"
@@ -170,8 +170,6 @@ pub enum StreamError {
         "Could not query main database file. This should not happen under normal circumstances."
     )]
     FailedToQueryDatabaseFilename,
-    #[error("The query `{0}` does not exist in this module.")]
-    QueryDoesNotExistInModule(String),
     #[error("Error validating query: {0}")]
     QueryValidationError(#[from] QueryValidationError),
 }
@@ -196,18 +194,18 @@ impl Stream {
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
-    pub async fn raw_set_module(&self, module_def: LeafModuleDef) -> anyhow::Result<()> {
+    pub async fn raw_set_module(&self, module_hash: Hash) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         state
             .db
             .execute(
                 "update stream_state set module_def = ?, module_event_cursor = null where id = 1",
-                [module_def.encode()],
+                [module_hash.as_bytes().to_vec()],
             )
             .await
             .context("error updating steam module and module event cursor")?;
         state.module_event_cursor = 0;
-        state.module_state = ModuleState::Unloaded(module_def);
+        state.module_state = ModuleState::Unloaded(module_hash);
 
         Ok(())
     }
@@ -252,7 +250,7 @@ impl Stream {
 
         // Parse the current state from the database or initialize a new state if one does not
         // exist.
-        let module;
+        let module_state;
         let module_event_cursor;
         if let Some(row) = row {
             let (db_stream_id, module_def, db_module_event_cursor): (Hash, Vec<u8>, Option<i64>) =
@@ -265,28 +263,27 @@ impl Stream {
                     database_id: db_stream_id,
                 });
             }
-            module = ModuleState::Unloaded(
-                LeafModuleDef::decode(&mut &module_def[..])
-                    .map_err(StreamError::ModuleDecodeError)?,
-            );
+            let module_hash_bytes: [u8; 32] = module_def[..]
+                .try_into()
+                .map_err(|_| StreamError::ModuleHashDecodeError)?;
+            module_state = ModuleState::Unloaded(Hash::from_bytes(module_hash_bytes));
             module_event_cursor = db_module_event_cursor.unwrap_or(0);
         } else {
-            let (_id, module_def) = genesis.module.module_id_and_bytes();
             // Initialize the stream state
             db.execute(
                 "insert into stream_state \
-                (id, creator, stream_id, module_def, module_event_cursor) values \
-                (1, :creator, :stream_id, :module_def, null) ",
+                (id, creator, stream_id, module_hash, module_event_cursor) values \
+                (1, :creator, :stream_id, :module_hash, null) ",
                 (
                     (":stream_id", id.as_bytes().to_vec()),
                     (":creator", genesis.creator.clone()),
-                    (":module_def", module_def),
+                    (":module_hash", genesis.module_hash.0.as_bytes().to_vec()),
                 ),
             )
             .await
             .context("error initializing stream state")?;
 
-            module = ModuleState::Unloaded(genesis.module.clone());
+            module_state = ModuleState::Unloaded(genesis.module_hash.0);
             module_event_cursor = 0;
         };
 
@@ -309,7 +306,7 @@ impl Stream {
             state: Arc::new(RwLock::new(StreamState {
                 db_filename,
                 db,
-                module_state: module,
+                module_state,
                 latest_event,
                 module_event_cursor,
                 query_subscriptions: Default::default(),
@@ -367,10 +364,10 @@ impl Stream {
     ///
     /// You must then call [`provide_module()`][Self::provide_module] with the module in order to
     /// allow the stream to continue processing.
-    pub async fn needs_module(&self) -> Option<LeafModuleDef> {
+    pub async fn needs_module(&self) -> Option<Hash> {
         let state = self.state.read().await;
         match &state.module_state {
-            ModuleState::Unloaded(module_def) => Some(module_def.clone()),
+            ModuleState::Unloaded(hash) => Some(*hash),
             _ => None,
         }
     }
@@ -378,14 +375,13 @@ impl Stream {
     /// Provide the stream it's module, if it is needed.
     pub async fn provide_module(
         &self,
-        module: Arc<LeafModule>,
+        module: Arc<dyn LeafModule>,
         module_db: libsql::Connection,
     ) -> Result<(), StreamError> {
         let mut state = self.state.write().await;
         match &state.module_state {
-            ModuleState::Unloaded(module_def) => {
-                let needed_id = module_def.module_id_and_bytes().0;
-                if module.id() == needed_id {
+            ModuleState::Unloaded(needed_id) => {
+                if module.module_id() == *needed_id {
                     // Make sure an `events` database is connected, which must be connected to the
                     // same database with the same virtual filesystem.
                     let files: Vec<String> = module_db
@@ -403,9 +399,6 @@ impl Stream {
                         return Err(StreamError::ModuleDbEventsAttachmentHasWrongFilename);
                     }
 
-                    // Install our user-defined function
-                    install_udfs(&module_db)?;
-
                     state.module_state = ModuleState::Loaded { module, module_db };
                     drop(state);
 
@@ -415,8 +408,8 @@ impl Stream {
                     Ok(())
                 } else {
                     Err(StreamError::InvalidModuleId {
-                        needed: needed_id,
-                        provided: module.id(),
+                        needed: *needed_id,
+                        provided: module.module_id(),
                     })
                 }
             }
@@ -426,12 +419,10 @@ impl Stream {
 
     fn ensure_module_loaded(
         module: &ModuleState,
-    ) -> Result<(&LeafModule, &Connection), StreamError> {
+    ) -> Result<(Arc<dyn LeafModule>, &Connection), StreamError> {
         match module {
-            ModuleState::Unloaded(module_def) => Err(StreamError::ModuleNotProvided(
-                module_def.module_id_and_bytes().0,
-            )),
-            ModuleState::Loaded { module, module_db } => Ok((module.as_ref(), module_db)),
+            ModuleState::Unloaded(module_hash) => Err(StreamError::ModuleNotProvided(*module_hash)),
+            ModuleState::Loaded { module, module_db } => Ok((module.clone(), module_db)),
         }
     }
 
@@ -451,7 +442,7 @@ impl Stream {
         // called twice.
         if state.module_event_cursor == 0 {
             module_db.authorizer(Some(Arc::new(module_init_authorizer)))?;
-            let init_result = module_db.execute_batch(&module.def().init_sql).await;
+            let init_result = module.init(module_db).await;
             module_db.authorizer(None)?;
             init_result?;
         }
@@ -481,25 +472,14 @@ impl Stream {
         module_db.execute("begin immediate", ()).await?;
 
         let result = async {
-            for (i, (id, user, payload)) in events.into_iter().enumerate() {
-                assert_eq!(id, state.module_event_cursor + 1 + i as i64);
-
-                // Setup the temporary `event` table to contain the next event to materialize.
-                module_db
-                    .execute("drop table if exists temp.event", ())
-                    .await?;
-                module_db
-                    .execute(
-                        r#"
-                            create temp table if not exists event as select ? as user, ? as payload
-                        "#,
-                        (user, payload),
-                    )
-                    .await?;
+            for (i, (idx, user, payload)) in events.into_iter().enumerate() {
+                assert_eq!(idx, state.module_event_cursor + 1 + i as i64);
 
                 // Execute the materializer for the event
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
-                let result = module_db.execute_batch(&module.def().materializer).await;
+                let result = module
+                    .materialize(module_db, Event { idx, user, payload })
+                    .await;
                 module_db.authorizer(None)?;
                 result?;
 
@@ -558,37 +538,40 @@ impl Stream {
         module_db.execute("begin immediate", ()).await?;
 
         let result = async {
-            for IncomingEvent { user, payload } in events {
-                // Setup the temporary `event` table to contain the next event to authorize / materialize.
-                module_db
-                    .execute("drop table if exists temp.event", ())
-                    .await?;
-                module_db
-                    .execute(
-                        r#"
-                        create temp table if not exists event as select ? as user, ? as payload
-                    "#,
-                        (user, payload),
-                    )
-                    .await?;
-
+            for event in events {
                 // Execute the authorizer
                 module_db.authorizer(Some(Arc::new(module_authorize_authorizer)))?;
-                module_db.execute_batch(&module.def().authorizer).await?;
+                let result = module.authorize(module_db, event.clone()).await;
                 module_db.authorizer(None)?;
+                result?;
 
                 // Insert the event into the events table
-                module_db
-                    .execute(
-                        "insert into events.events select null as id, user, payload from event",
+                let idx = module_db
+                    .query(
+                        r#"insert into events.events
+                        select null as id, user, payload from event returning id"#,
                         (),
                     )
-                    .await?;
+                    .await?
+                    .next()
+                    .await?
+                    .ok_or_else(|| anyhow::format_err!("Internal error getting event index"))?
+                    .get::<i64>(0)?;
 
                 // Execute the materializer for the event
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
-                module_db.execute_batch(&module.def().materializer).await?;
+                let result = module
+                    .materialize(
+                        module_db,
+                        Event {
+                            idx,
+                            user: event.user,
+                            payload: event.payload,
+                        },
+                    )
+                    .await;
                 module_db.authorizer(None)?;
+                result?;
 
                 // Increment the module event cursor
                 module_db
@@ -697,109 +680,21 @@ impl Stream {
     #[instrument(skip(self), err)]
     pub async fn query(&self, query: LeafQuery) -> Result<SqlRows, StreamError> {
         let state = self.state.read().await;
-        let query_name = &query.query_name;
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
-
-        // Get the module's query definition by name
-        let query_def = module
-            .def()
-            .queries
-            .iter()
-            .find(|x| x.name == query.query_name)
-            .ok_or_else(|| StreamError::QueryDoesNotExistInModule(query_name.clone()))?;
-
-        // Make sure the query is valid for it's definition
-        query_def.validate_query(&query)?;
 
         // Start a new read transaction
         module_db.execute("begin deferred", ()).await?;
 
-        // TODO: replace this with a less naïve statement splitter
-        let sql_statements = SQL_COMMENT_REGEX.replace_all(&query_def.sql, "");
-        let sql_statements = sql_statements
-            .split(";")
-            .filter(|x| !x.is_empty())
-            .collect::<Vec<_>>();
-
-        // Execute the query statements
-        let mut query_result = None;
-        for statement in sql_statements {
-            module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
-            let r = module_db
-                .query(
-                    statement,
-                    query
-                        .params
-                        .clone()
-                        .into_iter()
-                        .map(|(k, v)| (format!("${k}"), leaf_sql_value_to_libsql(v)))
-                        .chain([
-                            (
-                                "$start".to_string(),
-                                libsql::Value::Integer(query.start.unwrap_or(1)),
-                            ),
-                            (
-                                "$limit".to_string(),
-                                libsql::Value::Integer(query.limit.unwrap_or(100)),
-                            ),
-                            (
-                                "$requesting_user".to_string(),
-                                match query.requesting_user.clone() {
-                                    Some(t) => libsql::Value::Text(t),
-                                    None => libsql::Value::Null,
-                                },
-                            ),
-                        ])
-                        .collect::<Vec<_>>(),
-                )
-                .await;
-            module_db.authorizer(None)?;
-
-            match r {
-                Ok(mut r) => {
-                    let parsed = async {
-                        // Convert the query result to our Leaf SqlRows type
-                        let column_count = r.column_count();
-                        let column_names = (0..column_count)
-                            .map(|i| r.column_name(i).unwrap_or("").to_string())
-                            .collect::<Vec<_>>();
-                        let mut rows = Vec::new();
-                        while let Some(row) = r.next().await? {
-                            rows.push(SqlRow {
-                                values: (0..column_count)
-                                    .map(|i| row.get_value(i).map(libsql_value_to_leaf))
-                                    .collect::<Result<Vec<_>, _>>()?,
-                            })
-                        }
-                        Ok::<_, libsql::Error>(Some(SqlRows { rows, column_names }))
-                    };
-                    match parsed.await {
-                        // NOTE: only the last query result will be kept and returned. Having
-                        // multiple statements, though, allows you to do read authorization more
-                        // easily.
-                        Ok(result) => query_result = result,
-                        Err(e) => {
-                            module_db.execute("commit", ()).await?;
-                            return Err(e.into());
-                        }
-                    }
-                }
-                Err(e) => {
-                    module_db.execute("commit", ()).await?;
-                    return Err(e.into());
-                }
-            }
-        }
-
-        let Some(query_result) = query_result else {
-            return Err(StreamError::EmptyQuery);
-        };
+        module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
+        let result = module.query(module_db, query).await;
+        module_db.authorizer(None)?;
+        let result = result?;
 
         // Finish the read transaction
         module_db.execute("commit", ()).await?;
 
         // Return the result
-        Ok(query_result)
+        Ok(result)
     }
 
     /// This function returns a future that must be awaited on in order for subscriptions to the
@@ -878,94 +773,6 @@ impl Stream {
             }
         })
     }
-}
-
-/// Install Leaf's user-defined functions on the database connection
-fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
-    use libsql::Value;
-
-    // A panic function that can be used to intentionally stop a transaction such as in the event
-    // authorizer.
-    db.create_scalar_function(ScalarFunctionDef {
-        name: "throw".to_string(),
-        num_args: -1,
-        deterministic: true,
-        innocuous: false,
-        direct_only: true,
-        callback: Arc::new(|values| {
-            anyhow::bail!(
-                "Exception thrown: {}",
-                values
-                    .into_iter()
-                    .map(|x| match x {
-                        Value::Null => "NULL".to_string(),
-                        Value::Integer(i) => i.to_string(),
-                        Value::Real(r) => r.to_string(),
-                        Value::Text(t) => t.to_string(),
-                        Value::Blob(bytes) => bytes
-                            .iter()
-                            .map(|b| format!("{:02X}", b))
-                            .collect::<Vec<String>>()
-                            .join(""),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-        }),
-    })?;
-
-    db.create_scalar_function(ScalarFunctionDef {
-        name: "unauthorized".to_string(),
-        num_args: -1,
-        deterministic: true,
-        innocuous: false,
-        direct_only: true,
-        callback: Arc::new(|values| {
-            anyhow::bail!(
-                "Unauthorized: {}",
-                values
-                    .into_iter()
-                    .map(|x| match x {
-                        Value::Null => "NULL".to_string(),
-                        Value::Integer(i) => i.to_string(),
-                        Value::Real(r) => r.to_string(),
-                        Value::Text(t) => t.to_string(),
-                        Value::Blob(bytes) => bytes
-                            .iter()
-                            .map(|b| format!("{:02X}", b))
-                            .collect::<Vec<String>>()
-                            .join(""),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-        }),
-    })?;
-
-    db.create_scalar_function(ScalarFunctionDef {
-        name: "scale_extract".to_string(),
-        num_args: 2,
-        deterministic: true,
-        innocuous: true,
-        direct_only: false,
-        callback: Arc::new(|values| {
-            let Value::Blob(blob) = values.first().unwrap() else {
-                anyhow::bail!("First argument to scale_extract must be blob");
-            };
-            let Value::Text(path) = values.get(1).unwrap() else {
-                anyhow::bail!("Second argument to scale_extract must be sring");
-            };
-            let extractor = path
-                .parse::<ScaleExtractExpr>()
-                .context("Could not parse scale_extract path")?;
-
-            extractor
-                .extract(&mut &blob[..])
-                .context("Could not extract value from SCALE")
-        }),
-    })?;
-
-    Ok(())
 }
 
 /// The initialization authorizer is the same as the materialize authorizer.
@@ -1052,36 +859,4 @@ impl std::cmp::PartialEq for Stream {
     fn eq(&self, other: &Self) -> bool {
         self.info.id == other.info.id
     }
-}
-
-fn leaf_sql_value_to_libsql(value: SqlValue) -> libsql::Value {
-    use SqlValue as S;
-    use libsql::Value as V;
-    match value {
-        S::Null => V::Null,
-        S::Integer(i) => V::Integer(i),
-        S::Real(r) => V::Real(r),
-        S::Text(t) => V::Text(t),
-        S::Blob(b) => V::Blob(b),
-    }
-}
-
-fn libsql_value_to_leaf(value: libsql::Value) -> SqlValue {
-    use SqlValue as S;
-    use libsql::Value as V;
-    match value {
-        V::Null => S::Null,
-        V::Integer(i) => S::Integer(i),
-        V::Real(r) => S::Real(r),
-        V::Text(t) => S::Text(t),
-        V::Blob(b) => S::Blob(b),
-    }
-}
-
-/// Check that the provided bytes represent a valid WASM file.
-///
-/// This doesn't check that the imports/exports of the module are compatible with Leaf, it just does
-/// a very quick check that the bytes are valid according to the WASM binary file format.
-pub fn validate_wasm(bytes: &[u8]) -> anyhow::Result<()> {
-    wasmtime::Module::validate(&ENGINE, bytes)
 }

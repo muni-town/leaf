@@ -7,7 +7,7 @@
 
 	import { backend, backendStatus } from '$lib/workers';
 	import { getContext } from 'svelte';
-	import type { LeafQuery, StreamGenesis } from '@muni-town/leaf-client';
+	import type { BasicModuleDef, LeafQuery, StreamGenesis } from '@muni-town/leaf-client';
 	import { ulid } from 'ulidx';
 	import { page } from '$app/state';
 
@@ -34,18 +34,24 @@
 		localStorage.setItem('payload', payload);
 	});
 
+	const defaultModule: BasicModuleDef = {
+		authorizer: '',
+		init_sql: '',
+		materializer: '',
+		queries: []
+	};
 	const defaultGenesis: StreamGenesis = {
 		stamp: '',
 		creator: '',
-		module: {
-			init_sql: '',
-			authorizer: '',
-			materializer: '',
-			queries: [],
-			wasm_hash: undefined
-		},
-		strict_module_updates: false
+		module: '',
+		options: []
 	};
+	let newStreamModule: BasicModuleDef = $state(
+		JSON.parse(localStorage.getItem('basicModuleDef') || JSON.stringify(defaultModule))
+	);
+	$effect(() => {
+		localStorage.setItem('basicModuleDef', JSON.stringify(newStreamModule || defaultModule));
+	});
 	let newStreamGenesis: StreamGenesis = $state(
 		JSON.parse(localStorage.getItem('streamGenesis') || JSON.stringify(defaultGenesis))
 	);
@@ -75,11 +81,17 @@
 		if (!backendStatus.did) return;
 		newStreamGenesis.stamp = ulid();
 		newStreamGenesis.creator = backendStatus.did;
+		console.log('module', $state.snapshot(newStreamModule));
+		const moduleId = await backend.uploadModule($state.snapshot(newStreamModule));
+		console.log('moduleid', moduleId);
+		newStreamGenesis.module = moduleId;
+		console.log('genesis', $state.snapshot(newStreamGenesis));
 		streamId.value = await backend.createStream($state.snapshot(newStreamGenesis));
 	}
 	async function updateModule() {
 		if (!backendStatus.did) return;
-		await backend.updateModule(streamId.value, $state.snapshot(newStreamGenesis.module));
+		const moduleId = await backend.uploadModule($state.snapshot(newStreamModule));
+		await backend.updateModule(streamId.value, moduleId);
 	}
 
 	async function runQuery() {
@@ -261,7 +273,7 @@
 						const file = moduleFileInput?.item(0);
 						if (!file) throw 'Select file';
 						const buffer = await file.arrayBuffer();
-						const id = await backend.uploadModule(buffer);
+						const id = await backend.uploadModule(newStreamModule);
 						moduleId = id;
 						events.push(`uploaded module: ${moduleId}`);
 					} catch (e: any) {
@@ -327,7 +339,7 @@
 				</p>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamGenesis.module.init_sql}
+					bind:value={newStreamModule.init_sql}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="CREATE TABLE IF NOT EXISTS example ();"
@@ -344,7 +356,7 @@
 				</div>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamGenesis.module.authorizer}
+					bind:value={newStreamModule.authorizer}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="-- authorization SQL"
@@ -364,7 +376,7 @@
 				</div>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamGenesis.module.materializer}
+					bind:value={newStreamModule.materializer}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="-- materialization sql"
@@ -375,7 +387,7 @@
 					<button
 						class="btn"
 						onclick={() => {
-							newStreamGenesis.module.queries.push({
+							newStreamModule.queries.push({
 								name: '',
 								sql: '',
 								limits: [],
@@ -385,27 +397,28 @@
 					>
 				</h2>
 				<hr class="my-3" />
-				{#each newStreamGenesis.module.queries as query, i}
+				{#each newStreamModule.queries as query, i}
 					<div class="m-8 flex flex-col gap-3">
 						<div class="flex gap-3">
 							<input class="input" placeholder="query name" bind:value={query.name} />
 							<button
 								class="btn"
 								onclick={() =>
-									(newStreamGenesis.module.queries =
-										newStreamGenesis.module.queries.splice(i, 0))}
-								>Delete Query</button
+									(newStreamModule.queries = newStreamModule.queries.splice(
+										i,
+										0
+									))}>Delete Query</button
 							>
 						</div>
 						<div class="m-3 gap-2 text-sm opacity-40">
-							<p>
-								SQL used to return the query results.
-							</p>
+							<p>SQL used to return the query results.</p>
 							<p>
 								To access the user that is making the query you can use the <code
-								>$requesting_user</code > placeholder, as well as and
-								<code>$start</code> and <code>$limit</code> in order to limit
-								results based on the event index and count.
+									>$requesting_user</code
+								>
+								placeholder, as well as and
+								<code>$start</code> and <code>$limit</code> in order to limit results
+								based on the event index and count.
 							</p>
 						</div>
 						<CodeMirror

@@ -1,5 +1,5 @@
 -- Contains content-addressed WASM blobs
-create table if not exists "wasm_blobs" (
+create table if not exists "module_blobs" (
     -- blake3 hash of the blob
     "hash"  blob unique not null primary key,
     -- the blob data
@@ -9,11 +9,11 @@ create table if not exists "wasm_blobs" (
 
 -- Temporary staging table for WASM blobs that have been uploaded
 -- but not used by a stream yet.
-create table if not exists "staged_wasm" (
+create table if not exists "staged_modules" (
     -- The user that uploaded the staged wasm
     "creator"	blob not null,
     -- The hash of the WASM blob that was uploaded
-    "hash"  blob not null references wasm_blobs(hash),
+    "hash"  blob not null references module_blobs(hash),
     -- The unix timestamp for when this WASM module was staged
     "timestamp" integer not null default (unixepoch())
 );
@@ -27,7 +27,7 @@ create table if not exists "streams" (
     -- The encoded genesis config of the stream.
     "genesis" blob not null,
     -- ID of the WASM module needed by this stream, if any
-    "wasm_module_hash" blob references wasm_blobs(hash),
+    "module_hash" blob references module_blobs(hash),
     -- The index of the latest event in the stream
     "latest_event" integer,
     unique (id, creator)
