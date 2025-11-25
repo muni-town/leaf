@@ -44,16 +44,13 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"esbuild"
-		],
-		"overrides": {
-			"@muni-town/leaf-client": "link:../clients/typescript"
-		}
+		]
 	},
 	"dependencies": {
 		"@codemirror/lang-json": "^6.0.2",
 		"@codemirror/lang-sql": "^6.10.0",
 		"@codemirror/theme-one-dark": "^6.1.3",
-		"@muni-town/leaf-client": "link:../clients/typescript",
+		"@muni-town/leaf-client": "0.1.0-alpha.6",
 		"svelte-codemirror-editor": "^2.1.0"
 	}
 }
