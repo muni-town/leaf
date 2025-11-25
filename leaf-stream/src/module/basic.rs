@@ -40,13 +40,22 @@ impl LeafModule for BasicModule {
         }
     }
 
-    fn init(&'_ self, module_db: &libsql::Connection) -> BoxFuture<'_, anyhow::Result<()>> {
-        let def = self.def.clone();
+    fn init_db_conn(&'_ self, module_db: &libsql::Connection) -> BoxFuture<'_, anyhow::Result<()>> {
         let module_db = module_db.clone();
         Box::pin(async move {
             // Install our user-defined SQL functions
             install_udfs(&module_db)?;
+            Ok(())
+        })
+    }
 
+    fn init_db_schema(
+        &'_ self,
+        module_db: &libsql::Connection,
+    ) -> BoxFuture<'_, anyhow::Result<()>> {
+        let def = self.def.clone();
+        let module_db = module_db.clone();
+        Box::pin(async move {
             module_db.execute_batch(&def.init_sql).await?;
             Ok(())
         })
