@@ -199,11 +199,10 @@ impl Stream {
         state
             .db
             .execute(
-                "update stream_state set module_def = ?, module_event_cursor = null where id = 1",
+                "update stream_state set module_hash = ?, module_event_cursor = null where id = 1",
                 [module_hash.as_bytes().to_vec()],
             )
-            .await
-            .context("error updating steam module and module event cursor")?;
+            .await?;
         state.module_event_cursor = 0;
         state.module_state = ModuleState::Unloaded(module_hash);
 
@@ -238,22 +237,20 @@ impl Stream {
         // Load the stream state from the database
         let row = db
             .query(
-                "select stream_id, module_def, module_event_cursor \
+                "select stream_id, module_hash, module_event_cursor \
                 from stream_state where id=1",
                 (),
             )
-            .await
-            .context("error querying stream state")?
+            .await?
             .next()
-            .await
-            .context("error loading stream state from query")?;
+            .await?;
 
         // Parse the current state from the database or initialize a new state if one does not
         // exist.
         let module_state;
         let module_event_cursor;
         if let Some(row) = row {
-            let (db_stream_id, module_def, db_module_event_cursor): (Hash, Vec<u8>, Option<i64>) =
+            let (db_stream_id, module_hash, db_module_event_cursor): (Hash, Vec<u8>, Option<i64>) =
                 row.parse_row()
                     .await
                     .context("error parsing stream state")?;
@@ -263,7 +260,7 @@ impl Stream {
                     database_id: db_stream_id,
                 });
             }
-            let module_hash_bytes: [u8; 32] = module_def[..]
+            let module_hash_bytes: [u8; 32] = module_hash[..]
                 .try_into()
                 .map_err(|_| StreamError::ModuleHashDecodeError)?;
             module_state = ModuleState::Unloaded(Hash::from_bytes(module_hash_bytes));
@@ -535,15 +532,20 @@ impl Stream {
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
 
         // Start a new transaction
+        tracing::debug!("Starting new transaction");
         module_db.execute("begin immediate", ()).await?;
 
         let result = async {
             for event in events {
                 // Execute the authorizer
+                tracing::debug!("Running authorizer");
+
                 module_db.authorizer(Some(Arc::new(module_authorize_authorizer)))?;
                 let result = module.authorize(module_db, event.clone()).await;
                 module_db.authorizer(None)?;
                 result?;
+
+                tracing::debug!("Authorized");
 
                 // Insert the event into the events table
                 let idx = module_db
@@ -557,6 +559,8 @@ impl Stream {
                     .await?
                     .ok_or_else(|| anyhow::format_err!("Internal error getting event index"))?
                     .get::<i64>(0)?;
+
+                tracing::debug!("Inserted event into events table");
 
                 // Execute the materializer for the event
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
@@ -572,6 +576,8 @@ impl Stream {
                     .await;
                 module_db.authorizer(None)?;
                 result?;
+
+                tracing::debug!("Materialized event");
 
                 // Increment the module event cursor
                 module_db
@@ -831,17 +837,21 @@ const module_query_authorizer: fn(&libsql::AuthContext) -> libsql::Authorization
     read_only_module_db_authorizer;
 
 fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {
-    match ctx.action {
-        libsql::AuthAction::Read { .. } | libsql::AuthAction::Select => {
+    match (ctx.action, ctx.database_name) {
+        (_op, Some("temp")) => libsql::Authorization::Allow,
+        (libsql::AuthAction::Read { .. } | libsql::AuthAction::Select, _db) => {
             libsql::Authorization::Allow
         }
-        libsql::AuthAction::Function { function_name } => match function_name {
+        // TODO: this is kind of specific to the module which isn't idea. We may need to move the
+        // authorization responsibility to the module.
+        (libsql::AuthAction::Function { function_name }, _db) => match function_name {
             "unauthorized" | "throw" | "coalesce" | "->>" | "->" => libsql::Authorization::Allow,
             _ => libsql::Authorization::Deny,
         },
-        op => {
+        (op, db) => {
             tracing::warn!(
                 ?op,
+                ?db,
                 "Denying SQL operation from read_only_module_db_authorizer"
             );
             libsql::Authorization::Deny
