@@ -52,13 +52,19 @@ pub trait LeafModule: Sync + Send {
     /// that was used to load / save the module.
     fn module_id(&self) -> Hash;
 
-    /// Called to initialize the module database.
+    /// Setup the database connection when the module is first loaded.
     ///
-    /// If there are any user-defined functions needed by the module those should be installed.
+    /// This gives you a chance to register any UDFs on the db connection if necessary.
+    fn init_db_conn(&'_ self, module_db: &libsql::Connection) -> BoxFuture<'_, anyhow::Result<()>>;
+
+    /// Called to initialize the module database.
     ///
     /// > **Note:** It is **ilegal** to change the authorizer of the `module_db`. That will be
     /// > handled by the stream.
-    fn init(&'_ self, module_db: &libsql::Connection) -> BoxFuture<'_, anyhow::Result<()>>;
+    fn init_db_schema(
+        &'_ self,
+        module_db: &libsql::Connection,
+    ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Called to materialize a new event
     ///
