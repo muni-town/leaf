@@ -93,7 +93,6 @@ export function messagePortInterface<
               transferList.push(arg);
             }
           }
-          console.log(...args);
           messagePort.postMessage(["call", n, reqId, ...args], transferList);
           return respPromise as any;
         };

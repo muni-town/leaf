@@ -6,7 +6,8 @@ import type {
 	IncomingEvent,
 	LeafQuery,
 	SqlRows,
-	StreamGenesis
+	StreamGenesis,
+  StreamInfo
 } from '@muni-town/leaf-client';
 
 // Force page reload when hot reloading this file to avoid confusion if the workers get mixed up.
@@ -34,6 +35,7 @@ export type BackendInterface = {
 	getProfile(did?: string): Promise<ProfileViewDetailed | undefined>;
 	query(streamId: string, query: LeafQuery): Promise<SqlRows>;
 	hasModule(moduleId: string): Promise<boolean>;
+  streamInfo(streamId: string): Promise<StreamInfo>;
 	createStream(genesis: StreamGenesis): Promise<string>;
 	updateModule(streamId: string, moduleId: string): Promise<void>;
 	subscribe(streamId: string, query: LeafQuery): Promise<string>;

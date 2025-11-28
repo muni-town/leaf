@@ -307,6 +307,26 @@
 				<input class="input w-full" bind:value={moduleId} placeholder="wasm hash" />
 				<button class="btn btn-outline" disabled={loading}>Check</button>
 			</form>
+
+			<!-- Stream Info -->
+			<form
+				class="m-8 flex flex-col gap-2"
+				onsubmit={async () => {
+					loading = true;
+					try {
+						const streamInfo = await backend.streamInfo(streamId.value);
+						events.push(
+							`Stream info:\ncreator: ${streamInfo.creator}\nmodule: ${streamInfo.module}`
+						);
+					} catch (e: any) {
+						events.push(e.toString());
+					}
+					loading = false;
+				}}
+			>
+				<h2 class="mb-4 text-xl font-bold">StreamInfo</h2>
+				<button class="btn btn-outline" disabled={loading}>Get Info</button>
+			</form>
 		{:else if currentTab == 'Create Stream'}
 			<div class="m-3 flex flex-col gap-2">
 				<button class="btn w-40" onclick={createStream}>Create Stream</button>

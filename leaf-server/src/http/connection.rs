@@ -99,6 +99,43 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     );
 
     let span_ = span.clone();
+    let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/info",
+        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+            let result = async move {
+                // Parse input
+                let input = data?;
+                let stream_id = Encodable::<Hash>::decode(&mut &input[..])?;
+                let stream_id = stream_id.0;
+
+                let open_streams = open_streams_.upgradable_read().await;
+                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                    stream.clone()
+                } else {
+                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
+                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
+                    };
+                    let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
+                    open_streams.insert(stream_id, stream.clone());
+                    stream
+                };
+
+                anyhow::Ok(StreamInfo {
+                    creator: stream.genesis().creator.clone(),
+                    module: Encodable(stream.module_id().await),
+                })
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/info"))
+            .await;
+
+            ack.send(&bytes(Encodable(result).encode()))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
     let did_ = did.clone();
     let open_streams_ = open_streams.clone();
     socket.on(
@@ -375,6 +412,12 @@ struct StreamQueryArgs {
 struct StreamSubscribeNotification {
     subscription_id: Encodable<Ulid>,
     response: Result<SqlRows, String>,
+}
+
+#[derive(Encode)]
+struct StreamInfo {
+    creator: String,
+    module: Encodable<Hash>,
 }
 
 #[derive(Decode)]

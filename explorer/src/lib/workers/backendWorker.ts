@@ -226,13 +226,22 @@ function connectMessagePort(port: MessagePortApi) {
 		async hasModule(moduleId) {
 			return (await state.leafClient?.hasModule(moduleId)) || false;
 		},
+		async streamInfo(streamId) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			return await state.leafClient.streamInfo(streamId);
+		},
 		async uploadModule(module) {
-      console.log('uploading module');
-			return await state.leafClient!.uploadBasicModule(module);
+			console.log('uploading module');
+			const moduleId = await state.leafClient!.uploadBasicModule(module);
+      console.log('Created module:', moduleId);
+      return moduleId;
 		},
 		async createStream(genesis) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
-			return await state.leafClient.createStream(genesis);
+      console.log("Creating stream:", genesis);
+			const streamId = await state.leafClient.createStream(genesis);
+      console.log('created stream:', streamId);
+      return streamId;
 		},
 		async updateModule(streamId, moduleDef) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
@@ -267,7 +276,7 @@ function connectMessagePort(port: MessagePortApi) {
 function createLeafClient(agent: Agent, url: string) {
 	return new LeafClient(url, async () => {
 		const resp = await agent.com.atproto.server.getServiceAuth({
-			aud: `did:web:${new URL(url).host}`
+			aud: `did:web:${new URL(url).hostname}`
 		});
 		if (!resp) throw 'Error authenticating for leaf server';
 		return resp.data.token;

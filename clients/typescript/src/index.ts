@@ -95,6 +95,12 @@ const IncomingEvent = Struct({
   payload: Bytes(),
 });
 
+export type StreamInfo = CodecType<typeof StreamInfo>;
+const StreamInfo = Struct({
+  creator: str,
+  module: Hash,
+});
+
 export type LeafQuery = CodecType<typeof LeafQuery>;
 const LeafQuery = Struct({
   query_name: str,
@@ -249,8 +255,22 @@ export class LeafClient {
       "stream/create",
       StreamGenesis.enc(genesis).buffer,
     );
-    console.log(data);
     const resp = Result(Hash, str).dec(data);
+    if (!resp.success) {
+      console.error(resp);
+      throw new Error(resp.value);
+    }
+    return resp.value;
+  }
+
+  async streamInfo(streamId: string): Promise<StreamInfo> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "stream/info",
+      Struct({
+        streamId: Hash,
+      }).enc({ streamId }).buffer,
+    );
+    const resp = Result(StreamInfo, _void).dec(data);
     if (!resp.success) {
       console.error(resp);
       throw new Error(resp.value);
