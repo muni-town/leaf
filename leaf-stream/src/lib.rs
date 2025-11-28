@@ -442,7 +442,9 @@ impl Stream {
         // called twice.
         if state.module_event_cursor == 0 {
             module_db.authorizer(Some(Arc::new(module_init_authorizer)))?;
-            let init_result = module.init_db_schema(module_db).await;
+            let init_result = module
+                .init_db_schema(module_db, &self.genesis().creator)
+                .await;
             module_db.authorizer(None)?;
             init_result?;
         }

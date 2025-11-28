@@ -64,6 +64,7 @@ pub trait LeafModule: Sync + Send {
     fn init_db_schema(
         &'_ self,
         module_db: &libsql::Connection,
+        creator: &str,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Called to materialize a new event

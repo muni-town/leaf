@@ -1,3 +1,5 @@
+use libsql::ffi::SQLITE_CREATE_INDEX;
+
 use super::*;
 
 pub struct BasicModule {
@@ -52,10 +54,18 @@ impl LeafModule for BasicModule {
     fn init_db_schema(
         &'_ self,
         module_db: &libsql::Connection,
+        creator: &str,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         let def = self.def.clone();
         let module_db = module_db.clone();
+        let creator = creator.to_owned();
         Box::pin(async move {
+            module_db
+                .execute(
+                    "create temporary table stream as select ? as creator",
+                    [creator],
+                )
+                .await?;
             module_db.execute_batch(&def.init_sql).await?;
             Ok(())
         })
