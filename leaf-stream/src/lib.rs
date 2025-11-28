@@ -699,7 +699,13 @@ impl Stream {
         module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
         let result = module.query(module_db, query).await;
         module_db.authorizer(None)?;
-        let result = result?;
+        let result = match result {
+            Ok(result) => result,
+            Err(e) => {
+                module_db.execute("rollback", ()).await?;
+                return Err(e.into());
+            }
+        };
 
         // Finish the read transaction
         module_db.execute("commit", ()).await?;

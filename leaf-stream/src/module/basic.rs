@@ -62,7 +62,7 @@ impl LeafModule for BasicModule {
         Box::pin(async move {
             module_db
                 .execute(
-                    "create temporary table stream as select ? as creator",
+                    "create temporary table if not exists stream as select ? as creator",
                     [creator],
                 )
                 .await?;
