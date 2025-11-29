@@ -1,6 +1,7 @@
 import { io, Socket } from "socket.io-client";
 import parser from "socket.io-msgpack-parser";
 import { hex } from "@scure/base";
+import { blake3 } from "@noble/hashes/blake3.js";
 import {
   _void,
   bool,
@@ -21,13 +22,11 @@ const f64 = enhanceCodec(
   Bytes(4),
   (n: number) => {
     let buffer = new ArrayBuffer(4);
-    console.log(buffer);
     let view = new DataView(buffer);
     view.setFloat64(0, n, true);
     return new Uint8Array(buffer);
   },
   (b) => {
-    console.log(b.buffer);
     let view = new DataView(b.buffer);
     return view.getFloat64(0, true);
   },
@@ -98,7 +97,7 @@ const IncomingEvent = Struct({
 export type StreamInfo = CodecType<typeof StreamInfo>;
 const StreamInfo = Struct({
   creator: str,
-  module: Hash,
+  moduleId: Hash,
 });
 
 export type LeafQuery = CodecType<typeof LeafQuery>;
@@ -219,11 +218,24 @@ export class LeafClient {
 
   async uploadBasicModule(module: BasicModuleDef): Promise<string> {
     return this.uploadModule(
-      LeafModuleCodec.enc({
-        moduleTypeId: "muni.town.leaf.module.basic.0",
-        data: BasicModuleDef.enc(module),
-      }).buffer,
+      LeafClient.encodeBasicModule(module).encoded.buffer,
     );
+  }
+
+  static encodeBasicModule(module: BasicModuleDef): {
+    encoded: Uint8Array;
+    moduleId: string;
+  } {
+    let data = LeafModuleCodec.enc({
+      moduleTypeId: "muni.town.leaf.module.basic.0",
+      data: BasicModuleDef.enc(module),
+    });
+    let hash = blake3(data);
+    let hashStr = hex.encode(hash);
+    return {
+      encoded: data,
+      moduleId: hashStr,
+    };
   }
 
   async uploadModule(module: ArrayBufferLike): Promise<string> {
@@ -286,7 +298,6 @@ export class LeafClient {
         moduleId: Hash,
       }).enc({ streamId, moduleId }).buffer,
     );
-    console.log(data);
     const resp = Result(_void, str).dec(data);
     if (!resp.success) {
       console.error(resp);
@@ -350,13 +361,11 @@ export class LeafClient {
     const subId = resp.value;
     this.#querySubscriptions.set(subId, handler);
     return async () => {
-      console.log(subId, Ulid.enc(subId));
       const data: Uint8Array = await this.socket.emitWithAck(
         "stream/unsubscribe",
         Ulid.enc(subId).buffer,
       );
       this.#querySubscriptions.delete(subId);
-      console.log("data", data);
       const resp = Result(bool, str).dec(data);
       if (!resp.success) {
         throw new Error(`Error unsubscribing to query: ${resp.value}`);
