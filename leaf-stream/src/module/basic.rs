@@ -147,6 +147,7 @@ impl LeafModule for BasicModule {
             let sql_statements = SQL_COMMENT_REGEX.replace_all(&query_def.sql, "");
             let sql_statements = sql_statements
                 .split(";")
+                .map(|x| x.trim())
                 .filter(|x| !x.is_empty())
                 .collect::<Vec<_>>();
 

@@ -17,7 +17,7 @@ use regex::Regex;
 use crate::scale::ScaleExtractExpr;
 
 static SQL_COMMENT_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"--.*$|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/").unwrap());
+    LazyLock::new(|| Regex::new(r"--.*\n|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/").unwrap());
 
 // Module implementations
 mod basic;
