@@ -166,9 +166,8 @@ export class LeafClient {
         streamId: Hash,
       }).enc({ streamId }).buffer,
     );
-    const resp = Result(StreamInfo, _void).dec(data);
+    const resp = Result(StreamInfo, str).dec(data);
     if (!resp.success) {
-      console.error(resp);
       throw new Error(resp.value);
     }
     return resp.value;
