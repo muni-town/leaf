@@ -144,6 +144,17 @@ fn get_token(data: &Value) -> anyhow::Result<&str> {
 /// Validate that an ATProto JWT auth token is valid.
 #[instrument(skip(token), err)]
 async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
+    // Check for shared key auth bypass
+    if let Some(key) = token.strip_prefix("env-") {
+        if let Ok(expected_key) = std::env::var("LEAF_SHARED_KEY") {
+            if key == expected_key {
+                tracing::info!("Authenticated via shared key");
+                return Ok("did:web:localhost".to_string());
+            }
+        }
+        anyhow::bail!("Invalid shared key");
+    }
+
     let claims_base64 = token
         .split('.')
         .nth(1)
