@@ -6,7 +6,7 @@ The Leaf server and client libraries are currently in a functional proof-of-conc
 
 Meri's [notes from first reading the code](https://leaflet.pub/3abc7a5c-0790-4a4b-8ca1-a0a988bd7def) might be a little bit useful in lieu of more fleshed out documentation
 
-To compile and run: `cargo r -- --otel  server -D did:web:localhost`
+To compile and run locally: `cargo r -- --otel  server -D did:web:localhost`. For testing, you can also pass `--unsafe-auth-token token123`, which enables an authentication bypass, so you don't need a JWT.
 
 ## Dockerfile build
 
