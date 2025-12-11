@@ -6,6 +6,8 @@ The Leaf server and client libraries are currently in a functional proof-of-conc
 
 Meri's [notes from first reading the code](https://leaflet.pub/3abc7a5c-0790-4a4b-8ca1-a0a988bd7def) might be a little bit useful in lieu of more fleshed out documentation
 
+To compile and run: `cargo r -- --otel  server -D did:web:localhost`
+
 ## Dockerfile build
 
 The Dockerfile for `leaf-server` uses statically linked C code that is compiled for x86 architectures, which is also what the server is running. On x86 machines we can run `docker build -t leaf-server:x86_64 .`
