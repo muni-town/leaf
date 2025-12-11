@@ -37,8 +37,14 @@ pub struct ServerArgs {
     /// another service.
     ///
     /// It should be set to `did:web:your.public.hostname`.
-    #[arg(short = 'D', long, env, default_value = "did:web:localhost:5530")]
+    #[arg(short = 'D', long, env, default_value = "did:web:localhost")]
     pub did: String,
+
+    // The unsafe auth token allows you to authenticate to the Leaf server with the Leaf server's
+    // own DID. If this token is provided during authentication it wll be accepted without any other
+    // verification.
+    #[arg(long, env)]
+    pub unsafe_auth_token: Option<String>,
 
     #[clap(flatten)]
     pub backup_config: S3BackupConfigArgs,

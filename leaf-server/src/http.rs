@@ -141,18 +141,18 @@ fn get_token(data: &Value) -> anyhow::Result<&str> {
         .ok_or_else(|| anyhow::format_err!("Auth token not found in socket.io connection"))
 }
 
-/// Validate that an ATProto JWT auth token is valid.
+/// Validate that an ATProto JWT auth token is valid and return the user DID.
 #[instrument(skip(token), err)]
 async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
     // Check for shared key auth bypass
-    if let Some(key) = token.strip_prefix("env-") {
-        if let Ok(expected_key) = std::env::var("LEAF_SHARED_KEY") {
-            if key == expected_key {
-                tracing::info!("Authenticated via shared key");
-                return Ok("did:web:localhost".to_string());
-            }
-        }
-        anyhow::bail!("Invalid shared key");
+    let Command::Server(server_args) = &ARGS.command;
+
+    if let Some(unsafe_auth_token) = &server_args.unsafe_auth_token
+        && token == unsafe_auth_token
+    {
+        tracing::info!("Authenticated via unsafe auth token");
+        Span::current().set_attribute("did", server_args.did.clone());
+        return Ok(server_args.did.clone());
     }
 
     let claims_base64 = token
