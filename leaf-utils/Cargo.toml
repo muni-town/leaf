@@ -8,5 +8,6 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-blake3 = "1.8.2"
+atproto-plc = "0.2.0"
+dasl.workspace = true
 libsql.workspace = true

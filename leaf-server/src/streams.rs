@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use blake3::Hash;
-use leaf_stream::{LeafModule, Stream, StreamGenesis};
+use leaf_stream::{LeafModule, Stream, StreamConfig};
 use tokio::sync::RwLock;
 use weak_table::WeakValueHashMap;
 
@@ -22,7 +22,7 @@ pub struct Streams {
 }
 
 impl Streams {
-    pub async fn load(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
+    pub async fn load(&self, genesis: StreamConfig) -> anyhow::Result<StreamHandle> {
         let id = genesis.get_stream_id_and_bytes().0;
 
         // Return the stream from the streams if it is already open

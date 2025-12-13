@@ -1,5 +1,7 @@
-use std::future::Future;
+use std::{future::Future, str::FromStr};
 
+use atproto_plc::Did;
+use dasl::cid::Cid;
 use libsql::{Row, Rows, Value};
 
 pub trait FromValue: Sized {
@@ -47,17 +49,21 @@ impl<T: FromValue> FromValue for Option<T> {
     }
 }
 
-impl FromValue for blake3::Hash {
+impl FromValue for Did {
     fn from_value(value: Value) -> libsql::Result<Self> {
         match value {
-            Value::Text(s) => {
-                Ok(blake3::Hash::from_hex(s).map_err(|_| libsql::Error::InvalidColumnType)?)
-            }
+            Value::Text(s) => Ok(Did::from_str(&s).map_err(|_| libsql::Error::InvalidColumnType)?),
+            _ => Err(libsql::Error::InvalidColumnType),
+        }
+    }
+}
+
+impl FromValue for Cid {
+    fn from_value(value: Value) -> libsql::Result<Self> {
+        match value {
+            Value::Text(s) => Ok(Cid::from_str(&s).map_err(|_| libsql::Error::InvalidColumnType)?),
             Value::Blob(blob) => {
-                let bytes: [u8; 32] = blob
-                    .try_into()
-                    .map_err(|b: Vec<u8>| libsql::Error::InvalidBlobSize(b.len()))?;
-                Ok(blake3::Hash::from_bytes(bytes))
+                Ok(Cid::from_bytes(&blob).map_err(|_| libsql::Error::InvalidColumnType)?)
             }
             _ => Err(libsql::Error::InvalidColumnType),
         }

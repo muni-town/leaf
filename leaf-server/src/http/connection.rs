@@ -4,7 +4,7 @@ use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
 use futures::future::{Either, select};
 use leaf_stream::{
-    StreamGenesis,
+    StreamConfig,
     encoding::Encodable,
     types::{IncomingEvent, LeafQuery, SqlRows},
 };
@@ -79,7 +79,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 // Create the stream
                 let input = data?;
-                let genesis = StreamGenesis::decode(&mut &input[..])?;
+                let genesis = StreamConfig::decode(&mut &input[..])?;
                 if genesis.creator != did_ {
                     anyhow::bail!("Stream creator is not the same as authenticated user.")
                 }
@@ -122,7 +122,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 };
 
                 anyhow::Ok(StreamInfo {
-                    creator: stream.genesis().creator.clone(),
+                    creator: stream.config().creator.clone(),
                     module: Encodable(stream.module_id().await),
                 })
             }
@@ -166,7 +166,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                if stream.genesis().creator != did_ {
+                if stream.config().creator != did_ {
                     anyhow::bail!("Only the stream creator can update its module");
                 }
 

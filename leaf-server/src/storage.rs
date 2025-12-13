@@ -8,7 +8,7 @@ use std::{
 
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use blake3::Hash;
-use leaf_stream::{BasicModule, LeafModule, LeafModuleCodec, StreamGenesis, types::Event};
+use leaf_stream::{BasicModule, LeafModule, LeafModuleCodec, StreamConfig, types::Event};
 use leaf_utils::convert::{FromRows, ParseRow, ParseRows};
 use libsql::Connection;
 use parity_scale_codec::{Decode, Encode};
@@ -59,7 +59,7 @@ pub struct S3BackupConfig {
 pub struct ListStreamsItem {
     pub id: Hash,
     pub latest_event: Option<i64>,
-    pub genesis: StreamGenesis,
+    pub genesis: StreamConfig,
 }
 
 impl Storage {
@@ -200,10 +200,10 @@ impl Storage {
 
     /// Create a new stream
     #[instrument(skip(self), err)]
-    pub async fn create_stream(&self, genesis: StreamGenesis) -> anyhow::Result<StreamHandle> {
+    pub async fn create_stream(&self, genesis: StreamConfig) -> anyhow::Result<StreamHandle> {
         let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
         let creator = genesis.creator.clone();
-        let module_hash = genesis.module_hash.0;
+        let module_hash = genesis.module_id.0;
         let stream = STREAMS.load(genesis).await?;
 
         self.db()
@@ -250,7 +250,7 @@ impl Storage {
                 Ok::<_, anyhow::Error>(ListStreamsItem {
                     id: x.0,
                     latest_event: x.1,
-                    genesis: StreamGenesis::decode(&mut &x.2[..])?,
+                    genesis: StreamConfig::decode(&mut &x.2[..])?,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -295,7 +295,7 @@ impl Storage {
             return Ok(None);
         };
         let genesis_bytes: Vec<u8> = row.parse_row().await?;
-        let genesis = StreamGenesis::decode(&mut &genesis_bytes[..])?;
+        let genesis = StreamConfig::decode(&mut &genesis_bytes[..])?;
 
         Ok(Some(STREAMS.load(genesis).await?))
     }
@@ -690,7 +690,7 @@ impl Storage {
 #[derive(Decode, Encode, Debug)]
 struct EventArchive {
     // FIXME： we need the module definition to be included here.
-    genesis: Option<StreamGenesis>,
+    genesis: Option<StreamConfig>,
     events: Vec<Event>,
 }
 

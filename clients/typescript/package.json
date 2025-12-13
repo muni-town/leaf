@@ -29,6 +29,7 @@
     }
   },
   "dependencies": {
+    "@atcute/cbor": "^2.2.8",
     "@noble/hashes": "^2.0.1",
     "@scure/base": "^2.0.0",
     "scale-ts": "^1.6.1",

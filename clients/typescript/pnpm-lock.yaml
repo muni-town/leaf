@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@atcute/cbor':
+        specifier: ^2.2.8
+        version: 2.2.8
       '@noble/hashes':
         specifier: ^2.0.1
         version: 2.0.1
@@ -41,6 +44,18 @@ importers:
         version: 5.9.2
 
 packages:
+
+  '@atcute/cbor@2.2.8':
+    resolution: {integrity: sha512-UzOAN9BuN6JCXgn0ryV8qZuRJUDrNqrbLd6EFM8jc6RYssjRyGRxNy6RZ1NU/07Hd8Tq/0pz8+nQiMu5Zai5uw==}
+
+  '@atcute/cid@2.2.6':
+    resolution: {integrity: sha512-bTAHHbJ24p+E//V4KCS4xdmd39o211jJswvqQOevj7vk+5IYcgDLx1ryZWZ1sEPOo9x875li/kj5gpKL14RDwQ==}
+
+  '@atcute/multibase@1.1.6':
+    resolution: {integrity: sha512-HBxuCgYLKPPxETV0Rot4VP9e24vKl8JdzGCZOVsDaOXJgbRZoRIF67Lp0H/OgnJeH/Xpva8Z5ReoTNJE5dn3kg==}
+
+  '@atcute/uint8array@1.0.6':
+    resolution: {integrity: sha512-ucfRBQc7BFT8n9eCyGOzDHEMKF/nZwhS2pPao4Xtab1ML3HdFYcX2DM1tadCzas85QTGxHe5urnUAAcNKGRi9A==}
 
   '@babel/code-frame@7.27.1':
     resolution: {integrity: sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg==}
@@ -871,6 +886,23 @@ packages:
     engines: {node: '>=10'}
 
 snapshots:
+
+  '@atcute/cbor@2.2.8':
+    dependencies:
+      '@atcute/cid': 2.2.6
+      '@atcute/multibase': 1.1.6
+      '@atcute/uint8array': 1.0.6
+
+  '@atcute/cid@2.2.6':
+    dependencies:
+      '@atcute/multibase': 1.1.6
+      '@atcute/uint8array': 1.0.6
+
+  '@atcute/multibase@1.1.6':
+    dependencies:
+      '@atcute/uint8array': 1.0.6
+
+  '@atcute/uint8array@1.0.6': {}
 
   '@babel/code-frame@7.27.1':
     dependencies:

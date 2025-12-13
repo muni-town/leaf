@@ -112,7 +112,24 @@
 		events.push(
 			JSON.stringify(
 				result,
-				(_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+				(_key, value) => {
+					if (typeof value === 'bigint') {
+						return value.toString();
+					} else if (
+						typeof value == 'object' &&
+						'tag' in value &&
+						typeof value.tag == 'string'
+					) {
+						if (value.tag == 'blob') {
+							return new TextDecoder().decode(value.value);
+						} else if (value.tag == 'text') {
+                            return value.value;
+                        } else if (value.tag == 'integer') {
+                            return value.value.toString();
+                        }
+					}
+					return value;
+				},
 				'  '
 			)
 		);
