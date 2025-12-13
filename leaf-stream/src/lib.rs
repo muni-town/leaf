@@ -5,13 +5,13 @@ use std::{
 
 use anyhow::Context;
 use async_lock::{Mutex, RwLock};
-use blake3::Hash;
+use atproto_plc::Did;
+use dasl::cid::Cid;
 use leaf_stream_types::{
-    Decode, Event, IncomingEvent, LeafQuery, LeafQueryReponse, QueryValidationError, SqlRows,
+    Event, IncomingEvent, LeafQuery, LeafQueryReponse, QueryValidationError, SqlRows,
 };
 use leaf_utils::convert::*;
 use libsql::{AuthAction, Authorization, Connection};
-use parity_scale_codec::Encode;
 use tracing::instrument;
 use ulid::Ulid;
 
@@ -22,61 +22,16 @@ pub type SubscriptionResultSender = async_channel::Sender<Result<LeafQueryRepons
 pub use module::*;
 mod module;
 
-mod scale;
+mod drisl_extract;
 
-pub mod encoding;
-use encoding::Encodable;
-
-pub use blake3;
 pub use leaf_stream_types as types;
 pub use libsql;
 pub use ulid;
 
-/// The genesis configuration of an event stream.
-#[derive(Encode, Decode, Debug, Clone)]
-pub struct StreamGenesis {
-    /// A ULID, which encompasses the timestamp and additional randomness, included in this stream
-    /// to make it's hash unique.
-    ///
-    /// Note that this is not the stream ID, which is computed from the hash of the
-    /// [`GenesisStreamConfig`].
-    pub stamp: Encodable<Ulid>,
-    /// User ID of the user that created the stream.
-    pub creator: String,
-    /// The initial module definition for the stream.
-    pub module_hash: Encodable<Hash>,
-    /// List of additional options that can be added to configure the stream.
-    ///
-    /// Making this a vector allows us to add new option types in the future without breaking
-    /// backward compatibility.
-    pub options: Vec<StreamGenesisOption>,
-}
-
-/// A stream configuration option.
-///
-/// We don't have any option types yet, but having this here allows us to add options in the future
-/// while maintaining backward compatibility.
-#[derive(Encode, Decode, Debug, Clone)]
-pub enum StreamGenesisOption {}
-
-impl StreamGenesis {
-    /// Compute the stream ID of this stream based on it's genesis config.
-    pub fn get_stream_id_and_bytes(&self) -> (Hash, Vec<u8>) {
-        let encoded = self.encode();
-        (blake3::hash(&encoded), encoded)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Stream {
-    info: Arc<StreamInfo>,
+    id: Did,
     state: Arc<RwLock<StreamState>>,
-}
-
-#[derive(Debug, Clone)]
-struct StreamInfo {
-    id: Hash,
-    genesis: StreamGenesis,
 }
 
 #[derive(Debug)]
@@ -107,14 +62,14 @@ struct ActiveSubscription {
 }
 
 enum ModuleState {
-    Unloaded(Hash),
+    Unloaded(Cid),
     Loaded {
         module: Arc<dyn LeafModule>,
         module_db: libsql::Connection,
     },
 }
 impl ModuleState {
-    fn id(&self) -> Hash {
+    fn id(&self) -> Cid {
         match self {
             ModuleState::Unloaded(hash) => *hash,
             ModuleState::Loaded { module, .. } => module.module_id(),
@@ -141,21 +96,18 @@ pub enum StreamError {
         "The opened database is for a stream with a different ID. \
         The expected ID was {expected_id} but the ID in the database was {database_id}."
     )]
-    IdMismatch {
-        expected_id: Hash,
-        database_id: Hash,
-    },
+    IdMismatch { expected_id: Did, database_id: Did },
     #[error("Attempted to provide module for stream when it was not needed.")]
     ModuleNotNeeded,
     #[error("The stream's module has not been provided: {0}")]
-    ModuleNotProvided(Hash),
+    ModuleNotProvided(Cid),
     #[error("The stream module hash could not be decoded from the database")]
     ModuleHashDecodeError,
     #[error(
         "Attempted to provide module with different ID than the one needed \
         by the stream. Needed {needed} but got {provided}"
     )]
-    InvalidModuleId { needed: Hash, provided: Hash },
+    InvalidModuleId { needed: Cid, provided: Cid },
     #[error("Event was rejected by filter module: {reason}")]
     EventRejected { reason: String },
     #[error("Error while running stream module: {0}")]
@@ -175,45 +127,39 @@ pub enum StreamError {
 }
 
 impl Stream {
-    pub fn id(&self) -> blake3::Hash {
-        self.info.id
-    }
-
-    pub fn genesis(&self) -> &StreamGenesis {
-        &self.info.genesis
+    pub fn id(&self) -> &Did {
+        &self.id
     }
 
     pub async fn latest_event(&self) -> i64 {
         self.state.read().await.latest_event
     }
 
-    pub async fn module_id(&self) -> Hash {
+    pub async fn module_id(&self) -> Cid {
         self.state.read().await.module_state.id()
     }
 
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
-    pub async fn raw_set_module(&self, module_hash: Hash) -> anyhow::Result<()> {
+    pub async fn raw_set_module(&self, module_id: Cid) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         state
             .db
             .execute(
                 "update stream_state set module_hash = ?, module_event_cursor = null where id = 1",
-                [module_hash.as_bytes().to_vec()],
+                [module_id.as_bytes().to_vec()],
             )
             .await?;
         state.module_event_cursor = 0;
-        state.module_state = ModuleState::Unloaded(module_hash);
+        state.module_state = ModuleState::Unloaded(module_id);
 
         Ok(())
     }
 
     /// Open a stream.
     #[instrument(skip(db))]
-    pub async fn open(genesis: StreamGenesis, db: libsql::Connection) -> Result<Self, StreamError> {
-        let id = genesis.get_stream_id_and_bytes().0;
-
+    pub async fn open(id: Did, db: libsql::Connection) -> Result<Self, StreamError> {
         // run database migrations
         db.execute_batch(include_str!("./streamdb_schema_00.sql"))
             .await?;
@@ -250,37 +196,30 @@ impl Stream {
         let module_state;
         let module_event_cursor;
         if let Some(row) = row {
-            let (db_stream_id, module_hash, db_module_event_cursor): (Hash, Vec<u8>, Option<i64>) =
-                row.parse_row()
-                    .await
-                    .context("error parsing stream state")?;
+            let (db_stream_id, module_id, db_module_event_cursor): (Did, Cid, Option<i64>) = row
+                .parse_row()
+                .await
+                .context("error parsing stream state")?;
             if db_stream_id != id {
                 return Err(StreamError::IdMismatch {
                     expected_id: id,
                     database_id: db_stream_id,
                 });
             }
-            let module_hash_bytes: [u8; 32] = module_hash[..]
-                .try_into()
-                .map_err(|_| StreamError::ModuleHashDecodeError)?;
-            module_state = ModuleState::Unloaded(Hash::from_bytes(module_hash_bytes));
+            module_state = ModuleState::Unloaded(module_id);
             module_event_cursor = db_module_event_cursor.unwrap_or(0);
         } else {
             // Initialize the stream state
             db.execute(
                 "insert into stream_state \
-                (id, creator, stream_id, module_hash, module_event_cursor) values \
-                (1, :creator, :stream_id, :module_hash, null) ",
-                (
-                    (":stream_id", id.as_bytes().to_vec()),
-                    (":creator", genesis.creator.clone()),
-                    (":module_hash", genesis.module_hash.0.as_bytes().to_vec()),
-                ),
+                (id, stream_id, module_hash, module_event_cursor) values \
+                (1, :stream_id, null, null) ",
+                [(":stream_id", id.as_str().to_string())],
             )
             .await
             .context("error initializing stream state")?;
 
-            module_state = ModuleState::Unloaded(genesis.module_hash.0);
+            module_state = ModuleState::Unloaded(Cid::empty_sha2_256(dasl::cid::Codec::Drisl));
             module_event_cursor = 0;
         };
 
@@ -299,7 +238,7 @@ impl Stream {
         };
 
         Ok(Self {
-            info: Arc::new(StreamInfo { id, genesis }),
+            id,
             state: Arc::new(RwLock::new(StreamState {
                 db_filename,
                 db,
@@ -361,7 +300,7 @@ impl Stream {
     ///
     /// You must then call [`provide_module()`][Self::provide_module] with the module in order to
     /// allow the stream to continue processing.
-    pub async fn needs_module(&self) -> Option<Hash> {
+    pub async fn needs_module(&self) -> Option<Cid> {
         let state = self.state.read().await;
         match &state.module_state {
             ModuleState::Unloaded(hash) => Some(*hash),
@@ -442,9 +381,7 @@ impl Stream {
         // called twice.
         if state.module_event_cursor == 0 {
             module_db.authorizer(Some(Arc::new(module_init_authorizer)))?;
-            let init_result = module
-                .init_db_schema(module_db, &self.genesis().creator)
-                .await;
+            let init_result = module.init_db_schema(module_db).await;
             module_db.authorizer(None)?;
             init_result?;
         }
@@ -519,10 +456,7 @@ impl Stream {
     /// Either the whole batch of events will be added, or the entire batch will be rejected, making
     /// multiple events act as an atomic transaction.
     #[instrument(skip(self, events), err)]
-    pub async fn add_events(
-        &self,
-        events: Vec<IncomingEvent>,
-    ) -> Result<Option<Hash>, StreamError> {
+    pub async fn add_events(&self, events: Vec<IncomingEvent>) -> Result<Option<Cid>, StreamError> {
         // Make sure the current module is caught up
         self.raw_catch_up_module()
             .await
@@ -872,12 +806,12 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
 
 impl std::hash::Hash for Stream {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.info.id.hash(state);
+        self.id.hash(state);
     }
 }
 impl std::cmp::Eq for Stream {}
 impl std::cmp::PartialEq for Stream {
     fn eq(&self, other: &Self) -> bool {
-        self.info.id == other.info.id
+        self.id == other.id
     }
 }

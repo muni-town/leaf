@@ -6,15 +6,15 @@ use std::{
 };
 
 use anyhow::Context;
-use blake3::Hash;
+use dasl::cid::Cid;
 use futures::future::BoxFuture;
 use leaf_stream_types::{
-    BasicModuleDef, Decode, Encode, Event, IncomingEvent, LeafQuery, SqlRow, SqlRows, SqlValue,
+    BasicModuleDef, Event, IncomingEvent, LeafQuery, ModuleCodec, SqlRow, SqlRows, SqlValue,
 };
 use libsql::ScalarFunctionDef;
 use regex::Regex;
 
-use crate::scale::ScaleExtractExpr;
+use crate::drisl_extract::DrislExtractExprSegment;
 
 static SQL_COMMENT_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"--.*\n|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/").unwrap());
@@ -39,18 +39,18 @@ pub trait LeafModule: Sync + Send {
         Self: Sized;
 
     /// Load a module from it's serialized form
-    fn load(bytes: LeafModuleCodec) -> anyhow::Result<Self>
+    fn load(bytes: ModuleCodec) -> anyhow::Result<Self>
     where
         Self: Sized;
 
     /// Save a module to it's serialized form
-    fn save(&self) -> LeafModuleCodec;
+    fn save(&self) -> anyhow::Result<ModuleCodec>;
 
     /// Get unique ID of the the loaded module.
     ///
     /// Note it is **required** that this match the ID returned by the [`LeafModuleCodec::id()`]
     /// that was used to load / save the module.
-    fn module_id(&self) -> Hash;
+    fn module_id(&self) -> Cid;
 
     /// Setup the database connection when the module is first loaded.
     ///
@@ -64,7 +64,6 @@ pub trait LeafModule: Sync + Send {
     fn init_db_schema(
         &'_ self,
         module_db: &libsql::Connection,
-        creator: &str,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Called to materialize a new event
@@ -96,16 +95,4 @@ pub trait LeafModule: Sync + Send {
         module_db: &libsql::Connection,
         query: LeafQuery,
     ) -> BoxFuture<'_, anyhow::Result<SqlRows>>;
-}
-
-#[derive(Debug, Clone, Encode, Decode)]
-pub struct LeafModuleCodec {
-    pub module_type_id: String,
-    pub data: Vec<u8>,
-}
-
-impl LeafModuleCodec {
-    fn id(&self) -> Hash {
-        blake3::hash(&self.encode())
-    }
 }

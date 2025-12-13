@@ -4,7 +4,9 @@ create table if not exists "events" (
     -- The user that submitted the event
     "user"      text not null,
     -- The event payload
-    "payload"   blob not null
+    "payload"   blob not null,
+    -- The signature for the event
+    "signature" blob not null,
 );
 
 create table if not exists "stream_state" (

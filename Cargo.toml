@@ -15,6 +15,7 @@ description = "Leaf protocol"
 
 [workspace.dependencies]
 libsql = { git = "https://github.com/zicklag/libsql.git", branch = "leaf" }
+dasl = { git = "https://github.com/zicklag/dasl.git", branch = "feat/to-from-value" }
 
 [profile.release]
 lto = 'thin'

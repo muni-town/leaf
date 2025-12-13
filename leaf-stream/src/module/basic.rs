@@ -1,9 +1,11 @@
 use libsql::ffi::SQLITE_CREATE_INDEX;
 
+use crate::drisl_extract::extract_sql_value_from_drisl;
+
 use super::*;
 
 pub struct BasicModule {
-    id: Hash,
+    id: Cid,
     def: Arc<BasicModuleDef>,
 }
 
@@ -14,32 +16,25 @@ impl LeafModule for BasicModule {
     {
         "muni.town.leaf.module.basic.0"
     }
-    fn module_id(&self) -> Hash {
+    fn module_id(&self) -> Cid {
         self.id
     }
 
-    fn load(codec: LeafModuleCodec) -> anyhow::Result<Self>
+    fn load(codec: ModuleCodec) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
-        let id = codec.id();
+        let id = codec.compute_id();
 
-        let expected_module_type_id = Self::module_type_id();
-        if codec.module_type_id != expected_module_type_id {
-            anyhow::bail!("Invalid module type ID, expected `{expected_module_type_id}`");
-        }
-        let def = BasicModuleDef::decode(&mut &codec.data[..])?;
+        let def = codec.decode_def::<BasicModuleDef>()?;
         Ok(BasicModule {
             id,
             def: Arc::new(def),
         })
     }
 
-    fn save(&self) -> LeafModuleCodec {
-        LeafModuleCodec {
-            module_type_id: Self::module_type_id().into(),
-            data: self.def.encode(),
-        }
+    fn save(&self) -> anyhow::Result<ModuleCodec> {
+        Ok(ModuleCodec::new((*self.def).clone())?)
     }
 
     fn init_db_conn(&'_ self, module_db: &libsql::Connection) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -54,18 +49,10 @@ impl LeafModule for BasicModule {
     fn init_db_schema(
         &'_ self,
         module_db: &libsql::Connection,
-        creator: &str,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         let def = self.def.clone();
         let module_db = module_db.clone();
-        let creator = creator.to_owned();
         Box::pin(async move {
-            module_db
-                .execute(
-                    "create temporary table if not exists stream as select ? as creator",
-                    [creator],
-                )
-                .await?;
             module_db.execute_batch(&def.init_sql).await?;
             Ok(())
         })
@@ -272,7 +259,7 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
     })?;
 
     db.create_scalar_function(ScalarFunctionDef {
-        name: "scale_extract".to_string(),
+        name: "dasl_extract".to_string(),
         num_args: 2,
         deterministic: true,
         innocuous: true,
@@ -284,13 +271,8 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
             let Value::Text(path) = values.get(1).unwrap() else {
                 anyhow::bail!("Second argument to scale_extract must be sring");
             };
-            let extractor = path
-                .parse::<ScaleExtractExpr>()
-                .context("Could not parse scale_extract path")?;
-
-            extractor
-                .extract(&mut &blob[..])
-                .context("Could not extract value from SCALE")
+            let value = dasl::drisl::from_slice(blob)?;
+            extract_sql_value_from_drisl(value, path)
         }),
     })?;
 

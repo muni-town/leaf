@@ -320,6 +320,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "atproto-plc"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a3f796ac98ad25c4ebeee326d21c155a5d6e0f9ff6d121695466fdebb233648"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bs58",
+ "chrono",
+ "cid",
+ "data-encoding",
+ "getrandom 0.2.16",
+ "ipld-core",
+ "k256",
+ "multihash",
+ "p256",
+ "rand 0.8.5",
+ "serde",
+ "serde_bytes",
+ "serde_ipld_dagcbor",
+ "serde_json",
+ "sha2",
+ "signature",
+ "subtle",
+ "thiserror 2.0.17",
+ "zeroize",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -534,6 +563,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -579,6 +617,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbor4ii"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "faed1a83001dc2c9201451030cc317e35bef36c84d3781d7c5bb9f343c397da8"
+
+[[package]]
 name = "cc"
 version = "1.2.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -620,6 +664,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link 0.2.0",
 ]
@@ -916,6 +961,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0369ee1ad671834580515889b80f2ea915f23b8be8d0daa4bbaf2ac5c7590835"
 dependencies = [
  "cipher",
+]
+
+[[package]]
+name = "dasl"
+version = "0.2.0"
+source = "git+https://github.com/zicklag/dasl.git?branch=feat%2Fto-from-value#19e76bf08d15b16f9ecf0019a01ef0da80e4317d"
+dependencies = [
+ "blake3",
+ "cbor4ii 1.2.2",
+ "data-encoding",
+ "data-encoding-macro",
+ "scopeguard",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1506,12 +1567,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashbrown"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
-
-[[package]]
 name = "hashlink"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1997,7 +2052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -2200,14 +2255,16 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-lock",
- "blake3",
+ "atproto-plc",
+ "dasl",
  "futures",
  "leaf-stream-types",
  "leaf-utils",
  "libsql",
- "parity-scale-codec",
  "peg",
  "regex",
+ "serde",
+ "serde_json",
  "thiserror 2.0.17",
  "tracing",
  "ulid",
@@ -2217,9 +2274,9 @@ dependencies = [
 name = "leaf-stream-types"
 version = "0.1.0-alpha.1"
 dependencies = [
- "blake3",
- "ordered-float",
- "parity-scale-codec",
+ "atproto-plc",
+ "dasl",
+ "serde",
  "thiserror 2.0.17",
 ]
 
@@ -2227,7 +2284,8 @@ dependencies = [
 name = "leaf-utils"
 version = "0.1.0-alpha.1"
 dependencies = [
- "blake3",
+ "atproto-plc",
+ "dasl",
  "libsql",
 ]
 
@@ -2270,7 +2328,7 @@ dependencies = [
 [[package]]
 name = "libsql"
 version = "0.9.25"
-source = "git+https://github.com/zicklag/libsql.git?branch=leaf#950f797970d0907270182de6da0154e027133c5a"
+source = "git+https://github.com/zicklag/libsql.git?branch=leaf#64719dd4210d95b7fae0b753649cce699fffd7cc"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2309,7 +2367,7 @@ dependencies = [
 [[package]]
 name = "libsql-ffi"
 version = "0.9.25"
-source = "git+https://github.com/zicklag/libsql.git?branch=leaf#950f797970d0907270182de6da0154e027133c5a"
+source = "git+https://github.com/zicklag/libsql.git?branch=leaf#64719dd4210d95b7fae0b753649cce699fffd7cc"
 dependencies = [
  "bindgen",
  "cc",
@@ -2320,7 +2378,7 @@ dependencies = [
 [[package]]
 name = "libsql-hrana"
 version = "0.9.25"
-source = "git+https://github.com/zicklag/libsql.git?branch=leaf#950f797970d0907270182de6da0154e027133c5a"
+source = "git+https://github.com/zicklag/libsql.git?branch=leaf#64719dd4210d95b7fae0b753649cce699fffd7cc"
 dependencies = [
  "base64 0.21.7",
  "bytes",
@@ -2331,7 +2389,7 @@ dependencies = [
 [[package]]
 name = "libsql-rusqlite"
 version = "0.9.25"
-source = "git+https://github.com/zicklag/libsql.git?branch=leaf#950f797970d0907270182de6da0154e027133c5a"
+source = "git+https://github.com/zicklag/libsql.git?branch=leaf#64719dd4210d95b7fae0b753649cce699fffd7cc"
 dependencies = [
  "bitflags 2.9.4",
  "fallible-iterator 0.2.0",
@@ -2344,7 +2402,7 @@ dependencies = [
 [[package]]
 name = "libsql-sqlite3-parser"
 version = "0.13.0"
-source = "git+https://github.com/zicklag/libsql.git?branch=leaf#950f797970d0907270182de6da0154e027133c5a"
+source = "git+https://github.com/zicklag/libsql.git?branch=leaf#64719dd4210d95b7fae0b753649cce699fffd7cc"
 dependencies = [
  "bitflags 2.9.4",
  "cc",
@@ -2361,7 +2419,7 @@ dependencies = [
 [[package]]
 name = "libsql-sys"
 version = "0.9.25"
-source = "git+https://github.com/zicklag/libsql.git?branch=leaf#950f797970d0907270182de6da0154e027133c5a"
+source = "git+https://github.com/zicklag/libsql.git?branch=leaf#64719dd4210d95b7fae0b753649cce699fffd7cc"
 dependencies = [
  "bytes",
  "libsql-ffi",
@@ -2374,7 +2432,7 @@ dependencies = [
 [[package]]
 name = "libsql_replication"
 version = "0.9.25"
-source = "git+https://github.com/zicklag/libsql.git?branch=leaf#950f797970d0907270182de6da0154e027133c5a"
+source = "git+https://github.com/zicklag/libsql.git?branch=leaf#64719dd4210d95b7fae0b753649cce699fffd7cc"
 dependencies = [
  "aes",
  "async-stream",
@@ -2817,15 +2875,6 @@ dependencies = [
  "rand 0.9.2",
  "serde_json",
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "ordered-float"
-version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f4779c6901a562440c3786d08192c6fbda7c1c2060edd10006b05ee35d10f2d"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]
@@ -4047,7 +4096,7 @@ version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46182f4f08349a02b45c998ba3215d3f9de826246ba02bb9dddfe9a2a2100778"
 dependencies = [
- "cbor4ii",
+ "cbor4ii 0.2.14",
  "ipld-core",
  "scopeguard",
  "serde",
@@ -5739,6 +5788,20 @@ name = "zeroize"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
 
 [[package]]
 name = "zerotrie"

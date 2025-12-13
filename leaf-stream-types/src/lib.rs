@@ -1,10 +1,79 @@
-use ordered_float::OrderedFloat;
-pub use parity_scale_codec::{Decode, Encode};
+use dasl::{
+    cid::{Cid, Codec::Drisl},
+    drisl,
+};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleCodec {
+    module_type: String,
+    #[serde(flatten)]
+    def: drisl::Value,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ModuleEncodingError {
+    #[error("Error decoding DRISL format for module: {0}")]
+    DrislEncode(String),
+    #[error("Error decoding DRISL format for module: {0}")]
+    DrislDecode(String),
+    #[error("Module type does not match the type that we were attempting to load.")]
+    ModuleTypeMismatch,
+}
+
+impl ModuleCodec {
+    pub fn new<T: ModuleDef>(def: T) -> Result<Self, ModuleEncodingError> {
+        let def = dasl::drisl::to_value(def)
+            .map_err(|e| ModuleEncodingError::DrislEncode(e.to_string()))?;
+        Ok(ModuleCodec {
+            module_type: T::MODULE_TYPE.into(),
+            def,
+        })
+    }
+
+    pub fn module_type(&self) -> &str {
+        &self.module_type
+    }
+
+    pub fn def(&self) -> &drisl::Value {
+        &self.def
+    }
+
+    pub fn encode(&self) -> (Cid, Vec<u8>) {
+        let bytes = dasl::drisl::to_vec(&self).expect(
+            "error encoding module. It should not be possible \
+            for ModuleCodec to fail encoding",
+        );
+        let cid = Cid::digest_sha2(Drisl, &bytes);
+        (cid, bytes)
+    }
+
+    pub fn compute_id(&self) -> Cid {
+        self.encode().0
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, ModuleEncodingError> {
+        dasl::drisl::from_slice(bytes).map_err(|e| ModuleEncodingError::DrislDecode(e.to_string()))
+    }
+
+    pub fn decode_def<T: ModuleDef>(&self) -> Result<T, ModuleEncodingError> {
+        if self.module_type != T::MODULE_TYPE {
+            return Err(ModuleEncodingError::ModuleTypeMismatch);
+        }
+        let def = dasl::drisl::from_value(self.def.clone())
+            .map_err(|e| ModuleEncodingError::DrislDecode(e.to_string()))?;
+        Ok(def)
+    }
+}
+
+pub trait ModuleDef: Serialize + for<'de> Deserialize<'de> {
+    const MODULE_TYPE: &str;
+}
 
 /// The definition of a Leaf stream module.
 ///
 /// Modules are responsible for providing the logic for writing to and querying from the stream.
-#[derive(Debug, Clone, Decode, Encode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BasicModuleDef {
     /// Idempodent initialization SQL that will be used to setup the module's SQLite database.
     ///
@@ -24,17 +93,12 @@ pub struct BasicModuleDef {
     pub queries: Vec<LeafModuleQueryDef>,
 }
 
-impl BasicModuleDef {
-    /// Calculate the module ID and get the encoded bytes representation
-    pub fn module_id_and_bytes(&self) -> (blake3::Hash, Vec<u8>) {
-        let bytes = self.encode();
-        let hash = blake3::hash(&bytes);
-        (hash, bytes)
-    }
+impl ModuleDef for BasicModuleDef {
+    const MODULE_TYPE: &str = "space.roomy.module.basic.0";
 }
 
 /// The definition of a query that can be made against a leaf module.
-#[derive(Debug, Clone, Decode, Encode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeafModuleQueryDef {
     /// The name of the query
     pub name: String,
@@ -48,7 +112,7 @@ pub struct LeafModuleQueryDef {
 }
 
 // The definition of a queyr parameter
-#[derive(Debug, Clone, Decode, Encode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeafModuleQueryParamDef {
     /// The name of the parameter. This will be accessible to the query's SQL as a bound
     /// parameter with the given name.
@@ -60,7 +124,7 @@ pub struct LeafModuleQueryParamDef {
 }
 
 /// The type of a parameter that may be supplied to a query.
-#[derive(Debug, Clone, Decode, Encode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LeafModuleQueryParamKind {
     /// A 64 bit integer
     Integer,
@@ -86,11 +150,11 @@ pub enum LeafModuleQueryParamKind {
 ///
 /// We currently don't have any kind of limits, but we may later, and having this here allows us to
 /// add limits later in a backward compatible way.
-#[derive(Debug, Clone, Decode, Encode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LeafModuleQueryDefLimit {}
 
 /// An event in a stream.
-#[derive(Clone, Debug, Encode, Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Event<Payload = Vec<u8>> {
     pub idx: i64,
     pub user: String,
@@ -98,14 +162,14 @@ pub struct Event<Payload = Vec<u8>> {
 }
 
 /// An incomming event that hasn't been accepted into a stream yet.
-#[derive(Decode, Encode, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IncomingEvent<Payload = Vec<u8>> {
     pub user: String,
     pub payload: Payload,
 }
 
 /// A query for a leaf steram.
-#[derive(Decode, Encode, Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone /*, Hash, Eq, PartialEq*/)]
 pub struct LeafQuery {
     pub query_name: String,
     pub requesting_user: Option<String>,
@@ -139,18 +203,18 @@ impl LeafQuery {
 pub type LeafQueryReponse = SqlRows;
 
 /// A result from a leaf query.
-#[derive(Decode, Encode, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SqlRows {
     pub rows: Vec<SqlRow>,
     pub column_names: Vec<String>,
 }
 
-#[derive(Decode, Encode, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SqlRow {
     pub values: Vec<SqlValue>,
 }
 
-#[derive(Decode, Encode, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub enum SqlValue {
     #[default]
     Null,
@@ -235,30 +299,30 @@ impl LeafModuleQueryParamDef {
     }
 }
 
-impl std::hash::Hash for SqlValue {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        core::mem::discriminant(self).hash(state);
-        match self {
-            SqlValue::Null => (),
-            SqlValue::Integer(i) => i.hash(state),
-            SqlValue::Real(r) => OrderedFloat(*r).hash(state),
-            SqlValue::Text(t) => t.hash(state),
-            SqlValue::Blob(b) => b.hash(state),
-        }
-    }
-}
-impl std::cmp::Eq for SqlValue {}
-impl std::cmp::PartialEq for SqlValue {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Integer(l0), Self::Integer(r0)) => l0 == r0,
-            (Self::Real(l0), Self::Real(r0)) => OrderedFloat(*l0) == OrderedFloat(*r0),
-            (Self::Text(l0), Self::Text(r0)) => l0 == r0,
-            (Self::Blob(l0), Self::Blob(r0)) => l0 == r0,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
-        }
-    }
-}
+// impl std::hash::Hash for SqlValue {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         core::mem::discriminant(self).hash(state);
+//         match self {
+//             SqlValue::Null => (),
+//             SqlValue::Integer(i) => i.hash(state),
+//             SqlValue::Real(r) => OrderedFloat(*r).hash(state),
+//             SqlValue::Text(t) => t.hash(state),
+//             SqlValue::Blob(b) => b.hash(state),
+//         }
+//     }
+// }
+// impl std::cmp::Eq for SqlValue {}
+// impl std::cmp::PartialEq for SqlValue {
+//     fn eq(&self, other: &Self) -> bool {
+//         match (self, other) {
+//             (Self::Integer(l0), Self::Integer(r0)) => l0 == r0,
+//             (Self::Real(l0), Self::Real(r0)) => OrderedFloat(*l0) == OrderedFloat(*r0),
+//             (Self::Text(l0), Self::Text(r0)) => l0 == r0,
+//             (Self::Blob(l0), Self::Blob(r0)) => l0 == r0,
+//             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+//         }
+//     }
+// }
 
 impl From<()> for SqlValue {
     fn from(_: ()) -> Self {
@@ -417,18 +481,6 @@ impl<T: FromValue> FromRow for T {
                 .next()
                 .ok_or(SqlError::InvalidColumnCount)?,
         )
-    }
-}
-
-impl<P: Decode + Encode> FromRow for Event<P> {
-    fn from_row(row: SqlRow) -> SqlResult<Self> {
-        let (idx, user, payload): (i64, String, Vec<u8>) = row.parse_row()?;
-
-        Ok(Event {
-            idx,
-            user,
-            payload: P::decode(&mut &payload[..]).map_err(|_e| SqlError::InvalidValueType)?,
-        })
     }
 }
 
