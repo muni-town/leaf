@@ -16,7 +16,7 @@ impl LeafModule for BasicModule {
     {
         "muni.town.leaf.module.basic.0"
     }
-    fn module_id(&self) -> Cid {
+    fn id(&self) -> Cid {
         self.id
     }
 
@@ -25,7 +25,6 @@ impl LeafModule for BasicModule {
         Self: Sized,
     {
         let id = codec.compute_id();
-
         let def = codec.decode_def::<BasicModuleDef>()?;
         Ok(BasicModule {
             id,
@@ -266,10 +265,10 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
         direct_only: false,
         callback: Arc::new(|values| {
             let Value::Blob(blob) = values.first().unwrap() else {
-                anyhow::bail!("First argument to scale_extract must be blob");
+                anyhow::bail!("First argument to dasl_extract must be blob");
             };
             let Value::Text(path) = values.get(1).unwrap() else {
-                anyhow::bail!("Second argument to scale_extract must be sring");
+                anyhow::bail!("Second argument to dasl_extract must be sring");
             };
             let value = dasl::drisl::from_slice(blob)?;
             extract_sql_value_from_drisl(value, path)

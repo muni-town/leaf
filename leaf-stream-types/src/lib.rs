@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleCodec {
-    module_type: String,
+    r#type: String,
     #[serde(flatten)]
     def: drisl::Value,
 }
@@ -26,13 +26,13 @@ impl ModuleCodec {
         let def = dasl::drisl::to_value(def)
             .map_err(|e| ModuleEncodingError::DrislEncode(e.to_string()))?;
         Ok(ModuleCodec {
-            module_type: T::MODULE_TYPE.into(),
+            r#type: T::MODULE_TYPE.into(),
             def,
         })
     }
 
     pub fn module_type(&self) -> &str {
-        &self.module_type
+        &self.r#type
     }
 
     pub fn def(&self) -> &drisl::Value {
@@ -57,7 +57,7 @@ impl ModuleCodec {
     }
 
     pub fn decode_def<T: ModuleDef>(&self) -> Result<T, ModuleEncodingError> {
-        if self.module_type != T::MODULE_TYPE {
+        if self.r#type != T::MODULE_TYPE {
             return Err(ModuleEncodingError::ModuleTypeMismatch);
         }
         let def = dasl::drisl::from_value(self.def.clone())

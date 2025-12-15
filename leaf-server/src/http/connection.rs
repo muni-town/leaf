@@ -1,24 +1,26 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use blake3::Hash;
 use futures::future::{Either, select};
 use leaf_stream::{
-    StreamConfig,
-    encoding::Encodable,
-    types::{IncomingEvent, LeafQuery, SqlRows},
+    atproto_plc::Did,
+    dasl::{self, cid::Cid, drisl::serde_bytes},
+    types::{IncomingEvent, LeafQuery, ModuleCodec, SqlRows},
 };
-use parity_scale_codec::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use socketioxide::extract::{AckSender, SocketRef, TryData};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 use ulid::Ulid;
 
-fn bytes<O: AsRef<[u8]> + Sync + Send + 'static>(o: O) -> bytes::Bytes {
-    bytes::Bytes::from_owner(o)
+fn response<T: Serialize>(v: anyhow::Result<T>) -> bytes::Bytes {
+    bytes::Bytes::from_owner(
+        dasl::drisl::to_vec(&v.map_err(|e| e.to_string()))
+            .expect("Unable to serialize API response"),
+    )
 }
 
-use crate::{error::LogError, storage::STORAGE, streams::STREAMS};
+use crate::{did::create_did, error::LogError, storage::STORAGE, streams::STREAMS};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let span = Span::current();
@@ -30,19 +32,23 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let span_ = span.clone();
     socket.on(
         "module/upload",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
                 let Some(did_) = did_ else {
                     anyhow::bail!("Only authenticated users can upload module");
                 };
-                let data = data?;
-                let hash = STORAGE.upload_module(&did_, data.to_vec()).await?;
+                let bytes = bytes?;
+                if bytes.len() > 1024 * 1024 * 10 {
+                    anyhow::bail!("Module larger than 10MB maximum size.");
+                }
+                let args: ModuleUploadArgs = dasl::drisl::from_slice(&bytes[..])?;
+                let hash = STORAGE.upload_module(&did_, args.module).await?;
                 anyhow::Ok(hash)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle module/upload"))
             .await;
 
-            ack.send(&bytes(Encodable(result.map(Encodable)).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -50,17 +56,17 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let span_ = span.clone();
     socket.on(
         "module/exists",
-        async move |TryData::<bytes::Bytes>(hash_hex), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
-                let hash_bytes: [u8; 32] = hash_hex?.as_ref().try_into()?;
-                let hash = Hash::from_bytes(hash_bytes);
-                let has_module = STORAGE.has_module_blob(hash).await?;
+                let args: ModuleExistsArgs = dasl::drisl::from_slice(&bytes?[..])?;
+                let cid = args.cid;
+                let has_module = STORAGE.has_module_blob(cid).await?;
                 anyhow::Ok(has_module)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle module/exists"))
             .await;
 
-            ack.send(&bytes(Encodable(result).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -71,28 +77,38 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/create",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
                 let Some(did_) = did_ else {
                     anyhow::bail!("Only authenticated users can create_streams");
                 };
+                let StreamCreateArgs { module_cid } = dasl::drisl::from_slice(&bytes?[..])?;
 
-                // Create the stream
-                let input = data?;
-                let genesis = StreamConfig::decode(&mut &input[..])?;
-                if genesis.creator != did_ {
-                    anyhow::bail!("Stream creator is not the same as authenticated user.")
+                // Abort early if we don't have the module
+                if !STORAGE.has_module_blob(module_cid).await? {
+                    anyhow::bail!(
+                        "Module not found, it must be uploaded \
+                        before creating a stream with it: {module_cid}"
+                    )
                 }
 
-                let stream = STORAGE.create_stream(genesis).await?;
-                let id = stream.id();
-                open_streams_.write().await.insert(id, stream);
-                anyhow::Ok(id)
+                let stream_did = create_did(did_.clone()).await?;
+
+                let stream = STORAGE.create_stream(stream_did.clone(), did_).await?;
+                open_streams_
+                    .write()
+                    .await
+                    .insert(stream_did.clone(), stream.clone());
+
+                // Set the stream's module
+                STREAMS.update_module(stream, module_cid).await?;
+
+                anyhow::Ok(stream_did)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
             .await;
 
-            ack.send(&bytes(Encodable(result.map(Encodable)).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -102,34 +118,29 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/info",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async move {
-                // Parse input
-                let input = data?;
-                let stream_id = Encodable::<Hash>::decode(&mut &input[..])?;
-                let stream_id = stream_id.0;
+                let args: StreamInfoArgs = dasl::drisl::from_slice(&bytes?[..])?;
+                let stream_did = args.stream_did;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                let stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
-                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
-                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
-                    };
+                    let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_id, stream.clone());
+                    open_streams.insert(stream_did, stream.clone());
                     stream
                 };
 
-                anyhow::Ok(StreamInfo {
-                    creator: stream.config().creator.clone(),
-                    module: Encodable(stream.module_id().await),
+                anyhow::Ok(StreamInfoResp {
+                    module_cid: stream.module_cid().await,
                 })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/info"))
             .await;
 
-            ack.send(&bytes(Encodable(result).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -140,44 +151,40 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/update_module",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async move {
                 let Some(did_) = did_ else {
                     anyhow::bail!("Only the stream creator can update its module");
                 };
 
-                // Create the stream
-                let input = data?;
                 let StreamUpdateModuleArgs {
-                    stream_id,
-                    module_id,
-                } = StreamUpdateModuleArgs::decode(&mut &input[..])?;
-                let stream_id = stream_id.0;
+                    stream_did,
+                    module_cid,
+                } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                let stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
-                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
-                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
-                    };
+                    let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_id, stream.clone());
+                    open_streams.insert(stream_did.clone(), stream.clone());
                     stream
                 };
 
-                if stream.config().creator != did_ {
-                    anyhow::bail!("Only the stream creator can update its module");
+                let stream_owners = STORAGE.get_did_owners(stream_did.clone()).await?;
+                if !stream_owners.iter().any(|x| x == &did_) {
+                    anyhow::bail!("Only a stream owner can update its module");
                 }
 
-                STREAMS.update_module(stream, module_id.0).await?;
+                STREAMS.update_module(stream, module_cid).await?;
 
                 anyhow::Ok(())
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/update_module"))
             .await;
 
-            ack.send(&bytes(Encodable(result).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -188,45 +195,43 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/event_batch",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
                 let Some(did_) = did_ else {
                     anyhow::bail!("Only authenticated users can send events");
                 };
 
-                let bytes = data?;
-                let request = StreamEventBatchArgs::decode(&mut &bytes[..])?;
-                let stream_id = request.stream_id.0;
-                let events = request.events;
-
-                // TODO: maybe we just shouldn't have the client send the requesting user since we
-                // already have it.
-                if !events.iter().all(|e| e.user == did_) {
-                    anyhow::bail!(
-                        "Some events in batch are not authored by the authenticated user."
-                    );
-                }
+                let StreamEventBatchArgs { stream_did, events } =
+                    dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                let stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
-                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
-                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
-                    };
+                    let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_id, stream.clone());
+                    open_streams.insert(stream_did, stream.clone());
                     stream
                 };
 
-                stream.add_events(events).await?;
+                stream
+                    .add_events(
+                        events
+                            .into_iter()
+                            .map(|x| IncomingEvent {
+                                user: did_.clone(),
+                                payload: x.0,
+                            })
+                            .collect(),
+                    )
+                    .await?;
 
                 anyhow::Ok(())
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/event_batch"))
             .await;
 
-            ack.send(&bytes(Encodable(result).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -245,12 +250,11 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let unsubscribers_ = unsubscribers.clone();
     socket.on(
         "stream/subscribe",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
-                let args = data?;
-                let args = StreamSubscribeArgs::decode(&mut &args[..])?;
-                let stream_id = args.stream_id.0;
-                let query = args.query;
+                let StreamSubscribeArgs { stream_did, query } =
+                    dasl::drisl::from_slice(&bytes?[..])?;
+
                 let subscription_id = Ulid::new();
 
                 // TODO: maybe we just shouldn't have the client send the requesting user since we
@@ -262,14 +266,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 }
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                let stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
-                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
-                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
-                    };
+                    let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_id, stream.clone());
+                    open_streams.insert(stream_did, stream.clone());
                     stream
                 };
 
@@ -291,16 +293,19 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                         next_event = Box::pin(receiver.recv());
 
                         if socket_.connected() {
-                            if let Err(e) = socket_.emit(
-                                "stream/subscription_response",
-                                &bytes(
-                                    StreamSubscribeNotification {
-                                        subscription_id: Encodable(subscription_id),
-                                        response: event.map_err(|e| e.to_string()),
-                                    }
-                                    .encode(),
-                                ),
-                            ) {
+                            if let Err(e) = dasl::drisl::to_vec(&StreamSubscribeNotification {
+                                subscription_id,
+                                response: event.map_err(|e| e.to_string()),
+                            })
+                            .map_err(anyhow::Error::from)
+                            .and_then(|encoded| {
+                                socket_
+                                    .emit(
+                                        "stream/subscription_response",
+                                        &bytes::Bytes::from_owner(encoded),
+                                    )
+                                    .map_err(anyhow::Error::from)
+                            }) {
                                 // TODO: better error message
                                 tracing::error!("Error sending event, unsubscribing: {e}");
                             }
@@ -313,12 +318,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     }
                 });
 
-                anyhow::Ok(Encodable(subscription_id))
+                anyhow::Ok(subscription_id)
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/subscribe"))
             .await;
 
-            ack.send(&bytes(Encodable(result).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -328,10 +333,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let unsubscribers_ = unsubscribers.clone();
     socket.on(
         "stream/unsubscribe",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
-                let data = data?;
-                let subscription_id = Encodable::<Ulid>::decode(&mut &data[..])?.0;
+                let subscription_id: Ulid = dasl::drisl::from_slice(&bytes?[..])?;
                 let unsubscriber = unsubscribers_.lock().await.remove(&subscription_id);
                 let was_subscribed = unsubscriber.is_some();
                 unsubscriber.map(|x| x.send(()));
@@ -340,7 +344,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
             .await;
 
-            ack.send(&bytes(Encodable(result).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
@@ -351,12 +355,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let open_streams_ = open_streams.clone();
     socket.on(
         "stream/query",
-        async move |TryData::<bytes::Bytes>(data), ack: AckSender| {
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
-                let bytes = data?;
-                let args = StreamQueryArgs::decode(&mut &bytes[..])?;
-                let stream_id = args.stream_id.0;
-                let query = args.query;
+                let StreamQueryArgs { stream_did, query } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 // TODO: maybe we just shouldn't have the client send the requesting user since we
                 // already have it.
@@ -365,14 +366,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 }
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_id) {
+                let stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
-                    let Some(stream) = STORAGE.open_stream(stream_id).await? else {
-                        anyhow::bail!("Stream does not exist with ID: {stream_id}");
-                    };
+                    let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_id, stream.clone());
+                    open_streams.insert(stream_did, stream.clone());
                     stream
                 };
 
@@ -383,45 +382,67 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/query"))
             .await;
 
-            ack.send(&bytes(Encodable(result).encode()))
+            ack.send(&response(result))
                 .log_error("Internal error sending response")
                 .ok();
         },
     );
 }
 
-#[derive(Decode)]
+#[derive(Deserialize)]
+struct ModuleUploadArgs {
+    module: ModuleCodec,
+}
+
+#[derive(Deserialize)]
+struct ModuleExistsArgs {
+    cid: Cid,
+}
+
+#[derive(Deserialize)]
+struct StreamInfoArgs {
+    stream_did: Did,
+}
+
+#[derive(Deserialize)]
+struct StreamCreateArgs {
+    module_cid: Cid,
+}
+
+#[derive(Deserialize)]
 struct StreamUpdateModuleArgs {
-    stream_id: Encodable<Hash>,
-    module_id: Encodable<Hash>,
+    stream_did: Did,
+    module_cid: Cid,
 }
 
-#[derive(Decode)]
+#[derive(Deserialize)]
 struct StreamEventBatchArgs {
-    stream_id: Encodable<Hash>,
-    events: Vec<IncomingEvent>,
+    stream_did: Did,
+    events: Vec<EventPayload>,
 }
 
-#[derive(Decode)]
+#[derive(Deserialize)]
+struct EventPayload(#[serde(with = "serde_bytes")] Vec<u8>);
+
+#[derive(Deserialize)]
 struct StreamQueryArgs {
-    stream_id: Encodable<Hash>,
+    stream_did: Did,
     query: LeafQuery,
 }
 
-#[derive(Encode)]
+#[derive(Serialize)]
 struct StreamSubscribeNotification {
-    subscription_id: Encodable<Ulid>,
+    subscription_id: Ulid,
     response: Result<SqlRows, String>,
 }
 
-#[derive(Encode)]
-struct StreamInfo {
-    creator: String,
-    module: Encodable<Hash>,
+#[derive(Serialize)]
+struct StreamInfoResp {
+    module_cid: Option<Cid>,
 }
 
-#[derive(Decode)]
+#[derive(Deserialize)]
 struct StreamSubscribeArgs {
-    stream_id: Encodable<Hash>,
+    stream_did: Did,
     query: LeafQuery,
 }

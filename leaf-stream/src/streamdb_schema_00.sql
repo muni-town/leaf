@@ -15,7 +15,7 @@ create table if not exists "stream_state" (
     -- The ID of the user that created the stream
     "creator"               text not null,
     -- The ID of this stream
-    "stream_id"             blob not null,
+    "stream_did"             blob not null,
     -- The hash of the stream's current module
     "module_hash"             blob not null,
     -- The latest event that has been processed by the current module

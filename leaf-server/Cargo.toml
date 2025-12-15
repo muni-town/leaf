@@ -66,12 +66,14 @@ atproto-identity = "0.11.2"
 
 # Formats & Serialization
 serde_json = "1.0.143"
-blake3 = { version = "1.8.2" }
 bytes = "1.10.1"
-parity-scale-codec = { version = "3.7.5", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
 ulid = { version = "1.2.1", features = ["serde"] }
+zstd = "0.13.3"
+
+# Async
 async-lock = "3.4.1"
 futures = "0.3.31"
+
+# APIs
 s3-simple = { version = "0.6.0", default-features = false }
-zstd = "0.13.3"
