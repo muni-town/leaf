@@ -13,6 +13,11 @@ pub struct Args {
     /// Enable profiling to Pyroscope
     #[arg(long, env)]
     pub profiling: bool,
+
+    /// Set the PLC directory to use
+    #[arg(long, env, default_value = "https://plc.directory")]
+    pub plc_directory: String,
+
     #[clap(subcommand)]
     pub command: Command,
 }
@@ -39,6 +44,9 @@ pub struct ServerArgs {
     /// It should be set to `did:web:your.public.hostname`.
     #[arg(short = 'D', long, env, default_value = "did:web:localhost")]
     pub did: String,
+    /// The public endpoint that this server can be accessed on.
+    #[arg(short = 'e', long, env, default_value = "http://localhost:5530")]
+    pub endpoint: String,
 
     // The unsafe auth token allows you to authenticate to the Leaf server with the Leaf server's
     // own DID. If this token is provided during authentication it wll be accepted without any other

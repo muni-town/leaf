@@ -4,8 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
-use blake3::Hash;
-use leaf_stream::{LeafModule, Stream, StreamConfig};
+use leaf_stream::{LeafModule, Stream, atproto_plc::Did, dasl::cid::Cid};
 use tokio::sync::RwLock;
 use weak_table::WeakValueHashMap;
 
@@ -18,13 +17,11 @@ pub type StreamHandle = Arc<Stream>;
 
 #[derive(Default)]
 pub struct Streams {
-    streams: RwLock<WeakValueHashMap<Hash, Weak<Stream>>>,
+    streams: RwLock<WeakValueHashMap<Did, Weak<Stream>>>,
 }
 
 impl Streams {
-    pub async fn load(&self, genesis: StreamConfig) -> anyhow::Result<StreamHandle> {
-        let id = genesis.get_stream_id_and_bytes().0;
-
+    pub async fn load(&self, id: Did) -> anyhow::Result<StreamHandle> {
         // Return the stream from the streams if it is already open
         {
             let streams = self.streams.read().await;
@@ -35,7 +32,7 @@ impl Streams {
 
         // Make sure the stream data dir exists
         let data_dir = STORAGE.data_dir()?;
-        let stream_dir = data_dir.join("streams").join(id.to_hex().as_str());
+        let stream_dir = data_dir.join("streams").join(id.as_str());
         tokio::fs::create_dir_all(&stream_dir).await?;
 
         // Open the stream's database
@@ -48,22 +45,25 @@ impl Streams {
         stream_db.execute_batch(GLOBAL_SQLITE_PRAGMA).await?;
 
         // Open the stream
-        let stream = leaf_stream::Stream::open(genesis, stream_db).await?;
+        let stream = leaf_stream::Stream::open(id.clone(), stream_db).await?;
         // Spawn background worker task for the stream
         stream.create_worker_task().await.map(tokio::spawn);
 
         // Load the stream's module and it's database
-        if let Some(module_hash) = stream.needs_module().await {
-            STORAGE.update_stream_module(id, module_hash).await?;
+        if let Some(Some(module_hash)) = stream.needs_module().await {
+            STORAGE
+                .update_stream_module(id.clone(), module_hash)
+                .await?;
             let (module, module_db) = load_module(&stream_dir, module_hash).await?;
             stream.provide_module(module, module_db).await?;
         }
 
         // Spawn a task that will watch the latest event in the stream and update the main database
         let latest_event_rx = stream.subscribe_latest_event().await;
+        let id_ = id.clone();
         tokio::spawn(async move {
             while let Ok(latest_event) = latest_event_rx.recv().await {
-                if let Err(e) = STORAGE.set_latest_event(id, latest_event).await {
+                if let Err(e) = STORAGE.set_latest_event(id_.clone(), latest_event).await {
                     tracing::error!("Error updating latest event for stream in database: {e}");
                 }
             }
@@ -71,20 +71,25 @@ impl Streams {
 
         // Store the stream handle in the cache
         let handle = Arc::new(stream);
-        self.streams.write().await.insert(id, handle.clone());
+        self.streams
+            .write()
+            .await
+            .insert(id.clone(), handle.clone());
 
         // Return the stream handle
         Ok(handle)
     }
 
-    pub async fn update_module(&self, stream: Arc<Stream>, module_id: Hash) -> anyhow::Result<()> {
+    pub async fn update_module(&self, stream: Arc<Stream>, module_cid: Cid) -> anyhow::Result<()> {
         let data_dir = STORAGE.data_dir()?;
-        let stream_dir = data_dir.join("streams").join(stream.id().to_hex().as_str());
+        let stream_dir = data_dir.join("streams").join(stream.id().as_str());
 
-        stream.raw_set_module(module_id).await?;
-        let (module, db) = load_module(&stream_dir, module_id).await?;
+        stream.raw_set_module(module_cid).await?;
+        let (module, db) = load_module(&stream_dir, module_cid).await?;
         stream.provide_module(module, db).await?;
-        STORAGE.update_stream_module(stream.id(), module_id).await?;
+        STORAGE
+            .update_stream_module(stream.id().clone(), module_cid)
+            .await?;
 
         Ok(())
     }
@@ -92,12 +97,12 @@ impl Streams {
 
 pub async fn load_module(
     stream_dir: &Path,
-    module_id: Hash,
+    module_cid: Cid,
 ) -> anyhow::Result<(Arc<dyn LeafModule>, libsql::Connection)> {
-    let Some(module) = STORAGE.get_module(module_id).await? else {
-        anyhow::bail!("Could not load module needed by stream: {}", module_id);
+    let Some(module) = STORAGE.get_module(module_cid).await? else {
+        anyhow::bail!("Could not load module needed by stream: {}", module_cid);
     };
-    let module_db_path = stream_dir.join(format!("module_{}.db", module_id.to_hex().as_str()));
+    let module_db_path = stream_dir.join(format!("module_{}.db", module_cid));
     let module_db = libsql::Builder::new_local(module_db_path)
         .build()
         .await

@@ -16,6 +16,7 @@ mod http;
 mod otel;
 mod storage;
 mod streams;
+mod did;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);

@@ -50,7 +50,7 @@ pub trait LeafModule: Sync + Send {
     ///
     /// Note it is **required** that this match the ID returned by the [`LeafModuleCodec::id()`]
     /// that was used to load / save the module.
-    fn module_id(&self) -> Cid;
+    fn id(&self) -> Cid;
 
     /// Setup the database connection when the module is first loaded.
     ///

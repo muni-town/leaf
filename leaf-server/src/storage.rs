@@ -1,19 +1,22 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::{Arc, LazyLock, Weak},
     time::Duration,
 };
 
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
-use blake3::Hash;
-use leaf_stream::{BasicModule, LeafModule, LeafModuleCodec, StreamConfig, types::Event};
-use leaf_utils::convert::{FromRows, ParseRow, ParseRows};
+use leaf_stream::{
+    BasicModule, LeafModule,
+    atproto_plc::{Did, SigningKey},
+    dasl::cid::{Cid, Codec::Drisl},
+    types::{Event, ModuleCodec},
+};
+use leaf_utils::convert::{FromRows, ParseRows};
 use libsql::Connection;
-use parity_scale_codec::{Decode, Encode};
 use reqwest::Url;
 use s3_simple::Bucket;
+use serde::{Deserialize, Serialize};
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use weak_table::WeakValueHashMap;
@@ -27,7 +30,7 @@ pub static GLOBAL_SQLITE_PRAGMA: &str = "pragma synchronous = normal; pragma jou
 
 pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 
-static MODULES: LazyLock<RwLock<WeakValueHashMap<Hash, Weak<dyn LeafModule>>>> =
+static MODULES: LazyLock<RwLock<WeakValueHashMap<Cid, Weak<dyn LeafModule>>>> =
     LazyLock::new(|| RwLock::new(WeakValueHashMap::new()));
 
 pub static BUCKET_MODULE_DIR: &str = "modules";
@@ -57,9 +60,9 @@ pub struct S3BackupConfig {
 
 #[derive(Debug, Clone)]
 pub struct ListStreamsItem {
-    pub id: Hash,
+    pub id: Did,
+    pub owner: String,
     pub latest_event: Option<i64>,
-    pub genesis: StreamConfig,
 }
 
 impl Storage {
@@ -132,7 +135,7 @@ impl Storage {
     /// Returns the list of hashes that could be found in the database out of the list that is
     /// provided to search for.
     #[instrument(skip(self, hash), err)]
-    pub async fn has_module_blob(&self, hash: Hash) -> anyhow::Result<bool> {
+    pub async fn has_module_blob(&self, hash: Cid) -> anyhow::Result<bool> {
         let mut rows = self
             .db()
             .await
@@ -146,7 +149,7 @@ impl Storage {
 
     // Get a moudle blob from the database
     #[instrument(skip(self), err)]
-    pub async fn get_module_blob(&self, id: Hash) -> anyhow::Result<Option<Vec<u8>>> {
+    pub async fn get_module_blob(&self, id: Cid) -> anyhow::Result<Option<Vec<u8>>> {
         let mut blobs = Vec::<Vec<u8>>::from_rows(
             self.db()
                 .await
@@ -161,8 +164,8 @@ impl Storage {
     }
 
     /// List the module blobs in the database
-    pub async fn list_module_blobs(&self) -> anyhow::Result<HashSet<Hash>> {
-        let modules: Vec<Hash> = self
+    pub async fn list_module_blobs(&self) -> anyhow::Result<HashSet<Cid>> {
+        let modules: Vec<Cid> = self
             .db()
             .await
             .query("select hash from module_blobs", ())
@@ -173,19 +176,19 @@ impl Storage {
     }
 
     /// Get a module from the database
-    pub async fn get_module(&self, module_id: Hash) -> anyhow::Result<Option<Arc<dyn LeafModule>>> {
+    pub async fn get_module(&self, module_cid: Cid) -> anyhow::Result<Option<Arc<dyn LeafModule>>> {
         let modules = MODULES.upgradable_read().await;
-        if let Some(module) = modules.get(&module_id) {
+        if let Some(module) = modules.get(&module_cid) {
             return Ok(Some(module));
         }
 
         let blob = self
-            .get_module_blob(module_id)
+            .get_module_blob(module_cid)
             .await?
             .ok_or_else(|| anyhow::format_err!("module blob not found"))?;
-        let codec = LeafModuleCodec::decode(&mut &blob[..])?;
+        let codec = ModuleCodec::decode(&blob[..])?;
 
-        let module = match &codec.module_type_id {
+        let module = match codec.module_type() {
             x if x == BasicModule::module_type_id() => {
                 Arc::new(BasicModule::load(codec)?) as Arc<dyn LeafModule>
             }
@@ -193,30 +196,26 @@ impl Storage {
         };
 
         let mut modules = RwLockUpgradableReadGuard::upgrade(modules).await;
-        modules.insert(module_id, module.clone());
+        modules.insert(module_cid, module.clone());
 
         Ok(Some(module))
     }
 
     /// Create a new stream
     #[instrument(skip(self), err)]
-    pub async fn create_stream(&self, genesis: StreamConfig) -> anyhow::Result<StreamHandle> {
-        let (id, genesis_bytes) = genesis.get_stream_id_and_bytes();
-        let creator = genesis.creator.clone();
-        let module_hash = genesis.module_id.0;
-        let stream = STREAMS.load(genesis).await?;
+    pub async fn create_stream(
+        &self,
+        stream_did: Did,
+        owner: String,
+    ) -> anyhow::Result<StreamHandle> {
+        let stream = STREAMS.load(stream_did.clone()).await?;
 
         self.db()
             .await
             .execute(
-                "insert into streams (id, creator, genesis, module_hash) \
-                values (:id, :creator, :genesis, :module_hash)",
-                (
-                    (":id", id.as_bytes().to_vec()),
-                    (":creator", creator),
-                    (":genesis", genesis_bytes),
-                    (":module_hash", module_hash.as_bytes().to_vec()),
-                ),
+                "insert into streams (id, owner, module_cid) \
+                values (?, ?, null)",
+                [stream_did.as_str().to_string(), owner],
             )
             .await?;
 
@@ -224,12 +223,12 @@ impl Storage {
     }
 
     /// Persist the latest event we have for a stream.
-    pub async fn set_latest_event(&self, stream_id: Hash, latest_event: i64) -> anyhow::Result<()> {
+    pub async fn set_latest_event(&self, stream_did: Did, latest_event: i64) -> anyhow::Result<()> {
         self.db()
             .await
             .execute(
                 "update streams set latest_event = ? where id = ?",
-                (latest_event, stream_id.as_bytes().to_vec()),
+                (latest_event, stream_did.as_str().to_string()),
             )
             .await?;
         Ok(())
@@ -237,10 +236,10 @@ impl Storage {
 
     /// Get the list of streams and the latest event we have for each
     pub async fn list_streams(&self) -> anyhow::Result<Vec<ListStreamsItem>> {
-        let rows: Vec<(Hash, Option<i64>, Vec<u8>)> = self
+        let rows: Vec<(Did, String, Option<i64>)> = self
             .db()
             .await
-            .query("select id, latest_event, genesis from streams", ())
+            .query("select id, owner, latest_event from streams", ())
             .await?
             .parse_rows()
             .await?;
@@ -249,8 +248,8 @@ impl Storage {
             .map(|x| {
                 Ok::<_, anyhow::Error>(ListStreamsItem {
                     id: x.0,
-                    latest_event: x.1,
-                    genesis: StreamConfig::decode(&mut &x.2[..])?,
+                    owner: x.1,
+                    latest_event: x.2,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -264,16 +263,16 @@ impl Storage {
     #[instrument(skip(self), err)]
     pub async fn update_stream_module(
         &self,
-        stream: Hash,
-        module_hash: Hash,
+        stream_did: Did,
+        module_cid: Cid,
     ) -> anyhow::Result<()> {
         self.db()
             .await
             .execute(
-                "update streams set module_hash = :module where id = :id",
+                "update streams set module_cid = :module where id = :id",
                 (
-                    (":module", module_hash.as_bytes().to_vec()),
-                    (":id", stream.as_bytes().to_vec()),
+                    (":module", module_cid.as_bytes().to_vec()),
+                    (":id", stream_did.as_str().to_string()),
                 ),
             )
             .await?;
@@ -281,66 +280,40 @@ impl Storage {
         Ok(())
     }
 
-    #[instrument(skip(self), err)]
-    pub async fn open_stream(&self, id: Hash) -> anyhow::Result<Option<StreamHandle>> {
-        let mut rows = self
-            .db()
-            .await
-            .query(
-                "select genesis from streams where id = ?",
-                [id.as_bytes().to_vec()],
-            )
-            .await?;
-        let Some(row) = rows.next().await? else {
-            return Ok(None);
-        };
-        let genesis_bytes: Vec<u8> = row.parse_row().await?;
-        let genesis = StreamConfig::decode(&mut &genesis_bytes[..])?;
-
-        Ok(Some(STREAMS.load(genesis).await?))
-    }
-
     /// Add a module blob directly.
     ///
     /// This is used internally by the s3 backup script.
     #[instrument(skip(self, data), err)]
-    async fn add_module_blob(&self, data: Vec<u8>) -> anyhow::Result<Hash> {
-        let hash = blake3::hash(&data);
+    async fn add_module_blob(&self, data: Vec<u8>) -> anyhow::Result<Cid> {
+        let cid = Cid::digest_sha2(Drisl, &data);
         self.db()
             .await
             .execute(
-                r#"insert or ignore into module_blobs (hash, data) values (:hash, :data)"#,
-                ((":hash", hash.as_bytes().to_vec()), (":data", data)),
+                r#"insert or ignore into module_blobs (cid, data) values (?, ?)"#,
+                (cid.as_bytes().to_vec(), data),
             )
             .await?;
-        Ok(hash)
+        Ok(cid)
     }
 
-    #[instrument(skip(self, data), err)]
-    pub async fn upload_module(
-        &self,
-        creator: &str,
-        data: Vec<u8>,
-    ) -> anyhow::Result<blake3::Hash> {
-        if data.len() > 1024 * 1024 * 10 {
-            anyhow::bail!("Module larger than 10MB maximum size.");
-        }
+    #[instrument(skip(self), err)]
+    pub async fn upload_module(&self, creator: &str, module: ModuleCodec) -> anyhow::Result<Cid> {
         let trans = self.db().await.transaction().await?;
-        let hash = blake3::hash(&data);
+        let (cid, data) = module.encode();
         trans
             .execute(
-                r#"insert or ignore into module_blobs (hash, data) values (:hash, :data)"#,
-                ((":hash", hash.as_bytes().to_vec()), (":data", data)),
+                r#"insert or ignore into module_blobs (cid, data) values (?, ?)"#,
+                (cid.as_bytes().to_vec(), data),
             )
             .await?;
         trans
             .execute(
-                r#"insert into staged_modules (creator, hash) values (:creator, :hash)"#,
-                ((":creator", creator), (":hash", hash.as_bytes().to_vec())),
+                r#"insert into staged_modules (creator, cid) values (?, ?)"#,
+                (creator, cid.as_bytes().to_vec()),
             )
             .await?;
         trans.commit().await?;
-        Ok(hash)
+        Ok(cid)
     }
 
     #[instrument(skip(self), err)]
@@ -350,17 +323,17 @@ impl Storage {
             .await
             .execute_batch(
                 r#"
-                delete from staged_modules where (unixepoch() - timestamp) > 500 returning creator, hash;
+                delete from staged_modules where (unixepoch() - timestamp) > 500 returning creator, cid;
                 delete from module_blobs where not exists (
-                    select 1 from staged_modules s where s.hash=module_blobs.hash
+                    select 1 from staged_modules s where s.cid=module_blobs.cid
                         union
-                    select 1 from streams s where s.module_hash=module_blobs.hash
-                ) returning hash;
+                    select 1 from streams s where s.module_cid=module_blobs.cid
+                ) returning cid;
                 "#,
             )
             .await?;
-        let mut deleted_staged: Vec<(String, Hash)> = Vec::new();
-        let mut deleted_blobs: Vec<Hash> = Vec::new();
+        let mut deleted_staged: Vec<(String, Cid)> = Vec::new();
+        let mut deleted_blobs: Vec<Cid> = Vec::new();
         let r = async {
             if let Some(rows) = deleted.next_stmt_row().flatten() {
                 deleted_staged = Vec::from_rows(rows).await?;
@@ -400,303 +373,351 @@ impl Storage {
         Ok(())
     }
 
-    #[instrument(skip(self), err)]
-    pub async fn backup_to_s3(&self) -> anyhow::Result<()> {
-        let Some(bucket) = &*self.backup_bucket.read().await else {
-            return Ok(());
-        };
-
-        // List modules in the bucket
-        let modules_in_backup = bucket
-            .list(BUCKET_MODULE_DIR, None)
-            .await?
-            .into_iter()
-            .flat_map(|x| x.contents.into_iter())
-            .filter_map(|x| {
-                Hash::from_hex(
-                    x.key
-                        .strip_prefix(&format!("{BUCKET_MODULE_DIR}/"))
-                        .unwrap_or_default()
-                        .strip_suffix(".module.zstd")
-                        .unwrap_or_default(),
-                )
-                .ok()
-            })
-            .collect::<HashSet<_>>();
-
-        // List modules we have locally
-        let modules_local = self.list_module_blobs().await?;
-
-        // Upload local modules not in backup
-        for module_not_in_backup in modules_local.difference(&modules_in_backup) {
-            let Some(module) = self.get_module_blob(*module_not_in_backup).await? else {
-                continue;
-            };
-            let compressed = zstd::encode_all(&module[..], 0)?;
-            bucket
-                .put(
-                    format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}.module.zstd"),
-                    &compressed,
-                )
-                .await?;
-        }
-
-        // Download backup modules that aren't local
-        for module_not_local in modules_in_backup.difference(&modules_local) {
-            let resp = bucket
-                .get(format!(
-                    "{BUCKET_MODULE_DIR}/{module_not_local}.module.zstd"
-                ))
-                .await?;
-            let resp_bytes = resp.bytes().await?;
-            let decompressed = zstd::decode_all(&resp_bytes[..])?;
-            let hash = blake3::hash(&decompressed);
-            if hash == *module_not_local {
-                self.add_module_blob(decompressed).await?;
-            } else {
-                tracing::error!(
-                    actual_hash=%hash,
-                    hash_in_filename=%module_not_local,
-                    "Error importing module from s3: module hash did not match filename."
-                );
-            }
-        }
-
-        // Get the list of streams we have on the server
-        let streams_local = self.list_streams().await?;
-        let stream_ids_local = streams_local.iter().map(|x| x.id).collect::<HashSet<_>>();
-
-        // Get the list of streams that exist on S3
-        let streams_dir = format!("{BUCKET_STREAMS_DIR}/");
-        let stream_ids_on_s3 = bucket
-            .list(&streams_dir, Some("/"))
-            .await?
-            .into_iter()
-            .flat_map(|x| {
-                x.common_prefixes.into_iter().flat_map(|x| {
-                    x.into_iter().filter_map(|x| {
-                        x.prefix
-                            .strip_prefix(&streams_dir)
-                            .and_then(|x| x.strip_suffix("/"))
-                            .map(|x| x.to_owned())
-                    })
-                })
-            })
-            .flat_map(|x| Hash::from_str(&x).ok())
-            .collect::<HashSet<_>>();
-
-        // For each stream we have locally
-        for stream in streams_local {
-            // Get the latest event we have locally. The `0` means that all we have is the genesis,
-            // aka. an empty stream.
-            let latest_event_local = stream.latest_event.unwrap_or(0);
-
-            // Get the latest event from the S3 bucket
-            let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream.id);
-            let ranges_on_s3 = bucket
-                .list(&stream_dir, None)
-                .await?
-                .into_iter()
-                // We get the list of pages
-                .flat_map(|x| x.contents.into_iter())
-                .filter_map(|x| {
-                    // Find the name of the stream
-                    let name = x
-                        .key
-                        .strip_prefix(&format!("{stream_dir}/"))
-                        .unwrap_or_default();
-                    // And parse the [start]-[end].lvg.zstd filename
-                    let (start, end) = name
-                        .strip_suffix(".lvt.zstd")
-                        .unwrap_or("")
-                        .split_once('-')?;
-                    // And grab start and end
-                    let start = start.parse::<i64>().ok()?;
-                    let end = end.parse::<i64>().ok()?;
-                    Some((start, end))
-                })
-                .collect::<Vec<_>>();
-            let latest_in_s3 = ranges_on_s3.iter().map(|x| x.1).max();
-
-            // Check if we need to send new events to S3:
-            // - If there is a latest s3 event, then we need to update it if it is less than our
-            // local latest event.
-            // - If there is no latest event on s3, then we need to send the genesis and latest
-            //   events that we have locally.
-            if latest_in_s3.map(|l| l < latest_event_local).unwrap_or(true) {
-                // Open the local stream
-                let Some(s) = self.open_stream(stream.id).await? else {
-                    continue;
-                };
-                // Get the events that are newer than the latest s3 event.
-                let events = s
-                    .raw_get_events((latest_in_s3.map(|l| l + 1).unwrap_or(1))..)
-                    .await?;
-                let events_len = events.len() as i64;
-
-                // If there is nothing on S3 yet, then we need to also send the genesis
-                let genesis = if latest_in_s3.is_none() {
-                    Some(stream.genesis)
+    #[instrument(skip(self, key), err)]
+    pub async fn create_did(&self, did: Did, key: SigningKey, owner: String) -> anyhow::Result<()> {
+        let db = self.db().await;
+        db.execute("begin immediate", ()).await?;
+        db.execute(
+            "insert into dids (did) values (?)",
+            [did.as_str().to_string()],
+        )
+        .await?;
+        db.execute(
+            "insert into did_keys (did, p256_key, k256_key) values (?, ?, ?)",
+            (
+                did.as_str().to_string(),
+                if let SigningKey::P256(key) = &key {
+                    Some(key.to_bytes().to_vec())
                 } else {
                     None
-                };
-
-                if events_len == 0 && latest_in_s3.is_some() {
-                    // This should be unreachable, but skip this just in case
-                    tracing::error!(?latest_in_s3, "Hit unreachable condition: ignoring.");
-                    continue;
-                }
-
-                // Create and compress the event archive
-                let archive = EventArchive { genesis, events };
-                let archive_bytes = archive.encode();
-                let compressed = zstd::encode_all(&archive_bytes[..], 0)?;
-
-                // Push the archive to s3
-                let name = format!(
-                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
-                    stream.id,
-                    latest_in_s3.map(|l| l + 1).unwrap_or(0),
-                    latest_in_s3.map(|l| l + events_len).unwrap_or(events_len)
-                );
-                bucket.put(name, &compressed).await?;
-
-            // If s3 has a newer event than we have locally.
-            } else if latest_in_s3
-                .map(|l| l > latest_event_local)
-                .unwrap_or(false)
-            {
-                // For now just log a warning. This shouldn't normally happen, we expect either the
-                // local stream to be completely empty or newer than s3. Having s3 newer means there
-                // is some kind of corruption or an out-of-date local database which shouldn't
-                // happen under normal circumstances.
-                tracing::warn!(
-                    %stream.id,
-                    "There is newer backup data available on S3 than there is locally for a stream. \
-                    This should not normally happen so the s3 backup will not be restored. This should \
-                    be investigated manually."
-                )
-            }
-        }
-
-        // Get the list of streams that are on S3, but not local. These will need to be created.
-        let stream_ids_on_s3_but_not_local = stream_ids_on_s3.difference(&stream_ids_local);
-
-        'stream: for stream_id in stream_ids_on_s3_but_not_local {
-            tracing::info!(
-                stream.id=%stream_id,
-                "Found stream in S3 backup that is not local. Attempting to import."
-            );
-
-            let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream_id);
-            let mut ranges_on_s3 = bucket
-                .list(&stream_dir, None)
-                .await?
-                .into_iter()
-                // We get the list of pages
-                .flat_map(|x| x.contents.into_iter())
-                .filter_map(|x| {
-                    // Find the name of the stream
-                    let name = x
-                        .key
-                        .strip_prefix(&format!("{stream_dir}/"))
-                        .unwrap_or_default();
-                    // And parse the [start]-[end].lvt.zstd filename
-                    let (start, end) = name
-                        .strip_suffix(".lvt.zstd")
-                        .unwrap_or("")
-                        .split_once('-')?;
-                    // And grab start and end
-                    let start = start.parse::<i64>().ok()?;
-                    let end = end.parse::<i64>().ok()?;
-                    Some((start, end))
-                })
-                .collect::<Vec<_>>();
-            ranges_on_s3.sort_by(|x, y| x.0.cmp(&y.0));
-
-            // Make sure ranges are non-overlapping and without holes
-            let mut last_idx = -1;
-            for (start, end) in &ranges_on_s3 {
-                if *start != last_idx + 1 {
-                    tracing::warn!(
-                        stream.id=%stream_id,
-                        "Ranges of events on s3 are not continuous, skipping import."
-                    );
-                    continue 'stream;
-                }
-                last_idx = *end;
-            }
-
-            // Download each archive and apply it to the stream
-            let count = ranges_on_s3.len();
-            let mut stream = None;
-            for (i, (start, end)) in ranges_on_s3.into_iter().enumerate() {
-                let is_last_range = i + 1 == count;
-                let archive_path = format!(
-                    "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
-                    stream_id, start, end
-                );
-                let resp = bucket.get(archive_path).await?;
-                let bytes = resp.bytes().await?;
-                let decompressed = zstd::decode_all(&bytes[..])?;
-                let archive = EventArchive::decode(&mut &decompressed[..])?;
-
-                // If this is the initial archive
-                if start == 0 {
-                    // Get the genesis info
-                    let Some(genesis) = archive.genesis else {
-                        tracing::error!(
-                            stream.id=%stream_id,
-                            "Cannot import: first event batch does not contain the stream genesis."
-                        );
-                        continue 'stream;
-                    };
-
-                    // Create the stream
-                    let s = self.create_stream(genesis).await?;
-                    if s.id() != *stream_id {
-                        tracing::error!(
-                            expected_stream_id=%stream_id,
-                            imported_stream_id=%s.id(),
-                            "Imported stream genesis but got different sream ID than expected. \
-                            Aborting import after having created new stream with unexpected ID."
-                        );
-                        continue 'stream;
-                    }
-                    stream = Some(s);
-                }
-
-                // Get the stream
-                let Some(s) = &stream else {
-                    tracing::error!("Stream backup missing genesis");
-                    continue 'stream;
-                };
-
-                // Import the events from the archive
-                s.raw_import_events(archive.events).await?;
-
-                // Set the module and catch it up
-                if is_last_range {
-                    // FIXME： we need the module definition to be included here.
-                    // s.raw_set_module(archive.module_def).await?;
-                }
-            }
-        }
-
+                },
+                if let SigningKey::K256(key) = &key {
+                    Some(key.to_bytes().to_vec())
+                } else {
+                    None
+                },
+            ),
+        )
+        .await?;
+        db.execute(
+            "insert into did_owners values (?, ?)",
+            [did.as_str().to_string(), owner],
+        )
+        .await?;
+        db.execute("commit", ()).await?;
         Ok(())
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn get_did_owners(&self, did: Did) -> anyhow::Result<Vec<String>> {
+        let owners: Vec<String> = self
+            .db()
+            .await
+            .query(
+                "select owner from did_owners where did = ?",
+                [did.as_str().to_string()],
+            )
+            .await?
+            .parse_rows()
+            .await?;
+        Ok(owners)
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn backup_to_s3(&self) -> anyhow::Result<()> {
+        // FIXME: reimplement S3 backups
+        Ok(())
+        // let Some(bucket) = &*self.backup_bucket.read().await else {
+        //     return Ok(());
+        // };
+
+        // // List modules in the bucket
+        // let modules_in_backup = bucket
+        //     .list(BUCKET_MODULE_DIR, None)
+        //     .await?
+        //     .into_iter()
+        //     .flat_map(|x| x.contents.into_iter())
+        //     .filter_map(|x| {
+        //         Cid::from_str(
+        //             x.key
+        //                 .strip_prefix(&format!("{BUCKET_MODULE_DIR}/"))
+        //                 .unwrap_or_default()
+        //                 .strip_suffix(".module.zstd")
+        //                 .unwrap_or_default(),
+        //         )
+        //         .ok()
+        //     })
+        //     .collect::<HashSet<_>>();
+
+        // // List modules we have locally
+        // let modules_local = self.list_module_blobs().await?;
+
+        // // Upload local modules not in backup
+        // for module_not_in_backup in modules_local.difference(&modules_in_backup) {
+        //     let Some(module) = self.get_module_blob(*module_not_in_backup).await? else {
+        //         continue;
+        //     };
+        //     let compressed = zstd::encode_all(&module[..], 0)?;
+        //     bucket
+        //         .put(
+        //             format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}.module.zstd"),
+        //             &compressed,
+        //         )
+        //         .await?;
+        // }
+
+        // // Download backup modules that aren't local
+        // for module_not_local in modules_in_backup.difference(&modules_local) {
+        //     let resp = bucket
+        //         .get(format!(
+        //             "{BUCKET_MODULE_DIR}/{module_not_local}.module.zstd"
+        //         ))
+        //         .await?;
+        //     let resp_bytes = resp.bytes().await?;
+        //     let decompressed = zstd::decode_all(&resp_bytes[..])?;
+        //     let cid = Cid::digest_sha2(Drisl, &decompressed);
+        //     if cid == *module_not_local {
+        //         self.add_module_blob(decompressed).await?;
+        //     } else {
+        //         tracing::error!(
+        //             actual_hash=%cid,
+        //             hash_in_filename=%module_not_local,
+        //             "Error importing module from s3: module hash did not match filename."
+        //         );
+        //     }
+        // }
+
+        // // Get the list of streams we have on the server
+        // let streams_local = self.list_streams().await?;
+        // let stream_dids_local = streams_local.iter().map(|x| x.id).collect::<HashSet<_>>();
+
+        // // Get the list of streams that exist on S3
+        // let streams_dir = format!("{BUCKET_STREAMS_DIR}/");
+        // let stream_dids_on_s3 = bucket
+        //     .list(&streams_dir, Some("/"))
+        //     .await?
+        //     .into_iter()
+        //     .flat_map(|x| {
+        //         x.common_prefixes.into_iter().flat_map(|x| {
+        //             x.into_iter().filter_map(|x| {
+        //                 x.prefix
+        //                     .strip_prefix(&streams_dir)
+        //                     .and_then(|x| x.strip_suffix("/"))
+        //                     .map(|x| x.to_owned())
+        //             })
+        //         })
+        //     })
+        //     .flat_map(|x| Cid::from_str(&x).ok())
+        //     .collect::<HashSet<_>>();
+
+        // // For each stream we have locally
+        // for stream in streams_local {
+        //     // Get the latest event we have locally. The `0` means that all we have is the genesis,
+        //     // aka. an empty stream.
+        //     let latest_event_local = stream.latest_event.unwrap_or(0);
+
+        //     // Get the latest event from the S3 bucket
+        //     let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream.id);
+        //     let ranges_on_s3 = bucket
+        //         .list(&stream_dir, None)
+        //         .await?
+        //         .into_iter()
+        //         // We get the list of pages
+        //         .flat_map(|x| x.contents.into_iter())
+        //         .filter_map(|x| {
+        //             // Find the name of the stream
+        //             let name = x
+        //                 .key
+        //                 .strip_prefix(&format!("{stream_dir}/"))
+        //                 .unwrap_or_default();
+        //             // And parse the [start]-[end].lvg.zstd filename
+        //             let (start, end) = name
+        //                 .strip_suffix(".lvt.zstd")
+        //                 .unwrap_or("")
+        //                 .split_once('-')?;
+        //             // And grab start and end
+        //             let start = start.parse::<i64>().ok()?;
+        //             let end = end.parse::<i64>().ok()?;
+        //             Some((start, end))
+        //         })
+        //         .collect::<Vec<_>>();
+        //     let latest_in_s3 = ranges_on_s3.iter().map(|x| x.1).max();
+
+        //     // Check if we need to send new events to S3:
+        //     // - If there is a latest s3 event, then we need to update it if it is less than our
+        //     // local latest event.
+        //     // - If there is no latest event on s3, then we need to send the genesis and latest
+        //     //   events that we have locally.
+        //     if latest_in_s3.map(|l| l < latest_event_local).unwrap_or(true) {
+        //         // Open the local stream
+        //         let s = STREAMS.load(stream.id).await?;
+
+        //         // Get the events that are newer than the latest s3 event.
+        //         let events = s
+        //             .raw_get_events((latest_in_s3.map(|l| l + 1).unwrap_or(1))..)
+        //             .await?;
+        //         let events_len = events.len() as i64;
+
+        //         if events_len == 0 && latest_in_s3.is_some() {
+        //             // This should be unreachable, but skip this just in case
+        //             tracing::error!(?latest_in_s3, "Hit unreachable condition: ignoring.");
+        //             continue;
+        //         }
+
+        //         // Create and compress the event archive
+        //         let archive = EventArchive { genesis, events };
+        //         let archive_bytes = archive.encode();
+        //         let compressed = zstd::encode_all(&archive_bytes[..], 0)?;
+
+        //         // Push the archive to s3
+        //         let name = format!(
+        //             "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
+        //             s.id,
+        //             latest_in_s3.map(|l| l + 1).unwrap_or(0),
+        //             latest_in_s3.map(|l| l + events_len).unwrap_or(events_len)
+        //         );
+        //         bucket.put(name, &compressed).await?;
+
+        //     // If s3 has a newer event than we have locally.
+        //     } else if latest_in_s3
+        //         .map(|l| l > latest_event_local)
+        //         .unwrap_or(false)
+        //     {
+        //         // For now just log a warning. This shouldn't normally happen, we expect either the
+        //         // local stream to be completely empty or newer than s3. Having s3 newer means there
+        //         // is some kind of corruption or an out-of-date local database which shouldn't
+        //         // happen under normal circumstances.
+        //         tracing::warn!(
+        //             %stream.id,
+        //             "There is newer backup data available on S3 than there is locally for a stream. \
+        //             This should not normally happen so the s3 backup will not be restored. This should \
+        //             be investigated manually."
+        //         )
+        //     }
+        // }
+
+        // // Get the list of streams that are on S3, but not local. These will need to be created.
+        // let stream_dids_on_s3_but_not_local = stream_dids_on_s3.difference(&stream_dids_local);
+
+        // 'stream: for stream_did in stream_dids_on_s3_but_not_local {
+        //     tracing::info!(
+        //         stream.id=%stream_did,
+        //         "Found stream in S3 backup that is not local. Attempting to import."
+        //     );
+
+        //     let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream_did);
+        //     let mut ranges_on_s3 = bucket
+        //         .list(&stream_dir, None)
+        //         .await?
+        //         .into_iter()
+        //         // We get the list of pages
+        //         .flat_map(|x| x.contents.into_iter())
+        //         .filter_map(|x| {
+        //             // Find the name of the stream
+        //             let name = x
+        //                 .key
+        //                 .strip_prefix(&format!("{stream_dir}/"))
+        //                 .unwrap_or_default();
+        //             // And parse the [start]-[end].lvt.zstd filename
+        //             let (start, end) = name
+        //                 .strip_suffix(".lvt.zstd")
+        //                 .unwrap_or("")
+        //                 .split_once('-')?;
+        //             // And grab start and end
+        //             let start = start.parse::<i64>().ok()?;
+        //             let end = end.parse::<i64>().ok()?;
+        //             Some((start, end))
+        //         })
+        //         .collect::<Vec<_>>();
+        //     ranges_on_s3.sort_by(|x, y| x.0.cmp(&y.0));
+
+        //     // Make sure ranges are non-overlapping and without holes
+        //     let mut last_idx = -1;
+        //     for (start, end) in &ranges_on_s3 {
+        //         if *start != last_idx + 1 {
+        //             tracing::warn!(
+        //                 stream.id=%stream_did,
+        //                 "Ranges of events on s3 are not continuous, skipping import."
+        //             );
+        //             continue 'stream;
+        //         }
+        //         last_idx = *end;
+        //     }
+
+        //     // Download each archive and apply it to the stream
+        //     let count = ranges_on_s3.len();
+        //     let mut stream = None;
+        //     for (i, (start, end)) in ranges_on_s3.into_iter().enumerate() {
+        //         let is_last_range = i + 1 == count;
+        //         let archive_path = format!(
+        //             "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
+        //             stream_did, start, end
+        //         );
+        //         let resp = bucket.get(archive_path).await?;
+        //         let bytes = resp.bytes().await?;
+        //         let decompressed = zstd::decode_all(&bytes[..])?;
+        //         let archive = EventArchive::decode(&mut &decompressed[..])?;
+
+        //         // If this is the initial archive
+        //         if start == 0 {
+        //             // Get the genesis info
+        //             let Some(genesis) = archive.genesis else {
+        //                 tracing::error!(
+        //                     stream.id=%stream_did,
+        //                     "Cannot import: first event batch does not contain the stream genesis."
+        //                 );
+        //                 continue 'stream;
+        //             };
+
+        //             // Create the stream
+        //             let s = self.create_stream(genesis).await?;
+        //             if s.id() != *stream_did {
+        //                 tracing::error!(
+        //                     expected_stream_did=%stream_did,
+        //                     imported_stream_did=%s.id(),
+        //                     "Imported stream genesis but got different sream ID than expected. \
+        //                     Aborting import after having created new stream with unexpected ID."
+        //                 );
+        //                 continue 'stream;
+        //             }
+        //             stream = Some(s);
+        //         }
+
+        //         // Get the stream
+        //         let Some(s) = &stream else {
+        //             tracing::error!("Stream backup missing genesis");
+        //             continue 'stream;
+        //         };
+
+        //         // Import the events from the archive
+        //         s.raw_import_events(archive.events).await?;
+
+        //         // Set the module and catch it up
+        //         if is_last_range {
+        //             // FIXME： we need the module definition to be included here.
+        //             // s.raw_set_module(archive.module_def).await?;
+        //         }
+        //     }
+        // }
+
+        // Ok(())
     }
 }
 
-#[derive(Decode, Encode, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct EventArchive {
-    // FIXME： we need the module definition to be included here.
-    genesis: Option<StreamConfig>,
     events: Vec<Event>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct StreamMetadata {
+    owner: String,
+    module_cid: Cid,
 }
 
 #[instrument(skip(db))]
 pub async fn run_database_migrations(db: &Connection) -> anyhow::Result<()> {
-    db.execute_transactional_batch(include_str!("schema/schema_00.sql"))
+    db.execute_transactional_batch(include_str!("schema.sql"))
         .await?;
     Ok(())
 }

@@ -6,7 +6,7 @@ use std::{
 use anyhow::Context;
 use async_lock::{Mutex, RwLock};
 use atproto_plc::Did;
-use dasl::cid::Cid;
+use dasl::cid::{Cid, Codec::Drisl as DrislCodec};
 use leaf_stream_types::{
     Event, IncomingEvent, LeafQuery, LeafQueryReponse, QueryValidationError, SqlRows,
 };
@@ -24,6 +24,8 @@ mod module;
 
 mod drisl_extract;
 
+pub use atproto_plc;
+pub use dasl;
 pub use leaf_stream_types as types;
 pub use libsql;
 pub use ulid;
@@ -62,17 +64,21 @@ struct ActiveSubscription {
 }
 
 enum ModuleState {
-    Unloaded(Cid),
+    /// The module has not been loaded yet. If there is an inner [`Cid`] it means that the stream
+    /// has a module configured for it that has not been loaded yet. If it is [`None`] then it means
+    /// that there is no module selected for this stream yet.
+    Unloaded(Option<Cid>),
+    // A module has been loaded.
     Loaded {
         module: Arc<dyn LeafModule>,
         module_db: libsql::Connection,
     },
 }
 impl ModuleState {
-    fn id(&self) -> Cid {
+    fn id(&self) -> Option<Cid> {
         match self {
-            ModuleState::Unloaded(hash) => *hash,
-            ModuleState::Loaded { module, .. } => module.module_id(),
+            ModuleState::Unloaded(id) => *id,
+            ModuleState::Loaded { module, .. } => Some(module.id()),
         }
     }
 }
@@ -99,8 +105,8 @@ pub enum StreamError {
     IdMismatch { expected_id: Did, database_id: Did },
     #[error("Attempted to provide module for stream when it was not needed.")]
     ModuleNotNeeded,
-    #[error("The stream's module has not been provided: {0}")]
-    ModuleNotProvided(Cid),
+    #[error("The stream's module has not been provided. Expecte module ID: {0:?}")]
+    ModuleNotProvided(Option<Cid>),
     #[error("The stream module hash could not be decoded from the database")]
     ModuleHashDecodeError,
     #[error(
@@ -135,24 +141,24 @@ impl Stream {
         self.state.read().await.latest_event
     }
 
-    pub async fn module_id(&self) -> Cid {
+    pub async fn module_cid(&self) -> Option<Cid> {
         self.state.read().await.module_state.id()
     }
 
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
-    pub async fn raw_set_module(&self, module_id: Cid) -> anyhow::Result<()> {
+    pub async fn raw_set_module(&self, module_cid: Cid) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         state
             .db
             .execute(
                 "update stream_state set module_hash = ?, module_event_cursor = null where id = 1",
-                [module_id.as_bytes().to_vec()],
+                [module_cid.as_bytes().to_vec()],
             )
             .await?;
         state.module_event_cursor = 0;
-        state.module_state = ModuleState::Unloaded(module_id);
+        state.module_state = ModuleState::Unloaded(Some(module_cid));
 
         Ok(())
     }
@@ -183,7 +189,7 @@ impl Stream {
         // Load the stream state from the database
         let row = db
             .query(
-                "select stream_id, module_hash, module_event_cursor \
+                "select stream_did, module_hash, module_event_cursor \
                 from stream_state where id=1",
                 (),
             )
@@ -196,30 +202,34 @@ impl Stream {
         let module_state;
         let module_event_cursor;
         if let Some(row) = row {
-            let (db_stream_id, module_id, db_module_event_cursor): (Did, Cid, Option<i64>) = row
+            let (db_stream_did, module_cid, db_module_event_cursor): (
+                Did,
+                Option<Cid>,
+                Option<i64>,
+            ) = row
                 .parse_row()
                 .await
                 .context("error parsing stream state")?;
-            if db_stream_id != id {
+            if db_stream_did != id {
                 return Err(StreamError::IdMismatch {
                     expected_id: id,
-                    database_id: db_stream_id,
+                    database_id: db_stream_did,
                 });
             }
-            module_state = ModuleState::Unloaded(module_id);
+            module_state = ModuleState::Unloaded(module_cid);
             module_event_cursor = db_module_event_cursor.unwrap_or(0);
         } else {
             // Initialize the stream state
             db.execute(
                 "insert into stream_state \
-                (id, stream_id, module_hash, module_event_cursor) values \
-                (1, :stream_id, null, null) ",
-                [(":stream_id", id.as_str().to_string())],
+                (id, stream_did, module_hash, module_event_cursor) values \
+                (1, :stream_did, null, null) ",
+                [(":stream_did", id.as_str().to_string())],
             )
             .await
             .context("error initializing stream state")?;
 
-            module_state = ModuleState::Unloaded(Cid::empty_sha2_256(dasl::cid::Codec::Drisl));
+            module_state = ModuleState::Unloaded(None);
             module_event_cursor = 0;
         };
 
@@ -296,14 +306,17 @@ impl Stream {
     }
 
     /// If this stream needs a Leaf module to be loaded before it can continue processing events,
-    /// then this will return `Some(hash)`.
+    /// then this will return `Some(x)`. If the stream has a specific module it needs, then `x` will
+    /// be `Some(module_cid)`.
+    ///
+    /// If this is a new stream that hasn't had a module before then `x` will be `None`.
     ///
     /// You must then call [`provide_module()`][Self::provide_module] with the module in order to
     /// allow the stream to continue processing.
-    pub async fn needs_module(&self) -> Option<Cid> {
+    pub async fn needs_module(&self) -> Option<Option<Cid>> {
         let state = self.state.read().await;
         match &state.module_state {
-            ModuleState::Unloaded(hash) => Some(*hash),
+            ModuleState::Unloaded(id) => Some(*id),
             _ => None,
         }
     }
@@ -317,7 +330,7 @@ impl Stream {
         let mut state = self.state.write().await;
         match &state.module_state {
             ModuleState::Unloaded(needed_id) => {
-                if module.module_id() == *needed_id {
+                if needed_id.map(|id| id == module.id()).unwrap_or(true) {
                     // Make sure an `events` database is connected, which must be connected to the
                     // same database with the same virtual filesystem.
                     let files: Vec<String> = module_db
@@ -347,8 +360,8 @@ impl Stream {
                     Ok(())
                 } else {
                     Err(StreamError::InvalidModuleId {
-                        needed: *needed_id,
-                        provided: module.module_id(),
+                        needed: needed_id.unwrap_or_else(|| Cid::empty_sha2_256(DrislCodec)),
+                        provided: module.id(),
                     })
                 }
             }
