@@ -134,14 +134,14 @@ impl Storage {
 
     /// Returns the list of hashes that could be found in the database out of the list that is
     /// provided to search for.
-    #[instrument(skip(self, hash), err)]
-    pub async fn has_module_blob(&self, hash: Cid) -> anyhow::Result<bool> {
+    #[instrument(skip(self, cid), err)]
+    pub async fn has_module_blob(&self, cid: Cid) -> anyhow::Result<bool> {
         let mut rows = self
             .db()
             .await
             .query(
-                "select hash from module_blobs where hash = ?",
-                [hash.as_bytes().to_vec()],
+                "select 1 from module_blobs where cid = ?",
+                [cid.as_bytes().to_vec()],
             )
             .await?;
         return Ok(rows.next().await?.is_some());
@@ -149,13 +149,13 @@ impl Storage {
 
     // Get a moudle blob from the database
     #[instrument(skip(self), err)]
-    pub async fn get_module_blob(&self, id: Cid) -> anyhow::Result<Option<Vec<u8>>> {
+    pub async fn get_module_blob(&self, cid: Cid) -> anyhow::Result<Option<Vec<u8>>> {
         let mut blobs = Vec::<Vec<u8>>::from_rows(
             self.db()
                 .await
                 .query(
-                    "select data from module_blobs where hash=?",
-                    [id.as_bytes().to_vec()],
+                    "select data from module_blobs where cid=?",
+                    [cid.as_bytes().to_vec()],
                 )
                 .await?,
         )
@@ -168,7 +168,7 @@ impl Storage {
         let modules: Vec<Cid> = self
             .db()
             .await
-            .query("select hash from module_blobs", ())
+            .query("select cid from module_blobs", ())
             .await?
             .parse_rows()
             .await?;
