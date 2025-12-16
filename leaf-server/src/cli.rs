@@ -15,7 +15,7 @@ pub struct Args {
     pub profiling: bool,
 
     /// Set the PLC directory to use
-    #[arg(long, env, default_value = "https://plc.directory")]
+    #[arg(long, env, default_value = "http://localhost:3001")]
     pub plc_directory: String,
 
     #[clap(subcommand)]
