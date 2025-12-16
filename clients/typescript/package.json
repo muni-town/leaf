@@ -19,6 +19,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "leaf": "./dist/cli/index.js"
+  },
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -33,6 +36,7 @@
     "socket.io-msgpack-parser": "^3.0.2"
   },
   "devDependencies": {
+    "@types/node": "^25.0.2",
     "beachball": "^2.54.0",
     "pkgroll": "^2.12.2",
     "prettier": "3.5.3",

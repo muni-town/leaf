@@ -13,11 +13,12 @@
         "allowImportingTsExtensions": false,
         "emitDeclarationOnly": false,
         "outDir": "dist",
-        "rootDir": "src",
+        "rootDir": ".",
         "moduleResolution": "bundler"
     },
     "include": [
         "src",
+        "cli",
         "../../gitignore/scripts"
     ],
     "exclude": [

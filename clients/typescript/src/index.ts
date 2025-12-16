@@ -16,12 +16,12 @@ import {
   StreamSubscribeArgs,
   StreamSubscribeNotification,
   Ulid,
-} from "./codec";
+} from "./codec.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { hex } from "@scure/base";
 import { _void, bool, Result, str, Struct } from "scale-ts";
 
-export * from "./codec";
+export * from "./codec.js";
 
 type EventMap = {
   connect: () => void;
