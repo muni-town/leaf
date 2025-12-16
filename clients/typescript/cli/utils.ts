@@ -59,6 +59,10 @@ export async function createClient(options: GlobalOptions): Promise<LeafClient> 
       }
     });
 
+    client.socket.on("disconnect", (reason) => {
+      console.error(`DEBUG: Native socket disconnect reason: ${reason}`);
+    });
+
     client.on("error", (error) => {
       console.error(`DEBUG: Socket error: ${error}`);
       clearTimeout(timeout);
