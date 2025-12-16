@@ -1,4 +1,10 @@
-import { createClient, parseGlobalOptions, getOption, outputJson, outputError } from "../utils.js";
+import {
+  createClient,
+  parseGlobalOptions,
+  getOption,
+  outputJson,
+  outputError,
+} from "../utils.js";
 import type { LeafQuery } from "../../src/index.js";
 
 export async function query(args: string[]) {
@@ -17,7 +23,7 @@ export async function query(args: string[]) {
   // Build query object
   const leafQuery: LeafQuery = {
     query_name: queryName,
-    requesting_user: undefined,
+    requesting_user: "did:web:localhost",
     params: [],
     start: startStr ? BigInt(startStr) : undefined,
     limit: limitStr ? BigInt(limitStr) : undefined,
@@ -31,7 +37,9 @@ export async function query(args: string[]) {
         return [key, convertToSqlValue(value)];
       });
     } catch (e) {
-      throw new Error(`Invalid params JSON: ${e instanceof Error ? e.message : String(e)}`);
+      throw new Error(
+        `Invalid params JSON: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
