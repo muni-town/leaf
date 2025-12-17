@@ -1,12 +1,6 @@
 import { io, Socket } from "socket.io-client";
 import parser from "socket.io-msgpack-parser";
-import {
-  encode,
-  decode,
-  BytesWrapper,
-  CidLinkWrapper,
-  CidLink,
-} from "@atcute/cbor";
+import { encode, decode, CidLinkWrapper, CidLink } from "@atcute/cbor";
 import { Cid, create as createCid } from "@atcute/cid";
 import {
   AssertOk,
@@ -19,7 +13,6 @@ import {
   ModuleExistsResp,
   ModuleUploadArgs,
   ModuleUploadResp,
-  SqlRows,
   StreamCreateArgs,
   StreamCreateResp,
   StreamEventBatchArgs,
@@ -27,7 +20,7 @@ import {
   StreamInfoArgs,
   StreamInfoResp,
   StreamQueryArgs,
-  StreamQueryresp as StreamQueryResp,
+  StreamQueryResp,
   StreamSubscribeArgs,
   StreamSubscribeNotification,
   StreamSubscribeResp,
@@ -166,7 +159,7 @@ export class LeafClient {
   async uploadModule(module: ModuleCodec): Promise<AssertOk<ModuleUploadResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/upload",
-      module,
+      toBinary(encode({ module } satisfies ModuleUploadArgs)),
     );
     const resp: ModuleUploadResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -273,7 +266,7 @@ export class LeafClient {
     return async () => {
       const data: Uint8Array = await this.socket.emitWithAck(
         "stream/unsubscribe",
-        toBinary(encode(subId.subscription_id satisfies StreamUnsubscribeArgs)),
+        toBinary(encode(subId satisfies StreamUnsubscribeArgs)),
       );
       this.#querySubscriptions.delete(subId.subscription_id);
       const resp: StreamUnsubscribeResp = decode(fromBinary(data));

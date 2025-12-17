@@ -96,7 +96,7 @@ export type StreamSubscribeNotification = {
 };
 export type StreamSubscribeResp = Result<{ subscription_id: SubscriptionId }>;
 
-export type StreamUnsubscribeArgs = SubscriptionId;
+export type StreamUnsubscribeArgs = { subscription_id: SubscriptionId };
 export type StreamUnsubscribeResp = Result<{ was_subscribed: boolean }>;
 
 export type StreamQueryArgs = {
@@ -104,4 +104,4 @@ export type StreamQueryArgs = {
   query: LeafQuery;
 };
 
-export type StreamQueryresp = Result<SqlRows>;
+export type StreamQueryResp = Result<SqlRows>;

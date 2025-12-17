@@ -43,7 +43,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 }
                 let args: ModuleUploadArgs = dasl::drisl::from_slice(&bytes[..])?;
                 let hash = STORAGE.upload_module(&did_, args.module).await?;
-                anyhow::Ok(hash)
+                anyhow::Ok(ModuleUploadResp { cid: hash })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle module/upload"))
             .await;
@@ -61,7 +61,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let args: ModuleExistsArgs = dasl::drisl::from_slice(&bytes?[..])?;
                 let cid = args.cid;
                 let has_module = STORAGE.has_module_blob(cid).await?;
-                anyhow::Ok(has_module)
+                anyhow::Ok(ModuleExistsResp {
+                    module_exists: has_module,
+                })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle module/exists"))
             .await;
@@ -103,7 +105,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 // Set the stream's module
                 STREAMS.update_module(stream, module_cid).await?;
 
-                anyhow::Ok(stream_did)
+                anyhow::Ok(StreamCreateResp { stream_did })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
             .await;
@@ -317,7 +319,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     }
                 });
 
-                anyhow::Ok(subscription_id)
+                anyhow::Ok(StreamSubscribeResp { subscription_id })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/subscribe"))
             .await;
@@ -334,11 +336,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
         "stream/unsubscribe",
         async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
-                let subscription_id: Ulid = dasl::drisl::from_slice(&bytes?[..])?;
+                let StreamUnsubscribeArgs { subscription_id } =
+                    dasl::drisl::from_slice(&bytes?[..])?;
                 let unsubscriber = unsubscribers_.lock().await.remove(&subscription_id);
                 let was_subscribed = unsubscriber.is_some();
                 unsubscriber.map(|x| x.send(()));
-                anyhow::Ok(was_subscribed)
+                anyhow::Ok(StreamUnsubscribeResp { was_subscribed })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/fetch"))
             .await;
@@ -393,9 +396,19 @@ struct ModuleUploadArgs {
     module: ModuleCodec,
 }
 
+#[derive(Serialize)]
+struct ModuleUploadResp {
+    cid: Cid,
+}
+
 #[derive(Deserialize)]
 struct ModuleExistsArgs {
     cid: Cid,
+}
+
+#[derive(Serialize)]
+struct ModuleExistsResp {
+    module_exists: bool,
 }
 
 #[derive(Deserialize)]
@@ -403,9 +416,19 @@ struct StreamInfoArgs {
     stream_did: Did,
 }
 
+#[derive(Serialize)]
+struct StreamInfoResp {
+    module_cid: Option<Cid>,
+}
+
 #[derive(Deserialize)]
 struct StreamCreateArgs {
     module_cid: Cid,
+}
+
+#[derive(Serialize)]
+struct StreamCreateResp {
+    stream_did: Did,
 }
 
 #[derive(Deserialize)]
@@ -429,19 +452,29 @@ struct StreamQueryArgs {
     query: LeafQuery,
 }
 
+#[derive(Deserialize)]
+struct StreamSubscribeArgs {
+    stream_did: Did,
+    query: LeafQuery,
+}
+
+#[derive(Serialize)]
+struct StreamSubscribeResp {
+    subscription_id: Ulid,
+}
+
 #[derive(Serialize)]
 struct StreamSubscribeNotification {
     subscription_id: Ulid,
     response: Result<SqlRows, String>,
 }
 
-#[derive(Serialize)]
-struct StreamInfoResp {
-    module_cid: Option<Cid>,
+#[derive(Deserialize)]
+struct StreamUnsubscribeArgs {
+    subscription_id: Ulid,
 }
 
-#[derive(Deserialize)]
-struct StreamSubscribeArgs {
-    stream_did: Did,
-    query: LeafQuery,
+#[derive(Serialize)]
+struct StreamUnsubscribeResp {
+    was_subscribed: bool,
 }
