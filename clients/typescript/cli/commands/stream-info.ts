@@ -1,3 +1,4 @@
+import { Did } from "../../src/codec.js";
 import {
   createClient,
   parseGlobalOptions,
@@ -10,7 +11,7 @@ export async function streamInfo(args: string[]) {
     throw new Error("Usage: leaf stream-info <stream-id>");
   }
 
-  const streamId = args[0]!;
+  const streamDid = args[0]! as Did;
   const options = parseGlobalOptions(args);
 
   const client = await createClient(options);
@@ -18,12 +19,12 @@ export async function streamInfo(args: string[]) {
   try {
     console.error(`DEBUG: About to call client.streamInfo()`);
     console.error(`DEBUG: Socket connected: ${client.socket.connected}`);
-    const info = await client.streamInfo(streamId);
+    const info = await client.streamInfo(streamDid);
     console.error(`DEBUG: streamInfo returned successfully`);
 
     outputJson({
       success: true,
-      stream_id: streamId,
+      stream_id: streamDid,
       info: {
         module_cid: info.module_cid,
       },

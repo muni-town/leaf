@@ -5,14 +5,14 @@ import {
   outputJson,
   outputError,
 } from "../utils.js";
-import type { LeafQuery } from "../../src/index.js";
+import type { Did, LeafQuery } from "../../src/index.js";
 
 export async function query(args: string[]) {
   if (args.length < 2) {
-    throw new Error("Usage: leaf query <stream-id> <query-name> [options]");
+    throw new Error("Usage: leaf query <stream-did> <query-name> [options]");
   }
 
-  const streamId = args[0]!;
+  const streamDid = args[0]! as Did;
   const queryName = args[1]!;
 
   const options = parseGlobalOptions(args);
@@ -46,7 +46,7 @@ export async function query(args: string[]) {
   const client = await createClient(options);
 
   try {
-    const result = await client.query(streamId, leafQuery);
+    const result = await client.query(streamDid, leafQuery);
 
     // Convert SqlRows to a more readable format
     const rows = result.rows.map((row) => {
