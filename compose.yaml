@@ -1,6 +1,7 @@
 services:
   plc-directory:
     image: ghcr.io/zicklag/did-plc-server:plc-053ddecb6a12ce0e996d300f9395899adf02dd05
+    platform: linux/amd64 # no arm64 build available
     command:
       - node
       - ../dist/bin.js
@@ -16,6 +17,7 @@ services:
 
   plc-db:
     image: postgres
+    platform: linux/amd64 # no arm64 build available for plc-directory
     environment:
       POSTGRES_PASSWORD: password
     volumes:
@@ -36,7 +38,7 @@ services:
       - "4040:4040"
 
   tempo-init:
-    image: &tempoImage grafana/tempo:latest
+    image: busybox
     user: root
     # Tempo runs as user 10001, and docker compose creates the volume as root.
     # As such, we need to chown the volume in order for Tempo to start correctly.
@@ -48,7 +50,7 @@ services:
       - tempo-data:/var/tempo
 
   tempo:
-    image: *tempoImage
+    image: grafana/tempo:latest
     command: ["-config.file=/etc/tempo.yaml"]
     configs:
       - source: tempo-config
