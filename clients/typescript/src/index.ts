@@ -9,6 +9,7 @@ import {
 } from "@atcute/cbor";
 import { Cid, create as createCid } from "@atcute/cid";
 import {
+  AssertOk,
   BasicModule,
   Did,
   EventPayload,
@@ -34,6 +35,7 @@ import {
   StreamUnsubscribeResp,
   StreamUpdateModuleArgs,
   StreamUpdateModuleResp,
+  SubscriptionId,
 } from "./codec.js";
 
 export * from "./codec.js";
@@ -72,7 +74,7 @@ type EventMap = {
 export class LeafClient {
   socket: Socket;
   #querySubscriptions: Map<
-    string,
+    SubscriptionId,
     (result: StreamQueryResp) => void | Promise<void>
   > = new Map();
   _listeners: { [K in keyof EventMap]: EventMap[K][] } = {
@@ -146,7 +148,9 @@ export class LeafClient {
     ) as any;
   }
 
-  async uploadBasicModule(module: BasicModule): Promise<CidLinkWrapper> {
+  async uploadBasicModule(
+    module: BasicModule,
+  ): Promise<AssertOk<ModuleUploadResp>> {
     return this.uploadModule(module);
   }
 
@@ -159,7 +163,7 @@ export class LeafClient {
     return { encoded, moduleCid: new CidLinkWrapper(moduleCid.bytes) };
   }
 
-  async uploadModule(module: ModuleCodec): Promise<CidLinkWrapper> {
+  async uploadModule(module: ModuleCodec): Promise<AssertOk<ModuleUploadResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/upload",
       module,
@@ -171,7 +175,7 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async hasModule(moduleCid: CidLink): Promise<boolean> {
+  async hasModule(moduleCid: CidLink): Promise<AssertOk<ModuleExistsResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/exists",
       toBinary(encode({ cid: moduleCid } satisfies ModuleExistsArgs)),
@@ -183,7 +187,7 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async createStream(module_cid: CidLink): Promise<string> {
+  async createStream(module_cid: CidLink): Promise<AssertOk<StreamCreateResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/create",
       toBinary(encode({ module_cid } satisfies StreamCreateArgs)),
@@ -195,7 +199,7 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async streamInfo(stream_did: Did): Promise<{ module_cid: CidLinkWrapper }> {
+  async streamInfo(stream_did: Did): Promise<AssertOk<StreamInfoResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/info",
       toBinary(encode({ stream_did } satisfies StreamInfoArgs)),
@@ -207,7 +211,10 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async updateModule(stream_did: Did, module_cid: CidLink): Promise<void> {
+  async updateModule(
+    stream_did: Did,
+    module_cid: CidLink,
+  ): Promise<AssertOk<StreamUpdateModuleResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/update_module",
       toBinary(
@@ -225,11 +232,17 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async sendEvent(stream_did: Did, event: EventPayload): Promise<void> {
+  async sendEvent(
+    stream_did: Did,
+    event: EventPayload,
+  ): Promise<AssertOk<StreamEventBatchResp>> {
     this.sendEvents(stream_did, [event]);
   }
 
-  async sendEvents(stream_did: Did, events: EventPayload[]): Promise<void> {
+  async sendEvents(
+    stream_did: Did,
+    events: EventPayload[],
+  ): Promise<AssertOk<StreamEventBatchResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/event_batch",
       toBinary(encode({ stream_did, events } satisfies StreamEventBatchArgs)),
@@ -256,13 +269,13 @@ export class LeafClient {
     }
 
     const subId = resp.Ok;
-    this.#querySubscriptions.set(subId, handler);
+    this.#querySubscriptions.set(subId.subscription_id, handler);
     return async () => {
       const data: Uint8Array = await this.socket.emitWithAck(
         "stream/unsubscribe",
-        toBinary(encode(subId satisfies StreamUnsubscribeArgs)),
+        toBinary(encode(subId.subscription_id satisfies StreamUnsubscribeArgs)),
       );
-      this.#querySubscriptions.delete(subId);
+      this.#querySubscriptions.delete(subId.subscription_id);
       const resp: StreamUnsubscribeResp = decode(fromBinary(data));
       if ("Err" in resp) {
         throw new Error(`Error unsubscribing to query: ${resp.Err}`);
@@ -277,13 +290,16 @@ export class LeafClient {
     }
   }
 
-  async query(stream_did: string, query: LeafQuery): Promise<SqlRows> {
+  async query(
+    stream_did: Did,
+    query: LeafQuery,
+  ): Promise<AssertOk<StreamQueryResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/query",
       toBinary(encode({ stream_did, query } satisfies StreamQueryArgs)),
     );
     const resp: StreamQueryResp = decode(fromBinary(data));
-    if ('Err' in resp) {
+    if ("Err" in resp) {
       throw new Error(resp.Err);
     }
     return resp.Ok;
