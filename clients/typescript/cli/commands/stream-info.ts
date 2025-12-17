@@ -1,4 +1,9 @@
-import { createClient, parseGlobalOptions, outputJson, outputError } from "../utils.js";
+import {
+  createClient,
+  parseGlobalOptions,
+  outputJson,
+  outputError,
+} from "../utils.js";
 
 export async function streamInfo(args: string[]) {
   if (args.length < 1) {
@@ -20,8 +25,7 @@ export async function streamInfo(args: string[]) {
       success: true,
       stream_id: streamId,
       info: {
-        creator: info.creator,
-        module_id: info.moduleId,
+        module_cid: info.module_cid,
       },
     });
   } catch (error) {

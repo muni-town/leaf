@@ -121,9 +121,9 @@ impl LeafModule for BasicModule {
             let query_def = def
                 .queries
                 .iter()
-                .find(|x| x.name == query.query_name)
+                .find(|x| x.name == query.name)
                 .ok_or_else(|| {
-                    anyhow::format_err!("Query with name `{}` not in module.", query.query_name)
+                    anyhow::format_err!("Query with name `{}` not in module.", query.name)
                 })?;
 
             // Make sure the query is valid for it's definition
@@ -159,7 +159,7 @@ impl LeafModule for BasicModule {
                                 ),
                                 (
                                     "$requesting_user".to_string(),
-                                    match query.requesting_user.clone() {
+                                    match query.user.clone() {
                                         Some(t) => libsql::Value::Text(t),
                                         None => libsql::Value::Null,
                                     },
@@ -176,11 +176,11 @@ impl LeafModule for BasicModule {
                     .collect::<Vec<_>>();
                 let mut rows = Vec::new();
                 while let Some(row) = r.next().await? {
-                    rows.push(SqlRow {
-                        values: (0..column_count)
+                    rows.push(SqlRow(
+                        (0..column_count)
                             .map(|i| row.get_value(i).map(libsql_value_to_leaf))
                             .collect::<Result<Vec<_>, _>>()?,
-                    })
+                    ))
                 }
 
                 query_result = Some(SqlRows { rows, column_names });

@@ -120,8 +120,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
         "stream/info",
         async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async move {
-                let args: StreamInfoArgs = dasl::drisl::from_slice(&bytes?[..])?;
-                let stream_did = args.stream_did;
+                let StreamInfoArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
                 let stream = if let Some(stream) = open_streams.get(&stream_did) {
@@ -259,7 +258,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 // TODO: maybe we just shouldn't have the client send the requesting user since we
                 // already have it.
-                if query.requesting_user != did_ {
+                if query.user != did_ {
                     anyhow::bail!(
                         "Some events in batch are not authored by the authenticated user."
                     );
@@ -361,7 +360,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 // TODO: maybe we just shouldn't have the client send the requesting user since we
                 // already have it.
-                if query.requesting_user != did_ {
+                if query.user != did_ {
                     anyhow::bail!("Requesting user does not match authenticated user");
                 }
 

@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.9",
   "license": "MPL-2.0",
   "type": "module",
-  "packageManager": "pnpm@10.13.0",
+  "packageManager": "pnpm@10.26.0",
   "repository": {
     "url": "https://github.com/muni-town/leaf"
   },
@@ -30,9 +30,7 @@
   },
   "dependencies": {
     "@atcute/cbor": "^2.2.8",
-    "@noble/hashes": "^2.0.1",
-    "@scure/base": "^2.0.0",
-    "scale-ts": "^1.6.1",
+    "@atcute/cid": "^2.2.6",
     "socket.io-client": "^4.8.1",
     "socket.io-msgpack-parser": "^3.0.2"
   },
