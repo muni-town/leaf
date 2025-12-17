@@ -13,9 +13,9 @@ Usage:
 
 Commands:
   query <stream-id> <query-name>       Execute a SQL query on a stream
-  send-events <stream-id> <file>       Send events to a stream from JSON file
-  create-stream <genesis-file>         Create a new stream from genesis JSON
-  stream-info <stream-id>              Get stream information
+  send-events <stream-did> <file>      Send events to a stream from JSON file
+  create-stream <module-cid>           Create a new stream from genesis JSON
+  stream-info <stream-did>             Get stream information
 
 Global Options:
   --url <url>       Leaf server URL (default: http://localhost:5530 or LEAF_URL env var)
@@ -31,7 +31,7 @@ Examples:
   leaf query abc123 events --start 0 --limit 1000
   leaf query abc123 custom --params '{"user":"did:plc:abc","count":5}'
   leaf send-events abc123 events.json
-  leaf create-stream genesis.json
+  leaf create-stream a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6
   leaf stream-info abc123
 
 Environment Variables:
