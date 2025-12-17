@@ -22,11 +22,11 @@ export async function query(args: string[]) {
 
   // Build query object
   const leafQuery: LeafQuery = {
-    query_name: queryName,
-    requesting_user: "did:web:localhost",
+    name: queryName,
+    user: "did:web:localhost",
     params: [],
-    start: startStr ? BigInt(startStr) : undefined,
-    limit: limitStr ? BigInt(limitStr) : undefined,
+    start: startStr ? parseInt(startStr) : undefined,
+    limit: limitStr ? parseInt(limitStr) : undefined,
   };
 
   // Parse params if provided
@@ -52,7 +52,7 @@ export async function query(args: string[]) {
     const rows = result.rows.map((row) => {
       const obj: Record<string, any> = {};
       result.column_names.forEach((name, index) => {
-        const value = row.values[index];
+        const value = row[index];
         if (value) {
           obj[name] = convertFromSqlValue(value);
         }

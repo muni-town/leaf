@@ -107,8 +107,6 @@ pub struct LeafModuleQueryDef {
     /// The list of parameter names, and the type for each parameter that may be passed into this
     /// query.
     pub params: Vec<LeafModuleQueryParamDef>,
-    /// List of optional limits on how this query may be called.
-    pub limits: Vec<LeafModuleQueryDefLimit>,
 }
 
 // The definition of a queyr parameter
@@ -138,21 +136,6 @@ pub enum LeafModuleQueryParamKind {
     Any,
 }
 
-/// Defines a limit on how a query may be called.
-///
-/// We are unsure exactly how this will be done in the future but having this here allows us to add
-/// limiting methods later.
-///
-/// For example, a limit might say that you may not subscribe to a query for realtime updates, or
-/// that a query has a hard limit on the number of results that may be returned, or that the the
-/// "cost" of the SQL query doesn't exceed a certain value, which could be important for DoS
-/// prevention.
-///
-/// We currently don't have any kind of limits, but we may later, and having this here allows us to
-/// add limits later in a backward compatible way.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum LeafModuleQueryDefLimit {}
-
 /// An event in a stream.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Event<Payload = Vec<u8>> {
@@ -171,8 +154,8 @@ pub struct IncomingEvent<Payload = Vec<u8>> {
 /// A query for a leaf steram.
 #[derive(Serialize, Deserialize, Debug, Clone /*, Hash, Eq, PartialEq*/)]
 pub struct LeafQuery {
-    pub query_name: String,
-    pub requesting_user: Option<String>,
+    pub name: String,
+    pub user: Option<String>,
     pub params: Vec<(String, SqlValue)>,
     pub start: Option<i64>,
     pub limit: Option<i64>,
@@ -187,8 +170,8 @@ impl LeafQuery {
     /// subscription.
     pub fn update_for_subscription(&self, latest_event: i64) -> LeafQuery {
         LeafQuery {
-            query_name: self.query_name.clone(),
-            requesting_user: self.requesting_user.clone(),
+            name: self.name.clone(),
+            user: self.user.clone(),
             params: self.params.clone(),
             start: Some(
                 self.start
@@ -210,9 +193,7 @@ pub struct SqlRows {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct SqlRow {
-    pub values: Vec<SqlValue>,
-}
+pub struct SqlRow(pub Vec<SqlValue>);
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub enum SqlValue {
@@ -250,10 +231,10 @@ impl LeafModuleQueryDef {
     /// definition.
     pub fn validate_query(&self, query: &LeafQuery) -> Result<(), QueryValidationError> {
         // Validate the name matches
-        if query.query_name != self.name {
+        if query.name != self.name {
             return Err(QueryValidationError::QueryNameDoesNotMatch {
                 expected: self.name.clone(),
-                actual: query.query_name.clone(),
+                actual: query.name.clone(),
             });
         }
 
@@ -463,7 +444,7 @@ macro_rules! impl_from_row {
     ($($t:ident),*) => {
         impl<$($t: FromValue),*> FromRow for ($( $t ),*) {
             fn from_row(row: SqlRow) -> SqlResult<Self> {
-                let mut values = row.values.into_iter();
+                let mut values = row.0.into_iter();
                 Ok((
                     $(
                         $t::from_value(values.next().ok_or(SqlError::InvalidColumnCount)?)?
@@ -476,7 +457,7 @@ macro_rules! impl_from_row {
 impl<T: FromValue> FromRow for T {
     fn from_row(row: SqlRow) -> SqlResult<Self> {
         T::from_value(
-            row.values
+            row.0
                 .into_iter()
                 .next()
                 .ok_or(SqlError::InvalidColumnCount)?,

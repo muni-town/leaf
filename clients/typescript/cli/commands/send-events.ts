@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createClient, parseGlobalOptions, outputJson, outputError } from "../utils.js";
-import type { IncomingEvent } from "../../src/index.js";
+import type { EventPayload } from "../../src/index.js";
 
 export async function sendEvents(args: string[]) {
   if (args.length < 2) {
@@ -13,7 +13,7 @@ export async function sendEvents(args: string[]) {
   const options = parseGlobalOptions(args);
 
   // Read events from file
-  let events: IncomingEvent[];
+  let events: EventPayload[];
   try {
     const fileContent = await readFile(eventsFile, "utf-8");
     const parsed = JSON.parse(fileContent);

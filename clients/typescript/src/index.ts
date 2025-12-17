@@ -1,33 +1,52 @@
 import { io, Socket } from "socket.io-client";
 import parser from "socket.io-msgpack-parser";
 import {
-  BasicModuleDef,
-  Hash,
-  HasModuleResp,
-  IncomingEvent,
-  LeafModuleCodec,
+  encode,
+  decode,
+  BytesWrapper,
+  CidLinkWrapper,
+  CidLink,
+} from "@atcute/cbor";
+import { Cid, create as createCid } from "@atcute/cid";
+import {
+  BasicModule,
+  Did,
+  EventPayload,
   LeafQuery,
+  ModuleCodec,
+  ModuleExistsArgs,
+  ModuleExistsResp,
+  ModuleUploadArgs,
+  ModuleUploadResp,
   SqlRows,
+  StreamCreateArgs,
+  StreamCreateResp,
   StreamEventBatchArgs,
-  StreamGenesis,
-  StreamInfo,
+  StreamEventBatchResp,
+  StreamInfoArgs,
+  StreamInfoResp,
   StreamQueryArgs,
-  StreamQueryResp,
+  StreamQueryresp as StreamQueryResp,
   StreamSubscribeArgs,
   StreamSubscribeNotification,
-  Ulid,
+  StreamSubscribeResp,
+  StreamUnsubscribeArgs,
+  StreamUnsubscribeResp,
+  StreamUpdateModuleArgs,
+  StreamUpdateModuleResp,
 } from "./codec.js";
-import { blake3 } from "@noble/hashes/blake3.js";
-import { hex } from "@scure/base";
-import { _void, bool, Result, str, Struct } from "scale-ts";
 
 export * from "./codec.js";
+
+async function createDaslCid(bytes: Uint8Array): Promise<Cid> {
+  return createCid(0x71, bytes);
+}
 
 // Helper to ensure binary data is in the correct format for socket.io-msgpack-parser
 // In Node.js, the parser requires Buffer. In browsers, Uint8Array works.
 function toBinary(data: Uint8Array): Uint8Array {
   // Check if Buffer is available (Node.js environment)
-  if (typeof Buffer !== 'undefined' && Buffer.from) {
+  if (typeof Buffer !== "undefined" && Buffer.from) {
     return Buffer.from(data);
   }
   return data;
@@ -37,7 +56,7 @@ function toBinary(data: Uint8Array): Uint8Array {
 // Buffer in Node.js can cause issues with scale-ts decoding
 function fromBinary(data: Uint8Array): Uint8Array {
   // If it's a Buffer, convert to plain Uint8Array
-  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(data)) {
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
     return new Uint8Array(data);
   }
   return data;
@@ -101,7 +120,9 @@ export class LeafClient {
       this.#emit("error", error);
     });
     this.socket.on("stream/subscription_response", (data: Uint8Array) => {
-      const notification = StreamSubscribeNotification.dec(fromBinary(data));
+      const notification: StreamSubscribeNotification = decode(
+        fromBinary(data),
+      );
       const sub = this.#querySubscriptions.get(notification.subscription_id);
       if (sub) {
         sub(notification.response);
@@ -125,158 +146,126 @@ export class LeafClient {
     ) as any;
   }
 
-  async uploadBasicModule(module: BasicModuleDef): Promise<string> {
-    return this.uploadModule(
-      toBinary(LeafClient.encodeBasicModule(module).encoded),
-    );
+  async uploadBasicModule(module: BasicModule): Promise<CidLinkWrapper> {
+    return this.uploadModule(module);
   }
 
-  static encodeBasicModule(module: BasicModuleDef): {
+  static async encodeModule(module: BasicModule): Promise<{
     encoded: Uint8Array;
-    moduleId: string;
-  } {
-    let data = LeafModuleCodec.enc({
-      moduleTypeId: "muni.town.leaf.module.basic.0",
-      data: BasicModuleDef.enc(module),
-    });
-    let hash = blake3(data);
-    let hashStr = hex.encode(hash);
-    return {
-      encoded: data,
-      moduleId: hashStr,
-    };
+    moduleCid: CidLinkWrapper;
+  }> {
+    const encoded = encode(module);
+    const moduleCid = await createDaslCid(encoded);
+    return { encoded, moduleCid: new CidLinkWrapper(moduleCid.bytes) };
   }
 
-  async uploadModule(module: Uint8Array | ArrayBufferLike): Promise<string> {
+  async uploadModule(module: ModuleCodec): Promise<CidLinkWrapper> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/upload",
       module,
     );
-    const resp = Result(Hash, str).dec(fromBinary(data));
-    if (!resp.success) {
-      throw new Error(resp.value);
+    const resp: ModuleUploadResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
     }
-    return resp.value;
+    return resp.Ok;
   }
 
-  async hasModule(moduleId: string): Promise<boolean> {
+  async hasModule(moduleCid: CidLink): Promise<boolean> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/exists",
-      toBinary(Hash.enc(moduleId)),
+      toBinary(encode({ cid: moduleCid } satisfies ModuleExistsArgs)),
     );
-    const resp = HasModuleResp.dec(fromBinary(data));
-    if (!resp.success) {
-      throw new Error(resp.value);
+    const resp: ModuleExistsResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
     }
-    return resp.value;
+    return resp.Ok;
   }
 
-  async createStream(genesis: StreamGenesis): Promise<string> {
+  async createStream(module_cid: CidLink): Promise<string> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/create",
-      toBinary(StreamGenesis.enc(genesis)),
+      toBinary(encode({ module_cid } satisfies StreamCreateArgs)),
     );
-    const resp = Result(Hash, str).dec(fromBinary(data));
-    if (!resp.success) {
-      console.error(resp);
-      throw new Error(resp.value);
+    const resp: StreamCreateResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
     }
-    return resp.value;
+    return resp.Ok;
   }
 
-  async streamInfo(streamId: string): Promise<StreamInfo> {
+  async streamInfo(stream_did: Did): Promise<{ module_cid: CidLinkWrapper }> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/info",
-      toBinary(Struct({
-        streamId: Hash,
-      }).enc({ streamId })),
+      toBinary(encode({ stream_did } satisfies StreamInfoArgs)),
     );
-    const resp = Result(StreamInfo, str).dec(fromBinary(data));
-    if (!resp.success) {
-      throw new Error(resp.value);
+    const resp: StreamInfoResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
     }
-    return resp.value;
+    return resp.Ok;
   }
 
-  async updateModule(streamId: string, moduleId: string): Promise<void> {
+  async updateModule(stream_did: Did, module_cid: CidLink): Promise<void> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/update_module",
-      toBinary(Struct({
-        streamId: Hash,
-        moduleId: Hash,
-      }).enc({ streamId, moduleId })),
+      toBinary(
+        encode({
+          module_cid,
+          stream_did,
+        } satisfies StreamUpdateModuleArgs),
+      ),
     );
-    const resp = Result(_void, str).dec(fromBinary(data));
-    if (!resp.success) {
+    const resp: StreamUpdateModuleResp = decode(fromBinary(data));
+    if ("Err" in resp) {
       console.error(resp);
-      throw new Error(resp.value);
+      throw new Error(resp.Err);
     }
-    return resp.value;
+    return resp.Ok;
   }
 
-  /** Helper to create a stream from a WASM module at a given URL, avoiding uploading / downloading
-   * the WASM if the module ID already exists on the server. */
-  async createStreamFromModuleUrl(
-    genesis: StreamGenesis,
-    url: string,
-  ): Promise<string> {
-    const hasModule = await this.hasModule(genesis.module);
-
-    if (!hasModule) {
-      const resp = await fetch(url);
-      const data = await resp.blob();
-      const buffer = await data.arrayBuffer();
-      const uploadedId = await this.uploadModule(buffer);
-      if (uploadedId !== genesis.module)
-        throw new Error(
-          `The module ID that was uploaded didn't match the expected module ID. Expected ${genesis.module} got ${uploadedId}`,
-        );
-    }
-
-    return await this.createStream(genesis);
+  async sendEvent(stream_did: Did, event: EventPayload): Promise<void> {
+    this.sendEvents(stream_did, [event]);
   }
 
-  async sendEvent(streamId: string, event: IncomingEvent): Promise<void> {
-    this.sendEvents(streamId, [event]);
-  }
-
-  async sendEvents(streamId: string, events: IncomingEvent[]): Promise<void> {
+  async sendEvents(stream_did: Did, events: EventPayload[]): Promise<void> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/event_batch",
-      toBinary(StreamEventBatchArgs.enc({ streamId, events })),
+      toBinary(encode({ stream_did, events } satisfies StreamEventBatchArgs)),
     );
-    const resp = Result(_void, str).dec(fromBinary(data));
-    if (!resp.success) {
-      throw new Error(resp.value);
+    const resp: StreamEventBatchResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
     }
   }
 
   /** Returns a function that can be called to unsubscribe the query. */
   async subscribe(
-    streamId: string,
+    stream_did: Did,
     query: LeafQuery,
     handler: (resp: StreamQueryResp) => Promise<void> | void,
   ): Promise<() => Promise<void>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/subscribe",
-      toBinary(StreamSubscribeArgs.enc({ streamId, query })),
+      toBinary(encode({ stream_did, query } satisfies StreamSubscribeArgs)),
     );
-    const resp = Result(Ulid, str).dec(fromBinary(data));
-    if (!resp.success) {
-      throw new Error(resp.value);
+    const resp: StreamSubscribeResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
     }
 
-    const subId = resp.value;
+    const subId = resp.Ok;
     this.#querySubscriptions.set(subId, handler);
     return async () => {
       const data: Uint8Array = await this.socket.emitWithAck(
         "stream/unsubscribe",
-        toBinary(Ulid.enc(subId)),
+        toBinary(encode(subId satisfies StreamUnsubscribeArgs)),
       );
       this.#querySubscriptions.delete(subId);
-      const resp = Result(bool, str).dec(fromBinary(data));
-      if (!resp.success) {
-        throw new Error(`Error unsubscribing to query: ${resp.value}`);
+      const resp: StreamUnsubscribeResp = decode(fromBinary(data));
+      if ("Err" in resp) {
+        throw new Error(`Error unsubscribing to query: ${resp.Err}`);
       }
     };
   }
@@ -288,15 +277,15 @@ export class LeafClient {
     }
   }
 
-  async query(streamId: string, query: LeafQuery): Promise<SqlRows> {
+  async query(stream_did: string, query: LeafQuery): Promise<SqlRows> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/query",
-      toBinary(StreamQueryArgs.enc({ streamId, query })),
+      toBinary(encode({ stream_did, query } satisfies StreamQueryArgs)),
     );
-    const resp = StreamQueryResp.dec(fromBinary(data));
-    if (!resp.success) {
-      throw new Error(resp.value);
+    const resp: StreamQueryResp = decode(fromBinary(data));
+    if ('Err' in resp) {
+      throw new Error(resp.Err);
     }
-    return resp.value;
+    return resp.Ok;
   }
 }
