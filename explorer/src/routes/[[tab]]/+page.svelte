@@ -7,24 +7,28 @@
 
 	import { backend, backendStatus } from '$lib/workers';
 	import { getContext } from 'svelte';
-	import type { BasicModuleDef, LeafQuery, StreamGenesis } from '@muni-town/leaf-client';
-	import { ulid } from 'ulidx';
+	import {
+		BytesWrapper,
+		type BasicModule,
+		type CidLink,
+		type Did,
+		type LeafQuery
+	} from '@muni-town/leaf-client';
 	import { page } from '$app/state';
+	import { encode } from '@atcute/cbor';
 
 	let loading = $state(false);
 
 	const events = getContext<string[]>('events');
-	const streamId = getContext<{ value: string }>('streamId');
+	const streamDid = getContext<{ value: Did }>('streamId');
 
 	let offset = $state(1);
 	let limit = $state(100);
 
-	let moduleId = $state(localStorage.getItem('module') || '');
+	let moduleId: CidLink = $state(JSON.parse(localStorage.getItem('module') || '{ "$link": "" }'));
 	$effect(() => {
-		localStorage.setItem('module', moduleId);
+		localStorage.setItem('module', JSON.stringify(moduleId));
 	});
-
-	let moduleFileInput = $state(undefined) as undefined | FileList;
 
 	const tabs = ['Query', 'Create Stream'] as const;
 	let currentTab = $derived(page.params.tab || '' in tabs ? page.params.tab : 'Query');
@@ -34,34 +38,25 @@
 		localStorage.setItem('payload', payload);
 	});
 
-	const defaultModule: BasicModuleDef = {
-		authorizer: '',
-		init_sql: '',
-		materializer: '',
-		queries: []
+	const defaultModule: BasicModule = {
+		$type: 'space.roomy.module.basic.0',
+		def: {
+			authorizer: '',
+			init_sql: '',
+			materializer: '',
+			queries: []
+		}
 	};
-	const defaultGenesis: StreamGenesis = {
-		stamp: '',
-		creator: '',
-		module: '',
-		options: []
-	};
-	let newStreamModule: BasicModuleDef = $state(
-		JSON.parse(localStorage.getItem('basicModuleDef') || JSON.stringify(defaultModule))
+	let newStreamModule: BasicModule = $state(
+		JSON.parse(localStorage.getItem('basicModule') || JSON.stringify(defaultModule))
 	);
 	$effect(() => {
-		localStorage.setItem('basicModuleDef', JSON.stringify(newStreamModule || defaultModule));
-	});
-	let newStreamGenesis: StreamGenesis = $state(
-		JSON.parse(localStorage.getItem('streamGenesis') || JSON.stringify(defaultGenesis))
-	);
-	$effect(() => {
-		localStorage.setItem('streamGenesis', JSON.stringify(newStreamGenesis || defaultGenesis));
+		localStorage.setItem('basicModule', JSON.stringify(newStreamModule || defaultModule));
 	});
 
 	const defaultQuery: LeafQuery = {
-		query_name: '',
-		requesting_user: '',
+		name: '',
+		user: '',
 		params: [],
 		start: undefined,
 		limit: undefined
@@ -79,36 +74,33 @@
 
 	async function createStream() {
 		if (!backendStatus.did) return;
-		newStreamGenesis.stamp = ulid();
-		newStreamGenesis.creator = backendStatus.did;
 		console.log('module', $state.snapshot(newStreamModule));
-		const moduleId = await backend.uploadModule($state.snapshot(newStreamModule));
-		console.log('moduleid', moduleId);
-		newStreamGenesis.module = moduleId;
-		console.log('genesis', $state.snapshot(newStreamGenesis));
-		streamId.value = await backend.createStream($state.snapshot(newStreamGenesis));
+		const resp = await backend.uploadModule($state.snapshot(newStreamModule));
+		console.log('moduleCid', resp.moduleCid);
+		streamDid.value = (await backend.createStream(resp.moduleCid)).streamDid;
+		console.log('streamDid', streamDid.value);
 	}
 	async function updateModule() {
 		if (!backendStatus.did) return;
-		const moduleId = await backend.uploadModule($state.snapshot(newStreamModule));
-		await backend.updateModule(streamId.value, moduleId);
+		const moduleCid = (await backend.uploadModule($state.snapshot(newStreamModule))).moduleCid;
+		await backend.updateModule(streamDid.value, moduleCid);
 	}
 
 	async function runQuery() {
 		if (!backendStatus.did) return;
 		const q: typeof query = $state.snapshot(query) as any;
-		q.requesting_user = backendStatus.did;
+		q.user = backendStatus.did;
 		for (const [_name, param] of q.params) {
 			// The forms don't assign the proper data types to non-text params, so we convert them here.
-			if (param.tag == 'blob') {
-				param.value = new TextEncoder().encode(param.value as any);
-			} else if (param.tag == 'integer') {
-				param.value = BigInt(param.value);
-			} else if (param.tag == 'real') {
+			if (param.$type == 'muni.town.sqliteValue.blob') {
+				param.value = new BytesWrapper(new TextEncoder().encode(param.value as any));
+			} else if (param.$type == 'muni.town.sqliteValue.integer') {
+				param.value = parseInt(param.value as any);
+			} else if (param.$type == 'muni.town.sqliteValue.real') {
 				param.value = parseFloat(param.value as any);
 			}
 		}
-		const result = await backend.query(streamId.value, q);
+		const result = await backend.query(streamDid.value, q);
 		events.push(
 			JSON.stringify(
 				result,
@@ -123,10 +115,10 @@
 						if (value.tag == 'blob') {
 							return new TextDecoder().decode(value.value);
 						} else if (value.tag == 'text') {
-                            return value.value;
-                        } else if (value.tag == 'integer') {
-                            return value.value.toString();
-                        }
+							return value.value;
+						} else if (value.tag == 'integer') {
+							return value.value.toString();
+						}
 					}
 					return value;
 				},
@@ -138,18 +130,18 @@
 	async function subscribe() {
 		if (!backendStatus.did) return;
 		const q: typeof query = $state.snapshot(query) as any;
-		q.requesting_user = backendStatus.did;
+		q.user = backendStatus.did;
 		for (const [_name, param] of q.params) {
 			// The forms don't assign the proper data types to non-text params, so we convert them here.
-			if (param.tag == 'blob') {
-				param.value = new TextEncoder().encode(param.value as any);
-			} else if (param.tag == 'integer') {
-				param.value = BigInt(param.value);
-			} else if (param.tag == 'real') {
+			if (param.$type == 'muni.town.sqliteValue.blob') {
+				param.value = new BytesWrapper(new TextEncoder().encode(param.value as any));
+			} else if (param.$type == 'muni.town.sqliteValue.integer') {
+				param.value = parseInt(param.value as any);
+			} else if (param.$type == 'muni.town.sqliteValue.real') {
 				param.value = parseFloat(param.value as any);
 			}
 		}
-		subscriptionId = await backend.subscribe(streamId.value, q);
+		subscriptionId = await backend.subscribe(streamDid.value, q);
 	}
 
 	async function unsubscribe() {
@@ -160,8 +152,8 @@
 
 	async function sendEvent() {
 		if (!backendStatus.did) return;
-		await backend.sendEvents(streamId.value, [
-			{ user: backendStatus.did, payload: new TextEncoder().encode(payload) }
+		await backend.sendEvents(streamDid.value, [
+			encode({ user: backendStatus.did, payload: new TextEncoder().encode(payload) })
 		]);
 	}
 </script>
@@ -217,7 +209,7 @@
 				<h2 class="mb-4 text-xl font-bold">Query</h2>
 
 				Name
-				<input class="input" placeholder="query name" bind:value={query.query_name} />
+				<input class="input" placeholder="query name" bind:value={query.name} />
 				<div class="flex gap-2">
 					<input
 						class="input input-sm"
@@ -241,7 +233,7 @@
 							query.params.push([
 								'$param',
 								{
-									tag: 'text',
+									$type: 'muni.town.sqliteValue.text',
 									value: ''
 								}
 							]);
@@ -252,12 +244,12 @@
 				{#each query.params as [_name, value], i}
 					<div class="flex items-center gap-3">
 						<input class="input" bind:value={query.params[i][0]} placeholder="name" />
-						<select class="select" bind:value={query.params[i][1].tag}>
-							<option selected value="">Any</option>
-							<option value="integer">Integer</option>
-							<option value="real">Real</option>
-							<option value="text">Text</option>
-							<option value="blob">Blob</option>
+						<select class="select" bind:value={query.params[i][1].$type}>
+							<option value="muni.town.sqliteValue.null">Null</option>
+							<option value="muni.town.sqliteValue.integer">Integer</option>
+							<option value="muni.town.sqliteValue.real">Real</option>
+							<option value="muni.town.sqliteValue.text">Text</option>
+							<option value="muni.town.sqliteValue.blob">Blob</option>
 						</select>
 						<input class="input" bind:value={value.value} />
 						<button
@@ -281,30 +273,7 @@
 				{/if}
 			</form>
 
-			<!-- Upload WASM -->
-			<form
-				class="m-8 flex flex-col gap-2"
-				onsubmit={async () => {
-					loading = true;
-					try {
-						const file = moduleFileInput?.item(0);
-						if (!file) throw 'Select file';
-						const buffer = await file.arrayBuffer();
-						const id = await backend.uploadModule(newStreamModule);
-						moduleId = id;
-						events.push(`uploaded module: ${moduleId}`);
-					} catch (e: any) {
-						events.push(e.toString());
-					}
-					loading = false;
-				}}
-			>
-				<h2 class="mb-4 text-xl font-bold">Upload WASM</h2>
-				<input class="file-input" bind:files={moduleFileInput} type="file" accept=".wasm" />
-				<button class="btn btn-outline" disabled={loading}>Upload</button>
-			</form>
-
-			<!-- Has WASM -->
+			<!-- Has Module -->
 			<form
 				class="m-8 flex flex-col gap-2"
 				onsubmit={async () => {
@@ -320,8 +289,8 @@
 					loading = false;
 				}}
 			>
-				<h2 class="mb-4 text-xl font-bold">Has WASM</h2>
-				<input class="input w-full" bind:value={moduleId} placeholder="wasm hash" />
+				<h2 class="mb-4 text-xl font-bold">Has Module</h2>
+				<input class="input w-full" bind:value={moduleId.$link} placeholder="module CID" />
 				<button class="btn btn-outline" disabled={loading}>Check</button>
 			</form>
 
@@ -331,10 +300,8 @@
 				onsubmit={async () => {
 					loading = true;
 					try {
-						const streamInfo = await backend.streamInfo(streamId.value);
-						events.push(
-							`Stream info:\ncreator: ${streamInfo.creator}\nmodule: ${streamInfo.module}`
-						);
+						const streamInfo = await backend.streamInfo(streamDid.value);
+						events.push(`Stream info: module Cid: ${streamInfo.moduleCid}`);
 					} catch (e: any) {
 						events.push(e.toString());
 					}
@@ -376,7 +343,7 @@
 				</p>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamModule.init_sql}
+					bind:value={newStreamModule.def.init_sql}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="CREATE TABLE IF NOT EXISTS example ();"
@@ -393,7 +360,7 @@
 				</div>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamModule.authorizer}
+					bind:value={newStreamModule.def.authorizer}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="-- authorization SQL"
@@ -413,7 +380,7 @@
 				</div>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamModule.materializer}
+					bind:value={newStreamModule.def.materializer}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="-- materialization sql"
@@ -424,27 +391,25 @@
 					<button
 						class="btn"
 						onclick={() => {
-							newStreamModule.queries.push({
+							newStreamModule.def.queries.push({
 								name: '',
 								sql: '',
-								limits: [],
 								params: []
 							});
 						}}>+</button
 					>
 				</h2>
 				<hr class="my-3" />
-				{#each newStreamModule.queries as query, i}
+				{#each newStreamModule.def.queries as query, i}
 					<div class="m-8 flex flex-col gap-3">
 						<div class="flex gap-3">
 							<input class="input" placeholder="query name" bind:value={query.name} />
 							<button
 								class="btn"
 								onclick={() =>
-									(newStreamModule.queries = newStreamModule.queries.splice(
-										i,
-										0
-									))}>Delete Query</button
+									(newStreamModule.def.queries =
+										newStreamModule.def.queries.splice(i, 0))}
+								>Delete Query</button
 							>
 						</div>
 						<div class="m-3 gap-2 text-sm opacity-40">
@@ -473,10 +438,7 @@
 								onclick={() => {
 									query.params.push({
 										optional: true,
-										kind: {
-											tag: 'any',
-											value: undefined
-										},
+										kind: 'any',
 										name: ''
 									});
 								}}>+</button

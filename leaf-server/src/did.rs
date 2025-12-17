@@ -23,12 +23,16 @@ pub async fn create_did(owner: String) -> anyhow::Result<Did> {
         .build()?;
     let key = keys.rotation_keys.into_iter().next().unwrap();
 
-    CLIENT
-        .post(format!("{}/{did}/CreatePlcOp", ARGS.plc_directory))
+    let resp = CLIENT
+        .post(format!("{}/{did}", ARGS.plc_directory))
         .json(&operation)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    let status = resp.status();
+    let body = resp.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("PLC directory error: {status}: {body}");
+    }
 
     STORAGE.create_did(did.clone(), key, owner).await?;
 

@@ -26,7 +26,7 @@ export async function streamInfo(args: string[]) {
       success: true,
       stream_id: streamDid,
       info: {
-        module_cid: info.module_cid,
+        moduleCid: info.moduleCid,
       },
     });
   } catch (error) {

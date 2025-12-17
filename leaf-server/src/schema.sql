@@ -12,7 +12,7 @@ create table if not exists "module_blobs" (
 -- but not used by a stream yet.
 create table if not exists "staged_modules" (
     -- The user that uploaded the staged wasm
-    "creator"	blob not null,
+    "creator"	text not null,
     -- The content ID of the WASM blob that was uploaded
     "cid"  blob not null references module_blobs(cid),
     -- The unix timestamp for when this WASM module was staged

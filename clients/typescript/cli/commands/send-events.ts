@@ -6,7 +6,6 @@ import {
   outputError,
 } from "../utils.js";
 import type { Did, EventPayload } from "../../src/index.js";
-import { BytesWrapper } from "@atcute/cbor";
 
 export async function sendEvents(args: string[]) {
   if (args.length < 2) {
@@ -19,7 +18,7 @@ export async function sendEvents(args: string[]) {
   const options = parseGlobalOptions(args);
 
   // Read events from file
-  let events: EventPayload[];
+  let events: Uint8Array[];
   try {
     const fileContent = await readFile(eventsFile, "utf-8");
     const parsed = JSON.parse(fileContent);
@@ -41,7 +40,7 @@ export async function sendEvents(args: string[]) {
       // Convert base64 payload to Uint8Array
       const payload = Buffer.from(event.payload, "base64");
 
-      return new BytesWrapper(new Uint8Array(payload));
+      return new Uint8Array(payload);
     });
   } catch (error) {
     if ((error as any).code === "ENOENT") {

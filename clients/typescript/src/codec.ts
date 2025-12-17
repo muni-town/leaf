@@ -1,10 +1,12 @@
-import { BytesWrapper, CidLink, CidLinkWrapper } from "@atcute/cbor";
+import { BytesWrapper, Bytes, CidLink, CidLinkWrapper } from "@atcute/cbor";
 
+export { CidLinkWrapper, BytesWrapper };
+export type { CidLink, Bytes };
 export type Did = string & { __brand: "did" };
-export type SubscriptionId = string & { __brand: "subscription_id" };
+export type SubscriptionId = string & { __brand: "subscriptionId" };
 
 export type ModuleCodec<ModuleType extends string = string, Def = unknown> = {
-  type: ModuleType;
+  $type: ModuleType;
   def: Def;
 };
 
@@ -17,17 +19,21 @@ export type BasicModule = ModuleCodec<
     queries: {
       name: string;
       sql: string;
-      params: {}[];
+      params: {
+        name: string;
+        kind: "integer" | "real" | "text" | "blob" | "any";
+        optional: boolean;
+      }[];
     }[];
   }
 >;
 
 export type SqlValue =
-  | "Null"
-  | { Integer: number }
-  | { Real: number }
-  | { Text: string }
-  | { Blob: BytesWrapper };
+  | { $type: "muni.town.sqliteValue.null" }
+  | { $type: "muni.town.sqliteValue.integer"; value: number }
+  | { $type: "muni.town.sqliteValue.real"; value: number }
+  | { $type: "muni.town.sqliteValue.text"; value: string }
+  | { $type: "muni.town.sqliteValue.blob"; value: BytesWrapper };
 
 export type LeafQuery = {
   name: string;
@@ -54,53 +60,53 @@ export type AssertOk<R> = R extends { Ok: infer T } ? T : never;
 export type ModuleUploadArgs = {
   module: ModuleCodec;
 };
-export type ModuleUploadResp = Result<{ cid: CidLinkWrapper }>;
+export type ModuleUploadResp = Result<{ moduleCid: CidLinkWrapper }>;
 
 export type ModuleExistsArgs = {
-  cid: CidLink;
+  moduleCid: CidLink;
 };
 export type ModuleExistsResp = Result<{ module_exists: boolean }>;
 
 export type StreamCreateArgs = {
-  module_cid: CidLink;
+  moduleCid: CidLink;
 };
 
-export type StreamCreateResp = Result<{ stream_did: Did }>;
+export type StreamCreateResp = Result<{ streamDid: Did }>;
 
 export type StreamInfoArgs = {
-  stream_did: Did;
+  streamDid: Did;
 };
 export type StreamInfoResp = Result<{
-  module_cid: CidLinkWrapper;
+  moduleCid: CidLinkWrapper;
 }>;
 
 export type StreamUpdateModuleArgs = {
-  stream_did: Did;
-  module_cid: CidLink;
+  streamDid: Did;
+  moduleCid: CidLink;
 };
 export type StreamUpdateModuleResp = Result<void>;
 
 export type StreamEventBatchArgs = {
-  stream_did: Did;
+  streamDid: Did;
   events: EventPayload[];
 };
 export type StreamEventBatchResp = Result<void>;
 
 export type StreamSubscribeArgs = {
-  stream_did: Did;
+  streamDid: Did;
   query: LeafQuery;
 };
 export type StreamSubscribeNotification = {
-  subscription_id: SubscriptionId;
+  subscriptionId: SubscriptionId;
   response: Result<SqlRows>;
 };
-export type StreamSubscribeResp = Result<{ subscription_id: SubscriptionId }>;
+export type StreamSubscribeResp = Result<{ subscriptionId: SubscriptionId }>;
 
-export type StreamUnsubscribeArgs = { subscription_id: SubscriptionId };
+export type StreamUnsubscribeArgs = { subscriptionId: SubscriptionId };
 export type StreamUnsubscribeResp = Result<{ was_subscribed: boolean }>;
 
 export type StreamQueryArgs = {
-  stream_did: Did;
+  streamDid: Did;
   query: LeafQuery;
 };
 

@@ -1,6 +1,12 @@
 import { io, Socket } from "socket.io-client";
 import parser from "socket.io-msgpack-parser";
-import { encode, decode, CidLinkWrapper, CidLink } from "@atcute/cbor";
+import {
+  encode,
+  decode,
+  CidLinkWrapper,
+  CidLink,
+  BytesWrapper,
+} from "@atcute/cbor";
 import { Cid, create as createCid } from "@atcute/cid";
 import {
   AssertOk,
@@ -39,10 +45,12 @@ async function createDaslCid(bytes: Uint8Array): Promise<Cid> {
 
 // Helper to ensure binary data is in the correct format for socket.io-msgpack-parser
 // In Node.js, the parser requires Buffer. In browsers, Uint8Array works.
-function toBinary(data: Uint8Array): Uint8Array {
+function toBinary(data: Uint8Array): ArrayBuffer {
   // Check if Buffer is available (Node.js environment)
   if (typeof Buffer !== "undefined" && Buffer.from) {
     return Buffer.from(data);
+  } else if (data instanceof Uint8Array) {
+    return data.buffer.slice(0, data.length);
   }
   return data;
 }
@@ -51,7 +59,10 @@ function toBinary(data: Uint8Array): Uint8Array {
 // Buffer in Node.js can cause issues with scale-ts decoding
 function fromBinary(data: Uint8Array): Uint8Array {
   // If it's a Buffer, convert to plain Uint8Array
-  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
+  if (
+    (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) ||
+    data instanceof ArrayBuffer
+  ) {
     return new Uint8Array(data);
   }
   return data;
@@ -118,7 +129,7 @@ export class LeafClient {
       const notification: StreamSubscribeNotification = decode(
         fromBinary(data),
       );
-      const sub = this.#querySubscriptions.get(notification.subscription_id);
+      const sub = this.#querySubscriptions.get(notification.subscriptionId);
       if (sub) {
         sub(notification.response);
       }
@@ -157,11 +168,13 @@ export class LeafClient {
   }
 
   async uploadModule(module: ModuleCodec): Promise<AssertOk<ModuleUploadResp>> {
+    const req = toBinary(encode({ module } satisfies ModuleUploadArgs));
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/upload",
-      toBinary(encode({ module } satisfies ModuleUploadArgs)),
+      req,
     );
     const resp: ModuleUploadResp = decode(fromBinary(data));
+    console.log(resp);
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
@@ -171,7 +184,7 @@ export class LeafClient {
   async hasModule(moduleCid: CidLink): Promise<AssertOk<ModuleExistsResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/exists",
-      toBinary(encode({ cid: moduleCid } satisfies ModuleExistsArgs)),
+      toBinary(encode({ moduleCid: moduleCid } satisfies ModuleExistsArgs)),
     );
     const resp: ModuleExistsResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -180,10 +193,11 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async createStream(module_cid: CidLink): Promise<AssertOk<StreamCreateResp>> {
+  async createStream(moduleCid: CidLink): Promise<AssertOk<StreamCreateResp>> {
+    console.log(moduleCid);
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/create",
-      toBinary(encode({ module_cid } satisfies StreamCreateArgs)),
+      toBinary(encode({ moduleCid } satisfies StreamCreateArgs)),
     );
     const resp: StreamCreateResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -192,10 +206,10 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async streamInfo(stream_did: Did): Promise<AssertOk<StreamInfoResp>> {
+  async streamInfo(streamDid: Did): Promise<AssertOk<StreamInfoResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/info",
-      toBinary(encode({ stream_did } satisfies StreamInfoArgs)),
+      toBinary(encode({ streamDid } satisfies StreamInfoArgs)),
     );
     const resp: StreamInfoResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -205,40 +219,44 @@ export class LeafClient {
   }
 
   async updateModule(
-    stream_did: Did,
-    module_cid: CidLink,
+    streamDid: Did,
+    moduleCid: CidLink,
   ): Promise<AssertOk<StreamUpdateModuleResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/update_module",
       toBinary(
         encode({
-          module_cid,
-          stream_did,
+          moduleCid,
+          streamDid,
         } satisfies StreamUpdateModuleArgs),
       ),
     );
     const resp: StreamUpdateModuleResp = decode(fromBinary(data));
     if ("Err" in resp) {
-      console.error(resp);
       throw new Error(resp.Err);
     }
     return resp.Ok;
   }
 
   async sendEvent(
-    stream_did: Did,
-    event: EventPayload,
+    streamDid: Did,
+    event: Uint8Array,
   ): Promise<AssertOk<StreamEventBatchResp>> {
-    this.sendEvents(stream_did, [event]);
+    this.sendEvents(streamDid, [event]);
   }
 
   async sendEvents(
-    stream_did: Did,
-    events: EventPayload[],
+    streamDid: Did,
+    events: Uint8Array[],
   ): Promise<AssertOk<StreamEventBatchResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/event_batch",
-      toBinary(encode({ stream_did, events } satisfies StreamEventBatchArgs)),
+      toBinary(
+        encode({
+          streamDid,
+          events: events.map((x) => new BytesWrapper(x)),
+        } satisfies StreamEventBatchArgs),
+      ),
     );
     const resp: StreamEventBatchResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -248,13 +266,13 @@ export class LeafClient {
 
   /** Returns a function that can be called to unsubscribe the query. */
   async subscribe(
-    stream_did: Did,
+    streamDid: Did,
     query: LeafQuery,
     handler: (resp: StreamQueryResp) => Promise<void> | void,
   ): Promise<() => Promise<void>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/subscribe",
-      toBinary(encode({ stream_did, query } satisfies StreamSubscribeArgs)),
+      toBinary(encode({ streamDid, query } satisfies StreamSubscribeArgs)),
     );
     const resp: StreamSubscribeResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -262,13 +280,13 @@ export class LeafClient {
     }
 
     const subId = resp.Ok;
-    this.#querySubscriptions.set(subId.subscription_id, handler);
+    this.#querySubscriptions.set(subId.subscriptionId, handler);
     return async () => {
       const data: Uint8Array = await this.socket.emitWithAck(
         "stream/unsubscribe",
         toBinary(encode(subId satisfies StreamUnsubscribeArgs)),
       );
-      this.#querySubscriptions.delete(subId.subscription_id);
+      this.#querySubscriptions.delete(subId.subscriptionId);
       const resp: StreamUnsubscribeResp = decode(fromBinary(data));
       if ("Err" in resp) {
         throw new Error(`Error unsubscribing to query: ${resp.Err}`);
@@ -284,12 +302,12 @@ export class LeafClient {
   }
 
   async query(
-    stream_did: Did,
+    streamDid: Did,
     query: LeafQuery,
   ): Promise<AssertOk<StreamQueryResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/query",
-      toBinary(encode({ stream_did, query } satisfies StreamQueryArgs)),
+      toBinary(encode({ streamDid, query } satisfies StreamQueryArgs)),
     );
     const resp: StreamQueryResp = decode(fromBinary(data));
     if ("Err" in resp) {

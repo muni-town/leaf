@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /// <reference lib="webworker" />
 
-import { LeafClient } from '@muni-town/leaf-client';
+import { LeafClient, type Did } from '@muni-town/leaf-client';
 import type { BackendInterface, BackendStatus } from './index';
 import { messagePortInterface, reactiveWorkerState, type MessagePortApi } from './workerMessaging';
 
@@ -220,37 +220,35 @@ function connectMessagePort(port: MessagePortApi) {
 		async logout() {
 			state.logout();
 		},
-		async sendEvents(streamId, events) {
-			await state.leafClient?.sendEvents(streamId, events);
+		async sendEvents(streamDid, events) {
+			await state.leafClient?.sendEvents(streamDid as Did, events);
 		},
-		async hasModule(moduleId) {
-			return (await state.leafClient?.hasModule(moduleId)) || false;
+		async hasModule(moduleCid) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			return await state.leafClient.hasModule(moduleCid);
 		},
 		async streamInfo(streamId) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
 			return await state.leafClient.streamInfo(streamId);
 		},
 		async uploadModule(module) {
-			console.log('uploading module');
-			const moduleId = await state.leafClient!.uploadBasicModule(module);
-      console.log('Created module:', moduleId);
-      return moduleId;
-		},
-		async createStream(genesis) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
-      console.log("Creating stream:", genesis);
-			const streamId = await state.leafClient.createStream(genesis);
-      console.log('created stream:', streamId);
-      return streamId;
+			const { moduleCid } = await state.leafClient.uploadBasicModule(module);
+			return { moduleCid: moduleCid.toJSON() };
 		},
-		async updateModule(streamId, moduleDef) {
+		async createStream(moduleCid) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
-			await state.leafClient.updateModule(streamId, moduleDef);
+			const streamDid = await state.leafClient.createStream(moduleCid);
+			return streamDid;
 		},
-		async subscribe(streamId, query) {
+		async updateModule(streamDid, moduleDef) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			await state.leafClient.updateModule(streamDid, moduleDef);
+		},
+		async subscribe(streamDid, query) {
 			if (!state.leafClient) throw 'No leaf client';
 			const subId = ulid();
-			const unsub = await state.leafClient.subscribe(streamId, query, (resp) => {
+			const unsub = await state.leafClient.subscribe(streamDid, query, (resp) => {
 				subscriptionBroadcast.postMessage({ subId, resp });
 			});
 			unsubscribers.set(subId, unsub);
@@ -261,10 +259,9 @@ function connectMessagePort(port: MessagePortApi) {
 			await unsubscribers.get(subId)?.();
 			unsubscribers.delete(subId);
 		},
-		async query(streamId, query) {
+		async query(streamDid, query) {
 			if (!state.leafClient) throw 'Leaf client not initialized';
-			console.log('Query', query);
-			const resp = await state.leafClient.query(streamId, query);
+			const resp = await state.leafClient.query(streamDid, query);
 			return resp;
 		},
 		async addClient(port) {

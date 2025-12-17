@@ -42,8 +42,8 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Module larger than 10MB maximum size.");
                 }
                 let args: ModuleUploadArgs = dasl::drisl::from_slice(&bytes[..])?;
-                let hash = STORAGE.upload_module(&did_, args.module).await?;
-                anyhow::Ok(ModuleUploadResp { cid: hash })
+                let module_cid = STORAGE.upload_module(&did_, args.module).await?;
+                anyhow::Ok(ModuleUploadResp { module_cid })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle module/upload"))
             .await;
@@ -59,7 +59,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
         async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
                 let args: ModuleExistsArgs = dasl::drisl::from_slice(&bytes?[..])?;
-                let cid = args.cid;
+                let cid = args.module_cid;
                 let has_module = STORAGE.has_module_blob(cid).await?;
                 anyhow::Ok(ModuleExistsResp {
                     module_exists: has_module,
@@ -397,47 +397,56 @@ struct ModuleUploadArgs {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ModuleUploadResp {
-    cid: Cid,
+    module_cid: Cid,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ModuleExistsArgs {
-    cid: Cid,
+    module_cid: Cid,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ModuleExistsResp {
     module_exists: bool,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamInfoArgs {
     stream_did: Did,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamInfoResp {
     module_cid: Option<Cid>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamCreateArgs {
     module_cid: Cid,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamCreateResp {
     stream_did: Did,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamUpdateModuleArgs {
     stream_did: Did,
     module_cid: Cid,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamEventBatchArgs {
     stream_did: Did,
     events: Vec<EventPayload>,
@@ -447,34 +456,40 @@ struct StreamEventBatchArgs {
 struct EventPayload(#[serde(with = "serde_bytes")] Vec<u8>);
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamQueryArgs {
     stream_did: Did,
     query: LeafQuery,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamSubscribeArgs {
     stream_did: Did,
     query: LeafQuery,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamSubscribeResp {
     subscription_id: Ulid,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamSubscribeNotification {
     subscription_id: Ulid,
     response: Result<SqlRows, String>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamUnsubscribeArgs {
     subscription_id: Ulid,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamUnsubscribeResp {
     was_subscribed: bool,
 }

@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleCodec {
-    r#type: String,
+    #[serde(rename = "$type")]
+    module_type: String,
     #[serde(flatten)]
     def: drisl::Value,
 }
@@ -26,13 +27,13 @@ impl ModuleCodec {
         let def = dasl::drisl::to_value(def)
             .map_err(|e| ModuleEncodingError::DrislEncode(e.to_string()))?;
         Ok(ModuleCodec {
-            r#type: T::MODULE_TYPE.into(),
+            module_type: T::MODULE_TYPE.into(),
             def,
         })
     }
 
     pub fn module_type(&self) -> &str {
-        &self.r#type
+        &self.module_type
     }
 
     pub fn def(&self) -> &drisl::Value {
@@ -57,7 +58,7 @@ impl ModuleCodec {
     }
 
     pub fn decode_def<T: ModuleDef>(&self) -> Result<T, ModuleEncodingError> {
-        if self.r#type != T::MODULE_TYPE {
+        if self.module_type != T::MODULE_TYPE {
             return Err(ModuleEncodingError::ModuleTypeMismatch);
         }
         let def = dasl::drisl::from_value(self.def.clone())
@@ -74,6 +75,7 @@ pub trait ModuleDef: Serialize + for<'de> Deserialize<'de> {
 ///
 /// Modules are responsible for providing the logic for writing to and querying from the stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BasicModuleDef {
     /// Idempodent initialization SQL that will be used to setup the module's SQLite database.
     ///
@@ -123,6 +125,7 @@ pub struct LeafModuleQueryParamDef {
 
 /// The type of a parameter that may be supplied to a query.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum LeafModuleQueryParamKind {
     /// A 64 bit integer
     Integer,
@@ -196,12 +199,19 @@ pub struct SqlRows {
 pub struct SqlRow(pub Vec<SqlValue>);
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+#[serde(tag = "$type", content = "value")]
 pub enum SqlValue {
+    #[serde(rename = "muni.town.sqliteValue.null")]
     #[default]
     Null,
+    #[serde(rename = "muni.town.sqliteValue.integer")]
     Integer(i64),
+    #[serde(rename = "muni.town.sqliteValue.real")]
     Real(f64),
+    #[serde(rename = "muni.town.sqliteValue.text")]
     Text(String),
+    #[serde(rename = "muni.town.sqliteValue.blob")]
     Blob(Vec<u8>),
 }
 
