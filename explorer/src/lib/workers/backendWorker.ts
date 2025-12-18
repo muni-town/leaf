@@ -29,7 +29,7 @@ const isSharedWorker = 'SharedWorkerGlobalScope' in globalThis;
 const status = reactiveWorkerState<BackendStatus>(new BroadcastChannel('backend-status'), true);
 (globalThis as any).status = status;
 
-const atprotoOauthScope = 'atproto transition:generic transition:chat.bsky';
+const atprotoOauthScope = 'atproto rpc:app.bsky.actor.getProfile?aud=did:web:api.bsky.app%23bsky_appview rpc:town.muni.leaf.authenticate?aud=*';
 
 interface KeyValue {
 	key: string;
@@ -271,6 +271,7 @@ function connectMessagePort(port: MessagePortApi) {
 function createLeafClient(agent: Agent, url: string) {
 	return new LeafClient(url, async () => {
 		const resp = await agent.com.atproto.server.getServiceAuth({
+      lxm: 'town.muni.leaf.authenticate',
 			aud: `did:web:${new URL(url).hostname}`
 		});
 		if (!resp) throw 'Error authenticating for leaf server';

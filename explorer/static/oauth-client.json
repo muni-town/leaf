@@ -1,6 +1,6 @@
 {
 	"client_id": "http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5173%2F&scope=atproto%20transition%3Ageneric%20transition%3Achat.bsky",
-	"scope": "atproto transition:generic transition:chat.bsky",
+	"scope": "atproto rpc:app.bsky.actor.getProfile?aud=did:web:api.bsky.app%23bsky_appview rpc:town.muni.leaf.authenticate?aud=*",
 	"redirect_uris": ["http://127.0.0.1:5173/"],
 	"response_types": ["code"],
 	"grant_types": ["authorization_code", "refresh_token"],
