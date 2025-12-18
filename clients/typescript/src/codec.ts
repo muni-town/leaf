@@ -27,24 +27,31 @@ export type BasicModule = ModuleCodec<
   }
 >;
 
-export type SqlValue =
+export type SqlValueRaw =
   | { $type: "muni.town.sqliteValue.null" }
   | { $type: "muni.town.sqliteValue.integer"; value: number }
   | { $type: "muni.town.sqliteValue.real"; value: number }
   | { $type: "muni.town.sqliteValue.text"; value: string }
   | { $type: "muni.town.sqliteValue.blob"; value: BytesWrapper };
 
+export type SqlValue =
+  | { $type: "muni.town.sqliteValue.null" }
+  | { $type: "muni.town.sqliteValue.integer"; value: number }
+  | { $type: "muni.town.sqliteValue.real"; value: number }
+  | { $type: "muni.town.sqliteValue.text"; value: string }
+  | { $type: "muni.town.sqliteValue.blob"; value: Uint8Array };
+
 export type LeafQuery = {
   name: string;
   user?: string;
-  params: [string, SqlValue][];
+  params: [string, SqlValueRaw][];
   start?: number;
   limit?: number;
 };
 
-export type SqlRow = SqlValue[];
-export type SqlRows = {
-  rows: SqlRow[];
+export type SqlRow<V extends SqlValue | SqlValueRaw = SqlValue> = V[];
+export type SqlRows<V extends SqlValue | SqlValueRaw = SqlValue> = {
+  rows: SqlRow<V>[];
   column_names: string[];
 };
 
@@ -109,4 +116,4 @@ export type StreamQueryArgs = {
   query: LeafQuery;
 };
 
-export type StreamQueryResp = Result<SqlRows>;
+export type StreamQueryResp = Result<SqlRows<SqlValueRaw>>;

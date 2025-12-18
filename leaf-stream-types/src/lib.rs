@@ -213,6 +213,7 @@ pub enum SqlValue {
     #[serde(rename = "muni.town.sqliteValue.text")]
     Text(String),
     #[serde(rename = "muni.town.sqliteValue.blob")]
+    #[serde(with = "dasl::drisl::serde_bytes")]
     Blob(Vec<u8>),
 }
 

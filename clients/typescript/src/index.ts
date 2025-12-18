@@ -12,6 +12,7 @@ import {
   ModuleExistsResp,
   ModuleUploadArgs,
   ModuleUploadResp,
+  SqlRows,
   StreamCreateArgs,
   StreamCreateResp,
   StreamEventBatchArgs,
@@ -119,7 +120,7 @@ export class LeafClient {
       );
       const sub = this.#querySubscriptions.get(notification.subscriptionId);
       if (sub) {
-        sub(notification.response);
+        sub(converBytesWrappers(notification.response));
       }
     });
   }
@@ -263,6 +264,7 @@ export class LeafClient {
       ),
     );
     const resp: StreamSubscribeResp = decode(fromBinary(data));
+    console.log(resp);
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
@@ -289,10 +291,7 @@ export class LeafClient {
     }
   }
 
-  async query(
-    streamDid: string,
-    query: LeafQuery,
-  ): Promise<AssertOk<StreamQueryResp>> {
+  async query(streamDid: string, query: LeafQuery): Promise<SqlRows> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/query",
       toBinary(
@@ -306,6 +305,19 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return resp.Ok;
+    return converBytesWrappers(resp.Ok);
+  }
+}
+
+function converBytesWrappers(t: any): any {
+  if (t instanceof BytesWrapper) {
+    return t.buf;
+  } else if (typeof t == "object") {
+    for (const key in t) {
+      t[key] = converBytesWrappers(t[key]);
+    }
+    return t;
+  } else {
+    return t;
   }
 }

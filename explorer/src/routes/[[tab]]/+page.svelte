@@ -9,7 +9,7 @@
 	import { getContext } from 'svelte';
 	import { BytesWrapper, type BasicModule, type LeafQuery } from '@muni-town/leaf-client';
 	import { page } from '$app/state';
-	import { encode } from '@atcute/cbor';
+	import { encode, decode } from '@atcute/cbor';
 
 	let loading = $state(false);
 
@@ -106,17 +106,15 @@
 				(_key, value) => {
 					if (typeof value === 'bigint') {
 						return value.toString();
-					} else if (
-						typeof value == 'object' &&
-						'tag' in value &&
-						typeof value.tag == 'string'
-					) {
-						if (value.tag == 'blob') {
-							return new TextDecoder().decode(value.value);
-						} else if (value.tag == 'text') {
+					} else if (typeof value == 'object') {
+						if (value.$type == 'muni.town.sqliteValue.blob') {
+							try {
+								return decode(value.value);
+							} catch (_e) {
+								return `Uint8Array(${value.value.length})`;
+							}
+						} else if (value.$type) {
 							return value.value;
-						} else if (value.tag == 'integer') {
-							return value.value.toString();
 						}
 					}
 					return value;
