@@ -270,17 +270,17 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
     })?;
 
     db.create_scalar_function(ScalarFunctionDef {
-        name: "dasl_extract".to_string(),
+        name: "drisl_extract".to_string(),
         num_args: 2,
         deterministic: true,
         innocuous: true,
         direct_only: false,
         callback: Arc::new(|values| {
             let Value::Blob(blob) = values.first().unwrap() else {
-                anyhow::bail!("First argument to dasl_extract must be blob");
+                anyhow::bail!("First argument to drisl_extract must be blob");
             };
             let Value::Text(path) = values.get(1).unwrap() else {
-                anyhow::bail!("Second argument to dasl_extract must be sring");
+                anyhow::bail!("Second argument to drisl_extract must be sring");
             };
             let value = dasl::drisl::from_slice(blob)?;
             extract_sql_value_from_drisl(value, path)
