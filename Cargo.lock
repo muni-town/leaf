@@ -2159,7 +2159,6 @@ dependencies = [
  "async-lock",
  "atproto-identity",
  "atproto-oauth",
- "base64 0.22.1",
  "bytes",
  "clap",
  "futures",
