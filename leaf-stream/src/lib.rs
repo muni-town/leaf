@@ -206,10 +206,7 @@ impl Stream {
                 Did,
                 Option<Cid>,
                 Option<i64>,
-            ) = row
-                .parse_row()
-                .await
-                .context("error parsing stream state")?;
+            ) = row.parse_row().await?;
             if db_stream_did != id {
                 return Err(StreamError::IdMismatch {
                     expected_id: id,

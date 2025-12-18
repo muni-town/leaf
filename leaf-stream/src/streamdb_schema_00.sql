@@ -13,7 +13,7 @@ create table if not exists "stream_state" (
     -- Primary key for this table, which is always 1
     "id"                    integer primary key check (id = 1),
     -- The ID of this stream
-    "stream_did"             blob not null,
+    "stream_did"             text not null,
     -- The hash of the stream's current module
     "module_cid"             blob,
     -- The latest event that has been processed by the current module

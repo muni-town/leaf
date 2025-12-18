@@ -63,7 +63,7 @@ impl FromValue for Cid {
         match value {
             Value::Text(s) => Ok(Cid::from_str(&s).map_err(|_| libsql::Error::InvalidColumnType)?),
             Value::Blob(blob) => {
-                Ok(Cid::from_bytes(&blob).map_err(|_| libsql::Error::InvalidColumnType)?)
+                Ok(Cid::from_bytes_raw(&blob).map_err(|_e| libsql::Error::InvalidColumnType)?)
             }
             _ => Err(libsql::Error::InvalidColumnType),
         }
@@ -154,3 +154,15 @@ impl_from_row!(A, B, C, D);
 impl_from_row!(A, B, C, D, E);
 impl_from_row!(A, B, C, D, E, F);
 impl_from_row!(A, B, C, D, E, F, G);
+
+#[cfg(test)]
+mod test {
+    use dasl::cid::Cid;
+
+    #[test]
+    fn cid_round_trip() {
+        let cid = Cid::digest_sha2(dasl::cid::Codec::Raw, [1, 2, 3, 4]);
+
+        assert_eq!(cid, Cid::from_bytes_raw(cid.as_bytes()).unwrap());
+    }
+}
