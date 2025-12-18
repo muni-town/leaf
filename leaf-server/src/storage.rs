@@ -226,7 +226,7 @@ impl Storage {
         self.db()
             .await
             .execute(
-                "update streams set latest_event = ? where id = ?",
+                "update streams set latest_event = ? where did = ?",
                 (latest_event, stream_did.as_str().to_string()),
             )
             .await?;
