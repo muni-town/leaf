@@ -151,9 +151,7 @@
 
 	async function sendEvent() {
 		if (!backendStatus.did) return;
-		await backend.sendEvents(streamDid.value, [
-			encode({ user: backendStatus.did, payload: new TextEncoder().encode(payload) })
-		]);
+		await backend.sendEvents(streamDid.value, [encode(JSON.parse(payload))]);
 	}
 </script>
 

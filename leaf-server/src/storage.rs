@@ -407,6 +407,36 @@ impl Storage {
         Ok(())
     }
 
+    #[instrument(skip(self, did), err)]
+    pub async fn get_did_signing_key(&self, did: Did) -> anyhow::Result<SigningKey> {
+        let db = self.db().await;
+
+        #[allow(clippy::type_complexity)]
+        let keys: Vec<(Option<Vec<u8>>, Option<Vec<u8>>)> = db
+            .query(
+                "select p256_key, k256_key from did_keys where did = ?",
+                [did.as_str().to_string()],
+            )
+            .await?
+            .parse_rows()
+            .await?;
+        let mut keys = keys.into_iter().filter_map(|(p256, k256)| {
+            if let Some(bytes) = p256 {
+                Some(SigningKey::P256(
+                    p256::ecdsa::SigningKey::from_slice(&bytes).ok()?,
+                ))
+            } else if let Some(bytes) = k256 {
+                Some(SigningKey::K256(
+                    k256::ecdsa::SigningKey::from_slice(&bytes).ok()?,
+                ))
+            } else {
+                None
+            }
+        });
+        keys.next()
+            .ok_or_else(|| anyhow::format_err!("No signing key found for DID"))
+    }
+
     #[instrument(skip(self), err)]
     pub async fn get_did_owners(&self, did: Did) -> anyhow::Result<Vec<String>> {
         let owners: Vec<String> = self

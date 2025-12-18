@@ -211,12 +211,15 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_did, stream.clone());
+                    open_streams.insert(stream_did.clone(), stream.clone());
                     stream
                 };
 
+                let signing_key = STORAGE.get_did_signing_key(stream_did).await?;
+
                 stream
                     .add_events(
+                        signing_key,
                         events
                             .into_iter()
                             .map(|x| IncomingEvent {

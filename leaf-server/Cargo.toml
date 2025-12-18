@@ -77,3 +77,5 @@ futures = "0.3.31"
 
 # APIs
 s3-simple = { version = "0.6.0", default-features = false }
+p256 = "0.13.2"
+k256 = "0.13.4"

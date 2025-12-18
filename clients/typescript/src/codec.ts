@@ -64,7 +64,7 @@ export type ModuleUploadResp = Result<{ moduleCid: CidLinkWrapper }>;
 export type ModuleExistsArgs = {
   moduleCid: CidLink;
 };
-export type ModuleExistsResp = Result<{ module_exists: boolean }>;
+export type ModuleExistsResp = Result<{ moduleExists: boolean }>;
 
 export type StreamCreateArgs = {
   moduleCid: CidLink;

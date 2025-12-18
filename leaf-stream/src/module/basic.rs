@@ -60,7 +60,7 @@ impl LeafModule for BasicModule {
     fn materialize(
         &'_ self,
         module_db: &libsql::Connection,
-        Event { idx, user, payload }: Event,
+        Event { idx, user, payload, signature: _ }: Event,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         let def = self.def.clone();
         let module_db = module_db.clone();

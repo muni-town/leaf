@@ -17,7 +17,7 @@ export async function createStream(args: string[]) {
   const client = await createClient(options);
 
   try {
-    const streamId = await client.createStream({ $link: moduleCid });
+    const streamId = await client.createStream(moduleCid);
 
     outputJson({
       success: true,

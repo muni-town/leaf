@@ -145,6 +145,7 @@ pub struct Event<Payload = Vec<u8>> {
     pub idx: i64,
     pub user: String,
     pub payload: Payload,
+    pub signature: Vec<u8>,
 }
 
 /// An incomming event that hasn't been accepted into a stream yet.

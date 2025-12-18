@@ -52,7 +52,6 @@ function toBinary(data: Uint8Array): SocketIoBuffer {
 // Helper to convert response data back to plain Uint8Array for decoding Buffer in Node.js can cause
 // issues with decoding
 function fromBinary(data: Uint8Array | SocketIoBuffer): Uint8Array {
-  console.log(new Uint8Array(data));
   if (data instanceof Uint8Array) return data;
   return new Uint8Array(data);
 }
@@ -165,6 +164,7 @@ export class LeafClient {
   }
 
   async hasModule(moduleCid: string): Promise<boolean> {
+    console.log(moduleCid);
     const data: SocketIoBuffer = await this.socket.emitWithAck(
       "module/exists",
       toBinary(
@@ -172,14 +172,14 @@ export class LeafClient {
       ),
     );
     const resp: ModuleExistsResp = decode(fromBinary(data));
+    console.log(resp);
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return resp.Ok.module_exists;
+    return resp.Ok.moduleExists;
   }
 
   async createStream(moduleCid: string): Promise<{ streamDid: string }> {
-    console.log(moduleCid);
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/create",
       toBinary(

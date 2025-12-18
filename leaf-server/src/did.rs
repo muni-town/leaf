@@ -12,7 +12,8 @@ pub async fn create_did(owner: String) -> anyhow::Result<Did> {
 
     let key = SigningKey::generate_k256();
     let (did, operation, keys) = DidBuilder::new()
-        .add_rotation_key(key)
+        .add_rotation_key(key.clone())
+        .add_verification_method("leaf_server".to_string(), key)
         .add_service(
             "leaf_server".into(),
             ServiceEndpoint {

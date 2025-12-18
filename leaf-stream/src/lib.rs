@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use async_lock::{Mutex, RwLock};
-use atproto_plc::Did;
+use atproto_plc::{Did, SigningKey};
 use dasl::cid::{Cid, Codec::Drisl as DrislCodec};
 use leaf_stream_types::{
     Event, IncomingEvent, LeafQuery, LeafQueryReponse, QueryValidationError, SqlRows,
@@ -408,10 +408,10 @@ impl Stream {
         }
 
         // Get all of the events that have not been applied by the module yet.
-        let events: Vec<(i64, String, Vec<u8>)> = state
+        let events: Vec<(i64, String, Vec<u8>, Vec<u8>)> = state
             .db
             .query(
-                "select id, user, payload from events where id > ?",
+                "select id, user, payload, signature from events where id > ?",
                 [state.module_event_cursor],
             )
             .await?
@@ -423,13 +423,21 @@ impl Stream {
         module_db.execute("begin immediate", ()).await?;
 
         let result = async {
-            for (i, (idx, user, payload)) in events.into_iter().enumerate() {
+            for (i, (idx, user, payload, signature)) in events.into_iter().enumerate() {
                 assert_eq!(idx, state.module_event_cursor + 1 + i as i64);
 
                 // Execute the materializer for the event
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
                 let result = module
-                    .materialize(module_db, Event { idx, user, payload })
+                    .materialize(
+                        module_db,
+                        Event {
+                            idx,
+                            user,
+                            payload,
+                            signature,
+                        },
+                    )
                     .await;
                 module_db.authorizer(None)?;
                 result?;
@@ -467,8 +475,12 @@ impl Stream {
     ///
     /// Either the whole batch of events will be added, or the entire batch will be rejected, making
     /// multiple events act as an atomic transaction.
-    #[instrument(skip(self, events), err)]
-    pub async fn add_events(&self, events: Vec<IncomingEvent>) -> Result<Option<Cid>, StreamError> {
+    #[instrument(skip(self, events, signing_key), err)]
+    pub async fn add_events(
+        &self,
+        signing_key: SigningKey,
+        events: Vec<IncomingEvent>,
+    ) -> Result<Option<Cid>, StreamError> {
         // Make sure the current module is caught up
         self.raw_catch_up_module()
             .await
@@ -498,12 +510,14 @@ impl Stream {
 
                 tracing::debug!("Authorized");
 
+                let signature = signing_key.sign(&event.payload)?;
+
                 // Insert the event into the events table
                 let idx = module_db
                     .query(
                         r#"insert into events.events
-                        select null as id, user, payload from event returning id"#,
-                        (),
+                        select null as id, user, payload, ? as signature from event returning id"#,
+                        [signature.clone()],
                     )
                     .await?
                     .next()
@@ -522,6 +536,7 @@ impl Stream {
                             idx,
                             user: event.user,
                             payload: event.payload,
+                            signature,
                         },
                     )
                     .await;
@@ -595,10 +610,10 @@ impl Stream {
             Bound::Unbounded => i64::MAX,
         };
 
-        let events: Vec<(i64, String, Vec<u8>)> = state
+        let events: Vec<(i64, String, Vec<u8>, Vec<u8>)> = state
             .db
             .query(
-                "select id, user, payload from events where id >= ? and id <= ?",
+                "select id, user, payload, signature from events where id >= ? and id <= ?",
                 [min, max],
             )
             .await?
@@ -607,7 +622,12 @@ impl Stream {
 
         Ok(events
             .into_iter()
-            .map(|(idx, user, payload)| Event { idx, user, payload })
+            .map(|(idx, user, payload, signature)| Event {
+                idx,
+                user,
+                payload,
+                signature,
+            })
             .collect())
     }
 
@@ -621,10 +641,11 @@ impl Stream {
             if event.idx != state.latest_event + 1 {
                 anyhow::bail!("Imported event not sequential");
             }
+            // TODO: Add signatures to the database
             state
                 .db
                 .execute(
-                    "insert into events (id, user, payload) values (?, ?, ?)",
+                    "insert into events (id, user, payload, signature) values (?, ?, ?, ?)",
                     (event.idx, event.user, event.payload),
                 )
                 .await?;
