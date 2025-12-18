@@ -8,6 +8,6 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-atproto-plc = "0.2.0"
+atproto-plc.workspace = true
 dasl.workspace = true
 libsql.workspace = true

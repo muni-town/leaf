@@ -45,9 +45,12 @@ async function createDaslCid(bytes: Uint8Array): Promise<Cid> {
 
 // Helper to ensure binary data is in the correct format for socket.io-msgpack-parser
 // In Node.js, the parser requires Buffer. In browsers, Uint8Array works.
-function toBinary(data: Uint8Array): Uint8Array {
+function toBinary(data: Uint8Array): ArrayBuffer | Buffer {
+  // Check if Buffer is available (Node.js environment)
   if (typeof Buffer !== "undefined" && Buffer.from) {
     return Buffer.from(data);
+  } else if (data instanceof Uint8Array) {
+    return data.buffer.slice(0, data.length) as ArrayBuffer;
   }
   return data;
 }

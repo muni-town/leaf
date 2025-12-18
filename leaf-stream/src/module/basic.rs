@@ -14,7 +14,7 @@ impl LeafModule for BasicModule {
     where
         Self: Sized,
     {
-        "muni.town.leaf.module.basic.0"
+        "muni.town.leaf.module.basic.v0"
     }
     fn id(&self) -> Cid {
         self.id

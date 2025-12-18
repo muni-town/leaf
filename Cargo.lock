@@ -322,8 +322,7 @@ dependencies = [
 [[package]]
 name = "atproto-plc"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a3f796ac98ad25c4ebeee326d21c155a5d6e0f9ff6d121695466fdebb233648"
+source = "git+https://tangled.org/zicklag.dev/atproto-plc?branch=fix%2Fdid-generation-and-signatures#b431fc522685a717ca04ad5ff555ec0809f8edc9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

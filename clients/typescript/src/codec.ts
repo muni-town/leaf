@@ -11,7 +11,7 @@ export type ModuleCodec<ModuleType extends string = string, Def = unknown> = {
 };
 
 export type BasicModule = ModuleCodec<
-  "space.roomy.module.basic.0",
+  "muni.town.leaf.module.basic.v0",
   {
     init_sql: string;
     authorizer: string;

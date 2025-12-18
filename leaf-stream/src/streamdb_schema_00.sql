@@ -6,18 +6,16 @@ create table if not exists "events" (
     -- The event payload
     "payload"   blob not null,
     -- The signature for the event
-    "signature" blob not null,
+    "signature" blob not null
 );
 
 create table if not exists "stream_state" (
     -- Primary key for this table, which is always 1
     "id"                    integer primary key check (id = 1),
-    -- The ID of the user that created the stream
-    "creator"               text not null,
     -- The ID of this stream
     "stream_did"             blob not null,
     -- The hash of the stream's current module
-    "module_hash"             blob not null,
+    "module_cid"             blob,
     -- The latest event that has been processed by the current module
     "module_event_cursor"   integer references events(id)
 )

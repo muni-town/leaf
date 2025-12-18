@@ -21,6 +21,7 @@ pub struct Streams {
 }
 
 impl Streams {
+    #[tracing::instrument(skip(self))]
     pub async fn load(&self, id: Did) -> anyhow::Result<StreamHandle> {
         // Return the stream from the streams if it is already open
         {
@@ -50,11 +51,9 @@ impl Streams {
         stream.create_worker_task().await.map(tokio::spawn);
 
         // Load the stream's module and it's database
-        if let Some(Some(module_hash)) = stream.needs_module().await {
-            STORAGE
-                .update_stream_module(id.clone(), module_hash)
-                .await?;
-            let (module, module_db) = load_module(&stream_dir, module_hash).await?;
+        if let Some(Some(module_cid)) = stream.needs_module().await {
+            STORAGE.update_stream_module(id.clone(), module_cid).await?;
+            let (module, module_db) = load_module(&stream_dir, module_cid).await?;
             stream.provide_module(module, module_db).await?;
         }
 

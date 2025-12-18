@@ -96,7 +96,7 @@ pub struct BasicModuleDef {
 }
 
 impl ModuleDef for BasicModuleDef {
-    const MODULE_TYPE: &str = "space.roomy.module.basic.0";
+    const MODULE_TYPE: &str = "muni.town.leaf.module.basic.v0";
 }
 
 /// The definition of a query that can be made against a leaf module.

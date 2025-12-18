@@ -153,7 +153,7 @@ impl Stream {
         state
             .db
             .execute(
-                "update stream_state set module_hash = ?, module_event_cursor = null where id = 1",
+                "update stream_state set module_cid = ?, module_event_cursor = null where id = 1",
                 [module_cid.as_bytes().to_vec()],
             )
             .await?;
@@ -172,7 +172,7 @@ impl Stream {
 
         // Get the latest event index from the database
         let latest_event = db
-            .query("select max(id) from events;", ())
+            .query("select max(id) from events", ())
             .await?
             .next()
             .await
@@ -189,7 +189,7 @@ impl Stream {
         // Load the stream state from the database
         let row = db
             .query(
-                "select stream_did, module_hash, module_event_cursor \
+                "select stream_did, module_cid, module_event_cursor \
                 from stream_state where id=1",
                 (),
             )
@@ -222,12 +222,11 @@ impl Stream {
             // Initialize the stream state
             db.execute(
                 "insert into stream_state \
-                (id, stream_did, module_hash, module_event_cursor) values \
-                (1, :stream_did, null, null) ",
-                [(":stream_did", id.as_str().to_string())],
+                (id, stream_did, module_cid, module_event_cursor) values \
+                (1, ?, null, null) ",
+                [id.as_str().to_string()],
             )
-            .await
-            .context("error initializing stream state")?;
+            .await?;
 
             module_state = ModuleState::Unloaded(None);
             module_event_cursor = 0;
@@ -373,7 +372,7 @@ impl Stream {
         module: &ModuleState,
     ) -> Result<(Arc<dyn LeafModule>, &Connection), StreamError> {
         match module {
-            ModuleState::Unloaded(module_hash) => Err(StreamError::ModuleNotProvided(*module_hash)),
+            ModuleState::Unloaded(module_cid) => Err(StreamError::ModuleNotProvided(*module_cid)),
             ModuleState::Loaded { module, module_db } => Ok((module.clone(), module_db)),
         }
     }

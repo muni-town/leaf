@@ -213,9 +213,8 @@ impl Storage {
         self.db()
             .await
             .execute(
-                "insert into streams (id, owner, module_cid) \
-                values (?, ?, null)",
-                [stream_did.as_str().to_string(), owner],
+                "insert into streams (did, module_cid, latest_event) values (?, null, 0)",
+                [stream_did.as_str().to_string()],
             )
             .await?;
 
@@ -400,7 +399,7 @@ impl Storage {
         )
         .await?;
         db.execute(
-            "insert into did_owners values (?, ?)",
+            "insert into did_owners (did, owner) values (?, ?)",
             [did.as_str().to_string(), owner],
         )
         .await?;

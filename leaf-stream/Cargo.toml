@@ -28,7 +28,7 @@ ulid = "1.2.1"
 regex = "1.12.2"
 peg = "0.8.5"
 dasl.workspace = true
-atproto-plc = "0.2.0"
+atproto-plc.workspace = true
 
 # Logging
 tracing = "0.1.41"

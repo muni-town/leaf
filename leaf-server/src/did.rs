@@ -10,7 +10,7 @@ static CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 pub async fn create_did(owner: String) -> anyhow::Result<Did> {
     let Command::Server(args) = &ARGS.command;
 
-    let key = SigningKey::generate_p256();
+    let key = SigningKey::generate_k256();
     let (did, operation, keys) = DidBuilder::new()
         .add_rotation_key(key)
         .add_service(
@@ -23,11 +23,14 @@ pub async fn create_did(owner: String) -> anyhow::Result<Did> {
         .build()?;
     let key = keys.rotation_keys.into_iter().next().unwrap();
 
+    operation.verify(&[key.verifying_key()])?;
+
     let resp = CLIENT
         .post(format!("{}/{did}", ARGS.plc_directory))
         .json(&operation)
         .send()
         .await?;
+
     let status = resp.status();
     let body = resp.text().await?;
     if !status.is_success() {

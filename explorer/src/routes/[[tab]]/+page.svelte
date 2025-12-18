@@ -39,7 +39,7 @@
 	});
 
 	const defaultModule: BasicModule = {
-		$type: 'space.roomy.module.basic.0',
+		$type: 'muni.town.leaf.module.basic.v0',
 		def: {
 			authorizer: '',
 			init_sql: '',
