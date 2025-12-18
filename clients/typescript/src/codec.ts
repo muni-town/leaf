@@ -7,13 +7,12 @@ export type SubscriptionId = string & { __brand: "subscriptionId" };
 
 export type ModuleCodec<ModuleType extends string = string, Def = unknown> = {
   $type: ModuleType;
-  def: Def;
-};
+} & Def;
 
 export type BasicModule = ModuleCodec<
   "muni.town.leaf.module.basic.v0",
   {
-    init_sql: string;
+    initSql: string;
     authorizer: string;
     materializer: string;
     queries: {

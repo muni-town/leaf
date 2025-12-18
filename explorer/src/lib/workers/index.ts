@@ -1,18 +1,7 @@
 import type { ProfileViewDetailed } from '@atproto/api/dist/client/types/app/bsky/actor/defs';
 import { messagePortInterface, reactiveWorkerState } from './workerMessaging';
 import backendWorkerUrl from './backendWorker.ts?worker&url';
-import type {
-	LeafQuery,
-	SqlRows,
-	CidLink,
-	Did,
-	StreamInfoResp,
-	AssertOk,
-	CidLinkWrapper,
-	SubscriptionId,
-	EventPayload,
-	BasicModule
-} from '@muni-town/leaf-client';
+import type { LeafQuery, SqlRows, BasicModule } from '@muni-town/leaf-client';
 
 // Force page reload when hot reloading this file to avoid confusion if the workers get mixed up.
 if (import.meta.hot) {
@@ -37,14 +26,14 @@ export type BackendInterface = {
 	logout(): Promise<void>;
 	oauthCallback(searchParams: string): Promise<void>;
 	getProfile(did?: string): Promise<ProfileViewDetailed | undefined>;
-	query(streamDid: Did, query: LeafQuery): Promise<SqlRows>;
-	hasModule(moduleId: CidLink): Promise<{ module_exists: boolean }>;
-	streamInfo(streamDid: Did): Promise<AssertOk<StreamInfoResp>>;
-	createStream(moduleCid: CidLink): Promise<{ streamDid: Did }>;
-	updateModule(streamDid: Did, moduleId: CidLink): Promise<void>;
-	subscribe(streamDid: Did, query: LeafQuery): Promise<string>;
+	query(streamDid: string, query: LeafQuery): Promise<SqlRows>;
+	hasModule(moduleCid: string): Promise<boolean>;
+	streamInfo(streamDid: string): Promise<{ moduleCid: string }>;
+	createStream(moduleCid: string): Promise<{ streamDid: string }>;
+	updateModule(streamDid: string, moduleCid: string): Promise<void>;
+	subscribe(streamDid: string, query: LeafQuery): Promise<string>;
 	unsubscribe(subId: string): Promise<void>;
-	uploadModule(module: BasicModule): Promise<{ moduleCid: CidLink }>;
+	uploadModule(module: BasicModule): Promise<{ moduleCid: string }>;
 	sendEvents(streamDid: string, events: Uint8Array[]): Promise<void>;
 	setLeafUrl(url: string): Promise<void>;
 	/** Adds a new message port connection to the backend that can call the backend interface. */

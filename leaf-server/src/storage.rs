@@ -61,7 +61,7 @@ pub struct S3BackupConfig {
 #[derive(Debug, Clone)]
 pub struct ListStreamsItem {
     pub id: Did,
-    pub owner: String,
+    pub module_cid: Option<Cid>,
     pub latest_event: Option<i64>,
 }
 
@@ -235,10 +235,10 @@ impl Storage {
 
     /// Get the list of streams and the latest event we have for each
     pub async fn list_streams(&self) -> anyhow::Result<Vec<ListStreamsItem>> {
-        let rows: Vec<(Did, String, Option<i64>)> = self
+        let rows: Vec<(Did, Option<Cid>, Option<i64>)> = self
             .db()
             .await
-            .query("select id, owner, latest_event from streams", ())
+            .query("select did, module_cid, latest_event from streams", ())
             .await?
             .parse_rows()
             .await?;
@@ -247,7 +247,7 @@ impl Storage {
             .map(|x| {
                 Ok::<_, anyhow::Error>(ListStreamsItem {
                     id: x.0,
-                    owner: x.1,
+                    module_cid: x.1,
                     latest_event: x.2,
                 })
             })
@@ -268,10 +268,10 @@ impl Storage {
         self.db()
             .await
             .execute(
-                "update streams set module_cid = :module where id = :id",
+                "update streams set module_cid = ? where did = ?",
                 (
-                    (":module", module_cid.as_bytes().to_vec()),
-                    (":id", stream_did.as_str().to_string()),
+                    module_cid.as_bytes().to_vec(),
+                    stream_did.as_str().to_string(),
                 ),
             )
             .await?;

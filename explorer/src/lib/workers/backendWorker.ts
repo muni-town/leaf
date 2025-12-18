@@ -225,6 +225,7 @@ function connectMessagePort(port: MessagePortApi) {
 		},
 		async hasModule(moduleCid) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
+			console.log('hasmodulecid', moduleCid);
 			return await state.leafClient.hasModule(moduleCid);
 		},
 		async streamInfo(streamId) {
@@ -233,17 +234,11 @@ function connectMessagePort(port: MessagePortApi) {
 		},
 		async uploadModule(module) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
-			console.log('uploadmodule', module);
-			const { moduleCid } = await state.leafClient.uploadBasicModule(module);
-			console.log('cid', moduleCid.toJSON());
-			return { moduleCid: moduleCid.toJSON() };
+			return await state.leafClient.uploadBasicModule(module);
 		},
 		async createStream(moduleCid) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
-			console.log('modulecid', moduleCid);
-			const streamDid = await state.leafClient.createStream(moduleCid);
-			console.log('streamDid', streamDid);
-			return streamDid;
+			return await state.leafClient.createStream(moduleCid);
 		},
 		async updateModule(streamDid, moduleDef) {
 			if (!state.leafClient) throw new Error('Leaf not connected');

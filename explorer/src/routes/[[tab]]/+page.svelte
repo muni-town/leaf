@@ -7,27 +7,21 @@
 
 	import { backend, backendStatus } from '$lib/workers';
 	import { getContext } from 'svelte';
-	import {
-		BytesWrapper,
-		type BasicModule,
-		type CidLink,
-		type Did,
-		type LeafQuery
-	} from '@muni-town/leaf-client';
+	import { BytesWrapper, type BasicModule, type LeafQuery } from '@muni-town/leaf-client';
 	import { page } from '$app/state';
 	import { encode } from '@atcute/cbor';
 
 	let loading = $state(false);
 
 	const events = getContext<string[]>('events');
-	const streamDid = getContext<{ value: Did }>('streamId');
+	const streamDid = getContext<{ value: string }>('streamId');
 
 	let offset = $state(1);
 	let limit = $state(100);
 
-	let moduleId: CidLink = $state(JSON.parse(localStorage.getItem('module') || '{ "$link": "" }'));
+	let moduleId = $state(localStorage.getItem('module') || '');
 	$effect(() => {
-		localStorage.setItem('module', JSON.stringify(moduleId));
+		localStorage.setItem('module', moduleId);
 	});
 
 	const tabs = ['Query', 'Create Stream'] as const;
@@ -38,16 +32,13 @@
 		localStorage.setItem('payload', payload);
 	});
 
-	const defaultModule: BasicModule = {
-		$type: 'muni.town.leaf.module.basic.v0',
-		def: {
-			authorizer: '',
-			init_sql: '',
-			materializer: '',
-			queries: []
-		}
+	const defaultModule: Omit<BasicModule, '$type'> = {
+		authorizer: '',
+		initSql: '',
+		materializer: '',
+		queries: []
 	};
-	let newStreamModule: BasicModule = $state(
+	let newStreamModule: Omit<BasicModule, '$type'> = $state(
 		JSON.parse(localStorage.getItem('basicModule') || JSON.stringify(defaultModule))
 	);
 	$effect(() => {
@@ -75,14 +66,22 @@
 	async function createStream() {
 		if (!backendStatus.did) return;
 		console.log('module', $state.snapshot(newStreamModule));
-		const resp = await backend.uploadModule($state.snapshot(newStreamModule));
+		const resp = await backend.uploadModule({
+			...$state.snapshot(newStreamModule),
+			$type: 'muni.town.leaf.module.basic.v0'
+		});
 		console.log('moduleCid', resp.moduleCid);
 		streamDid.value = (await backend.createStream(resp.moduleCid)).streamDid;
 		console.log('streamDid', streamDid.value);
 	}
 	async function updateModule() {
 		if (!backendStatus.did) return;
-		const moduleCid = (await backend.uploadModule($state.snapshot(newStreamModule))).moduleCid;
+		const moduleCid = (
+			await backend.uploadModule({
+				...$state.snapshot(newStreamModule),
+				$type: 'muni.town.leaf.module.basic.v0'
+			})
+		).moduleCid;
 		await backend.updateModule(streamDid.value, moduleCid);
 	}
 
@@ -290,7 +289,7 @@
 				}}
 			>
 				<h2 class="mb-4 text-xl font-bold">Has Module</h2>
-				<input class="input w-full" bind:value={moduleId.$link} placeholder="module CID" />
+				<input class="input w-full" bind:value={moduleId} placeholder="module CID" />
 				<button class="btn btn-outline" disabled={loading}>Check</button>
 			</form>
 
@@ -343,7 +342,7 @@
 				</p>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamModule.def.init_sql}
+					bind:value={newStreamModule.initSql}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="CREATE TABLE IF NOT EXISTS example ();"
@@ -360,7 +359,7 @@
 				</div>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamModule.def.authorizer}
+					bind:value={newStreamModule.authorizer}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="-- authorization SQL"
@@ -380,7 +379,7 @@
 				</div>
 				<CodeMirror
 					lang={sqlLang()}
-					bind:value={newStreamModule.def.materializer}
+					bind:value={newStreamModule.materializer}
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="-- materialization sql"
@@ -391,7 +390,7 @@
 					<button
 						class="btn"
 						onclick={() => {
-							newStreamModule.def.queries.push({
+							newStreamModule.queries.push({
 								name: '',
 								sql: '',
 								params: []
@@ -400,16 +399,17 @@
 					>
 				</h2>
 				<hr class="my-3" />
-				{#each newStreamModule.def.queries as query, i}
+				{#each newStreamModule.queries as query, i}
 					<div class="m-8 flex flex-col gap-3">
 						<div class="flex gap-3">
 							<input class="input" placeholder="query name" bind:value={query.name} />
 							<button
 								class="btn"
 								onclick={() =>
-									(newStreamModule.def.queries =
-										newStreamModule.def.queries.splice(i, 0))}
-								>Delete Query</button
+									(newStreamModule.queries = newStreamModule.queries.splice(
+										i,
+										0
+									))}>Delete Query</button
 							>
 						</div>
 						<div class="m-3 gap-2 text-sm opacity-40">

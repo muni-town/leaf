@@ -1,18 +1,11 @@
 import { io, Socket } from "socket.io-client";
 import parser from "socket.io-msgpack-parser";
-import {
-  encode,
-  decode,
-  CidLinkWrapper,
-  CidLink,
-  BytesWrapper,
-} from "@atcute/cbor";
+import { encode, decode, CidLinkWrapper, BytesWrapper } from "@atcute/cbor";
 import { Cid, create as createCid } from "@atcute/cid";
 import {
   AssertOk,
   BasicModule,
   Did,
-  EventPayload,
   LeafQuery,
   ModuleCodec,
   ModuleExistsArgs,
@@ -39,33 +32,29 @@ import {
 
 export * from "./codec.js";
 
+type SocketIoBuffer = Buffer | ArrayBuffer;
+
 async function createDaslCid(bytes: Uint8Array): Promise<Cid> {
   return createCid(0x71, bytes);
 }
 
 // Helper to ensure binary data is in the correct format for socket.io-msgpack-parser
-// In Node.js, the parser requires Buffer. In browsers, Uint8Array works.
-function toBinary(data: Uint8Array): ArrayBuffer | Buffer {
+// In Node.js, the parser requires Buffer. In browsers, ArrayBuffer is necessary.
+function toBinary(data: Uint8Array): SocketIoBuffer {
   // Check if Buffer is available (Node.js environment)
   if (typeof Buffer !== "undefined" && Buffer.from) {
     return Buffer.from(data);
-  } else if (data instanceof Uint8Array) {
+  } else {
     return data.buffer.slice(0, data.length) as ArrayBuffer;
   }
-  return data;
 }
 
-// Helper to convert response data back to plain Uint8Array for scale-ts decoding
-// Buffer in Node.js can cause issues with scale-ts decoding
-function fromBinary(data: Uint8Array): Uint8Array {
-  // If it's a Buffer, convert to plain Uint8Array
-  if (
-    (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) ||
-    data instanceof ArrayBuffer
-  ) {
-    return new Uint8Array(data);
-  }
-  return data;
+// Helper to convert response data back to plain Uint8Array for decoding Buffer in Node.js can cause
+// issues with decoding
+function fromBinary(data: Uint8Array | SocketIoBuffer): Uint8Array {
+  console.log(new Uint8Array(data));
+  if (data instanceof Uint8Array) return data;
+  return new Uint8Array(data);
 }
 
 type EventMap = {
@@ -152,52 +141,50 @@ export class LeafClient {
     ) as any;
   }
 
-  async uploadBasicModule(
-    module: BasicModule,
-  ): Promise<AssertOk<ModuleUploadResp>> {
+  async uploadBasicModule(module: BasicModule): Promise<{ moduleCid: string }> {
     return this.uploadModule(module);
   }
 
-  static async encodeModule(module: BasicModule): Promise<{
-    encoded: Uint8Array;
-    moduleCid: CidLinkWrapper;
-  }> {
+  static async moduleCid(module: BasicModule): Promise<string> {
     const encoded = encode(module);
     const moduleCid = await createDaslCid(encoded);
-    return { encoded, moduleCid: new CidLinkWrapper(moduleCid.bytes) };
+    return new CidLinkWrapper(moduleCid.bytes).$link;
   }
 
-  async uploadModule(module: ModuleCodec): Promise<AssertOk<ModuleUploadResp>> {
+  async uploadModule(module: ModuleCodec): Promise<{ moduleCid: string }> {
     const req = toBinary(encode({ module } satisfies ModuleUploadArgs));
-    const data: Uint8Array = await this.socket.emitWithAck(
+    const data: SocketIoBuffer = await this.socket.emitWithAck(
       "module/upload",
       req,
     );
     const resp: ModuleUploadResp = decode(fromBinary(data));
-    console.log(resp);
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return resp.Ok;
+    return { moduleCid: resp.Ok.moduleCid.$link };
   }
 
-  async hasModule(moduleCid: CidLink): Promise<AssertOk<ModuleExistsResp>> {
-    const data: Uint8Array = await this.socket.emitWithAck(
+  async hasModule(moduleCid: string): Promise<boolean> {
+    const data: SocketIoBuffer = await this.socket.emitWithAck(
       "module/exists",
-      toBinary(encode({ moduleCid: moduleCid } satisfies ModuleExistsArgs)),
+      toBinary(
+        encode({ moduleCid: { $link: moduleCid } } satisfies ModuleExistsArgs),
+      ),
     );
     const resp: ModuleExistsResp = decode(fromBinary(data));
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return resp.Ok;
+    return resp.Ok.module_exists;
   }
 
-  async createStream(moduleCid: CidLink): Promise<AssertOk<StreamCreateResp>> {
+  async createStream(moduleCid: string): Promise<{ streamDid: string }> {
     console.log(moduleCid);
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/create",
-      toBinary(encode({ moduleCid } satisfies StreamCreateArgs)),
+      toBinary(
+        encode({ moduleCid: { $link: moduleCid } } satisfies StreamCreateArgs),
+      ),
     );
     const resp: StreamCreateResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -206,7 +193,7 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async streamInfo(streamDid: string): Promise<AssertOk<StreamInfoResp>> {
+  async streamInfo(streamDid: string): Promise<{ moduleCid: string }> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/info",
       toBinary(
@@ -217,18 +204,18 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return resp.Ok;
+    return { moduleCid: resp.Ok.moduleCid.$link };
   }
 
   async updateModule(
     streamDid: string,
-    moduleCid: CidLink,
+    moduleCid: string,
   ): Promise<AssertOk<StreamUpdateModuleResp>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/update_module",
       toBinary(
         encode({
-          moduleCid,
+          moduleCid: { $link: moduleCid },
           streamDid: streamDid as Did,
         } satisfies StreamUpdateModuleArgs),
       ),
@@ -240,17 +227,11 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async sendEvent(
-    streamDid: string,
-    event: Uint8Array,
-  ): Promise<AssertOk<StreamEventBatchResp>> {
+  async sendEvent(streamDid: string, event: Uint8Array): Promise<void> {
     this.sendEvents(streamDid as Did, [event]);
   }
 
-  async sendEvents(
-    streamDid: string,
-    events: Uint8Array[],
-  ): Promise<AssertOk<StreamEventBatchResp>> {
+  async sendEvents(streamDid: string, events: Uint8Array[]): Promise<void> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/event_batch",
       toBinary(
