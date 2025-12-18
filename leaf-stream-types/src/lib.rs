@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dasl::{
     cid::{Cid, Codec::Drisl},
     drisl,
@@ -190,14 +192,8 @@ impl LeafQuery {
 pub type LeafQueryReponse = SqlRows;
 
 /// A result from a leaf query.
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct SqlRows {
-    pub rows: Vec<SqlRow>,
-    pub column_names: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct SqlRow(pub Vec<SqlValue>);
+pub type SqlRows = Vec<SqlRow>;
+pub type SqlRow = HashMap<String, SqlValue>;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -292,57 +288,6 @@ impl LeafModuleQueryParamDef {
     }
 }
 
-// impl std::hash::Hash for SqlValue {
-//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-//         core::mem::discriminant(self).hash(state);
-//         match self {
-//             SqlValue::Null => (),
-//             SqlValue::Integer(i) => i.hash(state),
-//             SqlValue::Real(r) => OrderedFloat(*r).hash(state),
-//             SqlValue::Text(t) => t.hash(state),
-//             SqlValue::Blob(b) => b.hash(state),
-//         }
-//     }
-// }
-// impl std::cmp::Eq for SqlValue {}
-// impl std::cmp::PartialEq for SqlValue {
-//     fn eq(&self, other: &Self) -> bool {
-//         match (self, other) {
-//             (Self::Integer(l0), Self::Integer(r0)) => l0 == r0,
-//             (Self::Real(l0), Self::Real(r0)) => OrderedFloat(*l0) == OrderedFloat(*r0),
-//             (Self::Text(l0), Self::Text(r0)) => l0 == r0,
-//             (Self::Blob(l0), Self::Blob(r0)) => l0 == r0,
-//             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
-//         }
-//     }
-// }
-
-impl From<()> for SqlValue {
-    fn from(_: ()) -> Self {
-        SqlValue::Null
-    }
-}
-impl From<i64> for SqlValue {
-    fn from(value: i64) -> Self {
-        Self::Integer(value)
-    }
-}
-impl From<f64> for SqlValue {
-    fn from(value: f64) -> Self {
-        SqlValue::Real(value)
-    }
-}
-impl From<String> for SqlValue {
-    fn from(value: String) -> Self {
-        SqlValue::Text(value)
-    }
-}
-impl From<Vec<u8>> for SqlValue {
-    fn from(value: Vec<u8>) -> Self {
-        SqlValue::Blob(value)
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum SqlError {
     #[error("Invalid value type")]
@@ -352,134 +297,3 @@ pub enum SqlError {
 }
 
 pub type SqlResult<T> = Result<T, SqlError>;
-
-pub trait FromValue: Sized {
-    fn from_value(value: SqlValue) -> SqlResult<Self>;
-}
-pub trait FromRow: Sized {
-    fn from_row(row: SqlRow) -> SqlResult<Self>;
-}
-pub trait FromRows: Sized {
-    fn from_rows(rows: SqlRows) -> SqlResult<Self>;
-}
-
-impl SqlValue {
-    pub fn parse_value<T: FromValue>(self) -> SqlResult<T> {
-        T::from_value(self)
-    }
-}
-impl SqlRow {
-    pub fn parse_row<T: FromRow>(self) -> SqlResult<T> {
-        T::from_row(self)
-    }
-}
-impl SqlRows {
-    pub fn parse_rows<T: FromRows>(self) -> SqlResult<T> {
-        T::from_rows(self)
-    }
-}
-
-impl<T: FromValue> FromValue for Option<T> {
-    fn from_value(value: SqlValue) -> SqlResult<Self> {
-        match value {
-            SqlValue::Null => Ok(None),
-            v => Ok(Some(T::from_value(v)?)),
-        }
-    }
-}
-
-impl FromValue for [u8; 32] {
-    fn from_value(value: SqlValue) -> SqlResult<Self> {
-        match value {
-            SqlValue::Blob(blob) => {
-                let bytes: [u8; 32] = blob.try_into().map_err(|_| SqlError::InvalidValueType)?;
-                Ok(bytes)
-            }
-            _ => Err(SqlError::InvalidValueType),
-        }
-    }
-}
-
-impl<T: FromRow> FromRows for Vec<T> {
-    fn from_rows(rows: SqlRows) -> SqlResult<Self> {
-        rows.rows
-            .into_iter()
-            .map(|row| T::from_row(row))
-            .collect::<SqlResult<Vec<_>>>()
-    }
-}
-
-impl FromValue for String {
-    fn from_value(value: SqlValue) -> SqlResult<Self> {
-        if let SqlValue::Text(x) = value {
-            Ok(x)
-        } else {
-            Err(SqlError::InvalidValueType)
-        }
-    }
-}
-impl FromValue for i64 {
-    fn from_value(value: SqlValue) -> SqlResult<Self> {
-        if let SqlValue::Integer(x) = value {
-            Ok(x)
-        } else {
-            Err(SqlError::InvalidValueType)
-        }
-    }
-}
-impl FromValue for f64 {
-    fn from_value(value: SqlValue) -> SqlResult<Self> {
-        if let SqlValue::Real(x) = value {
-            Ok(x)
-        } else {
-            Err(SqlError::InvalidValueType)
-        }
-    }
-}
-impl FromValue for Vec<u8> {
-    fn from_value(value: SqlValue) -> SqlResult<Self> {
-        if let SqlValue::Blob(x) = value {
-            Ok(x)
-        } else {
-            Err(SqlError::InvalidValueType)
-        }
-    }
-}
-
-impl FromValue for SqlValue {
-    fn from_value(value: SqlValue) -> SqlResult<Self> {
-        Ok(value)
-    }
-}
-
-macro_rules! impl_from_row {
-    ($($t:ident),*) => {
-        impl<$($t: FromValue),*> FromRow for ($( $t ),*) {
-            fn from_row(row: SqlRow) -> SqlResult<Self> {
-                let mut values = row.0.into_iter();
-                Ok((
-                    $(
-                        $t::from_value(values.next().ok_or(SqlError::InvalidColumnCount)?)?
-                    ),*
-                ))
-            }
-        }
-    };
-}
-impl<T: FromValue> FromRow for T {
-    fn from_row(row: SqlRow) -> SqlResult<Self> {
-        T::from_value(
-            row.0
-                .into_iter()
-                .next()
-                .ok_or(SqlError::InvalidColumnCount)?,
-        )
-    }
-}
-
-impl_from_row!(A, B);
-impl_from_row!(A, B, C);
-impl_from_row!(A, B, C, D);
-impl_from_row!(A, B, C, D, E);
-impl_from_row!(A, B, C, D, E, F);
-impl_from_row!(A, B, C, D, E, F, G);

@@ -1,6 +1,6 @@
 create table if not exists "events" (
     -- The event index, starting at 1
-    "id"        integer primary key,
+    "idx"        integer primary key,
     -- The user that submitted the event
     "user"      text not null,
     -- The event payload
@@ -17,5 +17,5 @@ create table if not exists "stream_state" (
     -- The hash of the stream's current module
     "module_cid"             blob,
     -- The latest event that has been processed by the current module
-    "module_event_cursor"   integer references events(id)
+    "module_event_cursor"   integer references events(idx)
 )

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use libsql::ffi::SQLITE_CREATE_INDEX;
 
 use crate::drisl_extract::extract_sql_value_from_drisl;
@@ -60,7 +62,12 @@ impl LeafModule for BasicModule {
     fn materialize(
         &'_ self,
         module_db: &libsql::Connection,
-        Event { idx, user, payload, signature: _ }: Event,
+        Event {
+            idx,
+            user,
+            payload,
+            signature: _,
+        }: Event,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         let def = self.def.clone();
         let module_db = module_db.clone();
@@ -176,14 +183,19 @@ impl LeafModule for BasicModule {
                     .collect::<Vec<_>>();
                 let mut rows = Vec::new();
                 while let Some(row) = r.next().await? {
-                    rows.push(SqlRow(
+                    rows.push(
                         (0..column_count)
-                            .map(|i| row.get_value(i).map(libsql_value_to_leaf))
-                            .collect::<Result<Vec<_>, _>>()?,
-                    ))
+                            .map(|i| {
+                                anyhow::Ok((
+                                    row.column_name(i).unwrap().to_string(),
+                                    row.get_value(i).map(libsql_value_to_leaf)?,
+                                ))
+                            })
+                            .collect::<Result<HashMap<_, _>, _>>()?,
+                    );
                 }
 
-                query_result = Some(SqlRows { rows, column_names });
+                query_result = Some(rows);
             }
 
             let Some(query_result) = query_result else {

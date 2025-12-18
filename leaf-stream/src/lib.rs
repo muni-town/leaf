@@ -172,7 +172,7 @@ impl Stream {
 
         // Get the latest event index from the database
         let latest_event = db
-            .query("select max(id) from events", ())
+            .query("select max(idx) from events", ())
             .await?
             .next()
             .await
@@ -408,7 +408,7 @@ impl Stream {
         let events: Vec<(i64, String, Vec<u8>, Vec<u8>)> = state
             .db
             .query(
-                "select id, user, payload, signature from events where id > ?",
+                "select idx, user, payload, signature from events where idx > ?",
                 [state.module_event_cursor],
             )
             .await?
@@ -513,7 +513,7 @@ impl Stream {
                 let idx = module_db
                     .query(
                         r#"insert into events.events
-                        select null as id, user, payload, ? as signature from event returning id"#,
+                        select null as idx, user, payload, ? as signature from event returning idx"#,
                         [signature.clone()],
                     )
                     .await?
@@ -610,7 +610,7 @@ impl Stream {
         let events: Vec<(i64, String, Vec<u8>, Vec<u8>)> = state
             .db
             .query(
-                "select id, user, payload, signature from events where id >= ? and id <= ?",
+                "select idx, user, payload, signature from events where idx >= ? and idx <= ?",
                 [min, max],
             )
             .await?
@@ -740,7 +740,7 @@ impl Stream {
                         .unwrap_or(stream_latest_event);
 
                     let result = this.query(query).await;
-                    let is_empty = result.as_ref().map(|x| x.rows.is_empty()).unwrap_or(false);
+                    let is_empty = result.as_ref().map(|x| x.is_empty()).unwrap_or(false);
 
                     if !is_empty {
                         sub.result_sender.try_send(result).ok();
