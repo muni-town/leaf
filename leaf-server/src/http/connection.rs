@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use base64::Engine;
 use futures::future::{Either, select};
 use leaf_stream::{
     atproto_plc::Did,
@@ -8,7 +9,10 @@ use leaf_stream::{
     types::{IncomingEvent, LeafQuery, ModuleCodec, SqlRows},
 };
 use serde::{Deserialize, Serialize};
-use socketioxide::extract::{AckSender, SocketRef, TryData};
+use socketioxide::{
+    extract::{AckSender, Data, SocketRef, TryData},
+    handler::Value,
+};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 use ulid::Ulid;
@@ -56,9 +60,12 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let span_ = span.clone();
     socket.on(
         "module/exists",
-        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+        async move |Data::<String>(base64_data), ack: AckSender| {
             let result = async {
-                let args: ModuleExistsArgs = dasl::drisl::from_slice(&bytes?[..])?;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&base64_data)
+                    .map_err(|e| anyhow::anyhow!("base64 decode error: {}", e))?;
+                let args: ModuleExistsArgs = dasl::drisl::from_slice(&bytes)?;
                 let cid = args.module_cid;
                 let has_module = STORAGE.has_module_blob(cid).await?;
                 anyhow::Ok(ModuleExistsResp {
@@ -389,6 +396,11 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 .ok();
         },
     );
+}
+
+#[derive(Deserialize)]
+struct BinaryPayload {
+    data: bytes::Bytes,
 }
 
 #[derive(Deserialize)]

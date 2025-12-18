@@ -7,7 +7,7 @@ import {
   CidLink,
   BytesWrapper,
 } from "@atcute/cbor";
-import { Cid, create as createCid } from "@atcute/cid";
+import { Cid, create as createCid, toCidLink } from "@atcute/cid";
 import {
   AssertOk,
   BasicModule,
@@ -157,11 +157,11 @@ export class LeafClient {
 
   static async encodeModule(module: BasicModule): Promise<{
     encoded: Uint8Array;
-    moduleCid: CidLinkWrapper;
+    moduleCid: CidLink;
   }> {
     const encoded = encode(module);
-    const moduleCid = await createDaslCid(encoded);
-    return { encoded, moduleCid: new CidLinkWrapper(moduleCid.bytes) };
+    const cid = await createDaslCid(encoded);
+    return { encoded, moduleCid: toCidLink(cid) };
   }
 
   async uploadModule(module: ModuleCodec): Promise<AssertOk<ModuleUploadResp>> {
@@ -179,12 +179,22 @@ export class LeafClient {
   }
 
   async hasModule(moduleCid: CidLink): Promise<AssertOk<ModuleExistsResp>> {
+    console.log("checking has module", moduleCid);
+    const wrapped = encode({
+      moduleCid,
+    } satisfies ModuleExistsArgs);
+    console.log("wrapped data", wrapped);
+
+    const base64 = btoa(String.fromCharCode(...wrapped));
+
     const data: Uint8Array = await this.socket.emitWithAck(
       "module/exists",
-      toBinary(encode({ moduleCid: moduleCid } satisfies ModuleExistsArgs)),
+      base64,
     );
+    console.log("got encoded response", data);
     const resp: ModuleExistsResp = decode(fromBinary(data));
     if ("Err" in resp) {
+      console.log("resp", resp);
       throw new Error(resp.Err);
     }
     return resp.Ok;
