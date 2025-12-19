@@ -12,6 +12,7 @@ import {
   ModuleExistsResp,
   ModuleUploadArgs,
   ModuleUploadResp,
+  Result,
   SqlRows,
   StreamCreateArgs,
   StreamCreateResp,
@@ -68,7 +69,7 @@ export class LeafClient {
   socket: Socket;
   #querySubscriptions: Map<
     SubscriptionId,
-    (result: StreamQueryResp) => void | Promise<void>
+    (result: Result<SqlRows>) => void | Promise<void>
   > = new Map();
   _listeners: { [K in keyof EventMap]: EventMap[K][] } = {
     connect: [],
@@ -120,7 +121,7 @@ export class LeafClient {
       );
       const sub = this.#querySubscriptions.get(notification.subscriptionId);
       if (sub) {
-        sub(converBytesWrappers(notification.response));
+        sub(convertBytesWrappers(notification.response));
       }
     });
   }
@@ -252,7 +253,7 @@ export class LeafClient {
   async subscribe(
     streamDid: string,
     query: LeafQuery,
-    handler: (resp: StreamQueryResp) => Promise<void> | void,
+    handler: (resp: Result<SqlRows>) => Promise<void> | void,
   ): Promise<() => Promise<void>> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/subscribe",
@@ -305,16 +306,16 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return converBytesWrappers(resp.Ok);
+    return convertBytesWrappers(resp.Ok);
   }
 }
 
-function converBytesWrappers(t: any): any {
+function convertBytesWrappers(t: any): any {
   if (t instanceof BytesWrapper) {
     return t.buf;
   } else if (typeof t == "object") {
     for (const key in t) {
-      t[key] = converBytesWrappers(t[key]);
+      t[key] = convertBytesWrappers(t[key]);
     }
     return t;
   } else {
