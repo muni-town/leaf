@@ -23,7 +23,7 @@ export async function query(args: string[]) {
   // Build query object
   const leafQuery: LeafQuery = {
     name: queryName,
-    params: [],
+    params: {},
     start: startStr ? parseInt(startStr) : undefined,
     limit: limitStr ? parseInt(limitStr) : undefined,
   };
@@ -32,9 +32,11 @@ export async function query(args: string[]) {
   if (paramsStr) {
     try {
       const paramsObj = JSON.parse(paramsStr);
-      leafQuery.params = Object.entries(paramsObj).map(([key, value]) => {
-        return [key, convertToSqlValue(value)];
-      });
+      leafQuery.params = Object.fromEntries(
+        Object.entries(paramsObj).map(([key, value]) => {
+          return [key, convertToSqlValue(value)];
+        }),
+      );
     } catch (e) {
       throw new Error(
         `Invalid params JSON: ${e instanceof Error ? e.message : String(e)}`,

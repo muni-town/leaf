@@ -7,7 +7,12 @@
 
 	import { backend, backendStatus } from '$lib/workers';
 	import { getContext } from 'svelte';
-	import { BytesWrapper, type BasicModule, type LeafQuery } from '@muni-town/leaf-client';
+	import {
+		BytesWrapper,
+		type BasicModule,
+		type LeafQuery,
+		type SqlValue
+	} from '@muni-town/leaf-client';
 	import { page } from '$app/state';
 	import { encode, decode } from '@atcute/cbor';
 
@@ -42,22 +47,29 @@
 		localStorage.setItem('basicModule', JSON.stringify(newStreamModule || defaultModule));
 	});
 
-	const defaultQuery: LeafQuery = {
-		name: '',
-		user: '',
-		params: [],
-		start: undefined,
-		limit: undefined
-	};
-	const storedQuery = localStorage.getItem('query');
-	let subscriptionId = $state('');
-	let query: LeafQuery = $state(
-		JSON.parse(
-			storedQuery && storedQuery !== 'undefined' ? storedQuery : JSON.stringify(defaultQuery)
-		)
+	const storedQuery: LeafQuery | null = JSON.parse(localStorage.getItem('query') || 'null');
+	let queryStart: number | undefined = $state();
+	let queryLimit: number | undefined = $state();
+	let queryName: string = $state(storedQuery?.name || '');
+	let queryParams: { name: string; $type: SqlValue['$type']; value?: any }[] = $state(
+		Object.entries(storedQuery?.params || []).map(([name, value]) => ({
+			name,
+			$type: value.$type,
+			value: 'value' in value ? value.value : undefined
+		}))
 	);
+	let query: LeafQuery = $derived({
+		name: queryName,
+		params: Object.fromEntries(
+			queryParams.map((x) => [x.name, { $type: x.$type, value: x.value }])
+		),
+		start: queryStart,
+		limit: queryLimit
+	});
+
+	let subscriptionId = $state('');
 	$effect(() => {
-		localStorage.setItem('query', JSON.stringify(query || defaultQuery));
+		localStorage.setItem('query', JSON.stringify(query || { name: '', params: {} }));
 	});
 
 	async function createStream() {
@@ -85,8 +97,7 @@
 	async function runQuery() {
 		if (!backendStatus.did) return;
 		const q: typeof query = $state.snapshot(query) as any;
-		q.user = backendStatus.did;
-		for (const [_name, param] of q.params) {
+		for (const [_name, param] of Object.entries(q.params)) {
 			// The forms don't assign the proper data types to non-text params, so we convert them here.
 			if (param.$type == 'muni.town.sqliteValue.blob') {
 				param.value = new BytesWrapper(new TextEncoder().encode(param.value as any));
@@ -94,6 +105,8 @@
 				param.value = parseInt(param.value as any);
 			} else if (param.$type == 'muni.town.sqliteValue.real') {
 				param.value = parseFloat(param.value as any);
+			} else if (param.$type == 'muni.town.sqliteValue.null') {
+				delete (param as any)['value'];
 			}
 		}
 		const result = await backend.query(streamDid.value, q);
@@ -124,8 +137,7 @@
 	async function subscribe() {
 		if (!backendStatus.did) return;
 		const q: typeof query = $state.snapshot(query) as any;
-		q.user = backendStatus.did;
-		for (const [_name, param] of q.params) {
+		for (const [_name, param] of Object.entries(q.params)) {
 			// The forms don't assign the proper data types to non-text params, so we convert them here.
 			if (param.$type == 'muni.town.sqliteValue.blob') {
 				param.value = new BytesWrapper(new TextEncoder().encode(param.value as any));
@@ -133,6 +145,8 @@
 				param.value = parseInt(param.value as any);
 			} else if (param.$type == 'muni.town.sqliteValue.real') {
 				param.value = parseFloat(param.value as any);
+			} else if (param.$type == 'muni.town.sqliteValue.null') {
+				delete (param as any)['value'];
 			}
 		}
 		subscriptionId = await backend.subscribe(streamDid.value, q);
@@ -206,14 +220,14 @@
 					<input
 						class="input input-sm"
 						placeholder="start"
-                        type="number"
-						bind:value={() => query.start, (v) => (query.start = v || undefined)}
+						type="number"
+						bind:value={() => queryStart, (v) => (queryStart = v || undefined)}
 					/>
 					<input
 						class="input input-sm"
 						placeholder="limit"
-                        type="number"
-						bind:value={() => query.limit, (v) => (query.limit = v || undefined)}
+						type="number"
+						bind:value={() => queryLimit, (v) => (queryLimit = v || undefined)}
 					/>
 				</div>
 
@@ -224,31 +238,29 @@
 						class="btn"
 						type="button"
 						onclick={() => {
-							query.params.push([
-								'$param',
-								{
-									$type: 'muni.town.sqliteValue.text',
-									value: ''
-								}
-							]);
+							queryParams.push({
+								name: '$param',
+								$type: 'muni.town.sqliteValue.text',
+								value: ''
+							});
 						}}>+</button
 					>
 				</h3>
 
-				{#each query.params as [_name, value], i}
+				{#each queryParams as param, i}
 					<div class="flex items-center gap-3">
-						<input class="input" bind:value={query.params[i][0]} placeholder="name" />
-						<select class="select" bind:value={query.params[i][1].$type}>
+						<input class="input" bind:value={param.name} placeholder="name" />
+						<select class="select" bind:value={param.$type}>
 							<option value="muni.town.sqliteValue.null">Null</option>
 							<option value="muni.town.sqliteValue.integer">Integer</option>
 							<option value="muni.town.sqliteValue.real">Real</option>
 							<option value="muni.town.sqliteValue.text">Text</option>
 							<option value="muni.town.sqliteValue.blob">Blob</option>
 						</select>
-						<input class="input" bind:value={value.value} />
+						<input class="input" bind:value={param.value} />
 						<button
 							type="button"
-							onclick={() => query.params.splice(i, 1)}
+							onclick={() => queryParams.splice(i, 1)}
 							class="btn btn-sm">X</button
 						>
 					</div>

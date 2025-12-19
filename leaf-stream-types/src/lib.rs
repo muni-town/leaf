@@ -161,7 +161,7 @@ pub struct IncomingEvent<Payload = Vec<u8>> {
 #[derive(Serialize, Deserialize, Debug, Clone /*, Hash, Eq, PartialEq*/)]
 pub struct LeafQuery {
     pub name: String,
-    pub params: Vec<(String, SqlValue)>,
+    pub params: HashMap<String, SqlValue>,
     pub start: Option<i64>,
     pub limit: Option<i64>,
 }
