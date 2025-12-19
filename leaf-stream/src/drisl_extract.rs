@@ -72,7 +72,7 @@ peg::parser! {
 
         rule discriminant() -> Ex = "?discriminant" { Ex::ExtractDiscriminant }
         rule array() -> Ex  = n:$(['0'..='9']+) {? Ok(Ex::ArrayAccess(n.parse().or(Err("u32"))?)) }
-        rule field() -> Ex = name:$(['a'..='z' | 'A'..='Z']['0'..='9' | 'a'..='z' | 'A'..='Z']*) { Ex::FieldAccess(name.into()) }
+        rule field() -> Ex = name:$(['$' | 'a'..='z' | 'A'..='Z']['0'..='9' | 'a'..='z' | 'A'..='Z']*) { Ex::FieldAccess(name.into()) }
     }
 }
 

@@ -16,9 +16,6 @@
 	const events = getContext<string[]>('events');
 	const streamDid = getContext<{ value: string }>('streamId');
 
-	let offset = $state(1);
-	let limit = $state(100);
-
 	let moduleId = $state(localStorage.getItem('module') || '');
 	$effect(() => {
 		localStorage.setItem('module', moduleId);
