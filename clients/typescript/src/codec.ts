@@ -48,11 +48,10 @@ export type LeafQuery = {
   limit?: number;
 };
 
-export type SqlRow<V extends SqlValue | SqlValueRaw = SqlValue> = V[];
-export type SqlRows<V extends SqlValue | SqlValueRaw = SqlValue> = {
-  rows: SqlRow<V>[];
-  column_names: string[];
+export type SqlRow<V extends SqlValue | SqlValueRaw = SqlValue> = {
+  [column_name: string]: V;
 };
+export type SqlRows<V extends SqlValue | SqlValueRaw = SqlValue> = SqlRow<V>[];
 
 export type EventPayload = BytesWrapper;
 

@@ -47,24 +47,11 @@ export async function query(args: string[]) {
   const client = await createClient(options);
 
   try {
-    const result = await client.query(streamDid, leafQuery);
-
-    // Convert SqlRows to a more readable format
-    const rows = result.rows.map((row) => {
-      const obj: Record<string, any> = {};
-      result.column_names.forEach((name, index) => {
-        const value = row[index];
-        if (value) {
-          obj[name] = convertFromSqlValue(value);
-        }
-      });
-      return obj;
-    });
+    const rows = await client.query(streamDid, leafQuery);
 
     outputJson({
       success: true,
       rows,
-      column_names: result.column_names,
       count: rows.length,
     });
   } catch (error) {
