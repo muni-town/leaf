@@ -93,6 +93,7 @@ pub trait LeafModule: Sync + Send {
     fn query(
         &'_ self,
         module_db: &libsql::Connection,
+        user: Option<String>,
         query: LeafQuery,
     ) -> BoxFuture<'_, anyhow::Result<SqlRows>>;
 }

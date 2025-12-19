@@ -119,6 +119,7 @@ impl LeafModule for BasicModule {
     fn query(
         &'_ self,
         module_db: &libsql::Connection,
+        user: Option<String>,
         query: LeafQuery,
     ) -> BoxFuture<'_, anyhow::Result<SqlRows>> {
         let def = self.def.clone();
@@ -166,7 +167,7 @@ impl LeafModule for BasicModule {
                                 ),
                                 (
                                     "$requesting_user".to_string(),
-                                    match query.user.clone() {
+                                    match user.clone() {
                                         Some(t) => libsql::Value::Text(t),
                                         None => libsql::Value::Null,
                                     },

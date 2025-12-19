@@ -58,6 +58,7 @@ enum WorkerMessage {
 #[derive(Debug, Clone)]
 struct ActiveSubscription {
     pub sub_id: Ulid,
+    pub user: Option<String>,
     pub subscription_query: LeafQuery,
     pub latest_event: i64,
     pub result_sender: SubscriptionResultSender,
@@ -273,7 +274,11 @@ impl Stream {
     }
 
     /// Subscribe to the result of a leaf query.
-    pub async fn subscribe(&self, subscription_query: LeafQuery) -> SubscriptionResultReceiver {
+    pub async fn subscribe(
+        &self,
+        user: Option<String>,
+        subscription_query: LeafQuery,
+    ) -> SubscriptionResultReceiver {
         let state = self.state.read().await;
         let mut subscriptions = state.query_subscriptions.lock().await;
 
@@ -286,6 +291,7 @@ impl Stream {
         let sub_id = Ulid::new();
         subscriptions.push(ActiveSubscription {
             sub_id,
+            user,
             latest_event: subscription_query.start.map(|s| s - 1).unwrap_or(0),
             subscription_query,
             result_sender: sender,
@@ -653,7 +659,11 @@ impl Stream {
 
     /// Query from the stream.
     #[instrument(skip(self), err)]
-    pub async fn query(&self, query: LeafQuery) -> Result<SqlRows, StreamError> {
+    pub async fn query(
+        &self,
+        user: Option<String>,
+        query: LeafQuery,
+    ) -> Result<SqlRows, StreamError> {
         let state = self.state.read().await;
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
 
@@ -661,7 +671,7 @@ impl Stream {
         module_db.execute("begin deferred", ()).await?;
 
         module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
-        let result = module.query(module_db, query).await;
+        let result = module.query(module_db, user, query).await;
         module_db.authorizer(None)?;
         let result = match result {
             Ok(result) => result,
@@ -739,7 +749,7 @@ impl Stream {
                         .map(|x| x.min(stream_latest_event))
                         .unwrap_or(stream_latest_event);
 
-                    let result = this.query(query).await;
+                    let result = this.query(sub.user.clone(), query).await;
                     let is_empty = result.as_ref().map(|x| x.is_empty()).unwrap_or(false);
 
                     if !is_empty {

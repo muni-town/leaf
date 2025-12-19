@@ -261,14 +261,6 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 let subscription_id = Ulid::new();
 
-                // TODO: maybe we just shouldn't have the client send the requesting user since we
-                // already have it.
-                if query.user != did_ {
-                    anyhow::bail!(
-                        "Some events in batch are not authored by the authenticated user."
-                    );
-                }
-
                 let open_streams = open_streams_.upgradable_read().await;
                 let stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
@@ -279,7 +271,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let receiver = stream.subscribe(query).await;
+                let receiver = stream.subscribe(did_.clone(), query).await;
 
                 tokio::spawn(async move {
                     let (unsubscribe_tx, unsubscribe_rx) = oneshot::channel();
@@ -364,12 +356,6 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
             let result = async {
                 let StreamQueryArgs { stream_did, query } = dasl::drisl::from_slice(&bytes?[..])?;
 
-                // TODO: maybe we just shouldn't have the client send the requesting user since we
-                // already have it.
-                if query.user != did_ {
-                    anyhow::bail!("Requesting user does not match authenticated user");
-                }
-
                 let open_streams = open_streams_.upgradable_read().await;
                 let stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
@@ -380,7 +366,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let response = stream.query(query).await?;
+                let response = stream.query(did_.clone(), query).await?;
 
                 anyhow::Ok(response)
             }

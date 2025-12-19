@@ -43,7 +43,6 @@ export type SqlValue =
 
 export type LeafQuery = {
   name: string;
-  user?: string;
   params: [string, SqlValueRaw][];
   start?: number;
   limit?: number;

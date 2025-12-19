@@ -23,7 +23,6 @@ export async function query(args: string[]) {
   // Build query object
   const leafQuery: LeafQuery = {
     name: queryName,
-    user: "did:web:localhost",
     params: [],
     start: startStr ? parseInt(startStr) : undefined,
     limit: limitStr ? parseInt(limitStr) : undefined,

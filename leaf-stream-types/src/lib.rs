@@ -161,7 +161,6 @@ pub struct IncomingEvent<Payload = Vec<u8>> {
 #[derive(Serialize, Deserialize, Debug, Clone /*, Hash, Eq, PartialEq*/)]
 pub struct LeafQuery {
     pub name: String,
-    pub user: Option<String>,
     pub params: Vec<(String, SqlValue)>,
     pub start: Option<i64>,
     pub limit: Option<i64>,
@@ -177,7 +176,6 @@ impl LeafQuery {
     pub fn update_for_subscription(&self, latest_event: i64) -> LeafQuery {
         LeafQuery {
             name: self.name.clone(),
-            user: self.user.clone(),
             params: self.params.clone(),
             start: Some(
                 self.start
