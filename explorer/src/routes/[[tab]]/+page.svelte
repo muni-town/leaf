@@ -206,11 +206,13 @@
 					<input
 						class="input input-sm"
 						placeholder="start"
+                        type="number"
 						bind:value={() => query.start, (v) => (query.start = v || undefined)}
 					/>
 					<input
 						class="input input-sm"
 						placeholder="limit"
+                        type="number"
 						bind:value={() => query.limit, (v) => (query.limit = v || undefined)}
 					/>
 				</div>
