@@ -230,7 +230,7 @@ export class LeafClient {
   }
 
   async sendEvent(streamDid: string, event: Uint8Array): Promise<void> {
-    this.sendEvents(streamDid as Did, [event]);
+    await this.sendEvents(streamDid as Did, [event]);
   }
 
   async sendEvents(streamDid: string, events: Uint8Array[]): Promise<void> {
