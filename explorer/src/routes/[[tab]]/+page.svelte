@@ -69,19 +69,16 @@
 
 	let subscriptionId = $state('');
 	$effect(() => {
-		localStorage.setItem('query', JSON.stringify(query || { name: '', params: {} }));
+		localStorage.setItem('query', JSON.stringify($state.snapshot(query)));
 	});
 
 	async function createStream() {
 		if (!backendStatus.did) return;
-		console.log('module', $state.snapshot(newStreamModule));
 		const resp = await backend.uploadModule({
 			...$state.snapshot(newStreamModule),
 			$type: 'muni.town.leaf.module.basic.v0'
 		});
-		console.log('moduleCid', resp.moduleCid);
 		streamDid.value = (await backend.createStream(resp.moduleCid)).streamDid;
-		console.log('streamDid', streamDid.value);
 	}
 	async function updateModule() {
 		if (!backendStatus.did) return;
@@ -110,28 +107,39 @@
 			}
 		}
 		const result = await backend.query(streamDid.value, q);
-		events.push(
-			JSON.stringify(
-				result,
-				(_key, value) => {
-					if (typeof value === 'bigint') {
-						return value.toString();
-					} else if (typeof value == 'object') {
-						if (value.$type == 'muni.town.sqliteValue.blob') {
-							try {
-								return decode(value.value);
-							} catch (_e) {
-								return `Uint8Array(${value.value.length})`;
-							}
-						} else if (value.$type) {
-							return value.value;
+		const updateToJson = (v: any) => {
+			if (Array.isArray(v)) {
+				for (const r of v) {
+					updateToJson(r);
+				}
+				return;
+			}
+			if (typeof v == 'object') {
+				if ('toJSON' in v) {
+					return v;
+				} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.integer') {
+					v.toJSON = () => v.value;
+				} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.text') {
+					v.toJSON = () => v.value;
+				} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.blob') {
+					v.toJSON = () => {
+						try {
+							const d = decode(v.value);
+							return { $drisl: d };
+						} catch (_e) {
+							return new BytesWrapper(v.value).toJSON();
 						}
+					};
+				} else {
+					for (const key in v) {
+						updateToJson(v[key]);
 					}
-					return value;
-				},
-				'  '
-			)
-		);
+					return;
+				}
+			}
+		};
+		updateToJson(result);
+		events.push(JSON.stringify(result, null, '  '));
 	}
 
 	async function subscribe() {
@@ -215,7 +223,7 @@
 				<h2 class="mb-4 text-xl font-bold">Query</h2>
 
 				Name
-				<input class="input" placeholder="query name" bind:value={query.name} />
+				<input class="input" placeholder="query name" bind:value={queryName} />
 				<div class="flex gap-2">
 					<input
 						class="input input-sm"
