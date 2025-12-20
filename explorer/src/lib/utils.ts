@@ -12,6 +12,11 @@ export function stringifyEvent(event: SqlRows): string {
 		if (typeof v == 'object') {
 			if (!v) {
 				return v;
+			} else if (v instanceof BytesWrapper) {
+				v.toJSON = () => ({
+					$bytes: v.$bytes,
+					$bytesAsString: new TextDecoder().decode(v.buf)
+				});
 			} else if ('toJSON' in v) {
 				return v;
 			} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.integer') {
@@ -22,9 +27,13 @@ export function stringifyEvent(event: SqlRows): string {
 				v.toJSON = () => {
 					try {
 						const d = decode(v.value);
+						updateToJson(d);
 						return { $drisl: d };
 					} catch (_e) {
-						return new BytesWrapper(v.value).toJSON();
+						return {
+							$bytes: new BytesWrapper(v.value).$bytes,
+							$bytesAsString: new TextDecoder().decode(v.value)
+						};
 					}
 				};
 			} else {
