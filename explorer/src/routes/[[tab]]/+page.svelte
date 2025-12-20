@@ -15,6 +15,7 @@
 	} from '@muni-town/leaf-client';
 	import { page } from '$app/state';
 	import { encode, decode } from '@atcute/cbor';
+	import { stringifyEvent } from '$lib/utils';
 
 	let loading = $state(false);
 
@@ -106,40 +107,9 @@
 				delete (param as any)['value'];
 			}
 		}
+
 		const result = await backend.query(streamDid.value, q);
-		const updateToJson = (v: any) => {
-			if (Array.isArray(v)) {
-				for (const r of v) {
-					updateToJson(r);
-				}
-				return;
-			}
-			if (typeof v == 'object') {
-				if ('toJSON' in v) {
-					return v;
-				} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.integer') {
-					v.toJSON = () => v.value;
-				} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.text') {
-					v.toJSON = () => v.value;
-				} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.blob') {
-					v.toJSON = () => {
-						try {
-							const d = decode(v.value);
-							return { $drisl: d };
-						} catch (_e) {
-							return new BytesWrapper(v.value).toJSON();
-						}
-					};
-				} else {
-					for (const key in v) {
-						updateToJson(v[key]);
-					}
-					return;
-				}
-			}
-		};
-		updateToJson(result);
-		events.push(JSON.stringify(result, null, '  '));
+		events.push(stringifyEvent(result));
 	}
 
 	async function subscribe() {
