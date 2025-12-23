@@ -29,6 +29,7 @@ import {
   StreamUnsubscribeResp,
   StreamUpdateModuleArgs,
   StreamUpdateModuleResp,
+  SubscribeEventsResp,
   SubscriptionId,
 } from "./codec.js";
 
@@ -69,7 +70,7 @@ export class LeafClient {
   socket: Socket;
   #querySubscriptions: Map<
     SubscriptionId,
-    (result: Result<SqlRows>) => void | Promise<void>
+    (result: Result<SubscribeEventsResp>) => void | Promise<void>
   > = new Map();
   _listeners: { [K in keyof EventMap]: EventMap[K][] } = {
     connect: [],
@@ -195,7 +196,7 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async streamInfo(streamDid: string): Promise<{ moduleCid: string }> {
+  async streamInfo(streamDid: string): Promise<{ moduleCid?: string }> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/info",
       toBinary(
@@ -206,7 +207,7 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return { moduleCid: resp.Ok.moduleCid.$link };
+    return { moduleCid: resp.Ok.moduleCid?.$link };
   }
 
   async updateModule(
@@ -250,13 +251,13 @@ export class LeafClient {
   }
 
   /** Returns a function that can be called to unsubscribe the query. */
-  async subscribe(
+  async subscribeEvents(
     streamDid: string,
     query: LeafQuery,
-    handler: (resp: Result<SqlRows>) => Promise<void> | void,
+    handler: (resp: Result<SubscribeEventsResp>) => Promise<void> | void,
   ): Promise<() => Promise<void>> {
     const data: Uint8Array = await this.socket.emitWithAck(
-      "stream/subscribe",
+      "stream/subscribe_events",
       toBinary(
         encode({
           streamDid: streamDid as Did,
@@ -265,7 +266,6 @@ export class LeafClient {
       ),
     );
     const resp: StreamSubscribeResp = decode(fromBinary(data));
-    console.log(resp);
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }

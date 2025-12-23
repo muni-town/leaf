@@ -163,12 +163,16 @@ pub struct LeafQuery {
     pub name: String,
     pub params: HashMap<String, SqlValue>,
     pub start: Option<i64>,
-    pub limit: Option<i64>,
+    #[serde(default = "limit_default")]
+    pub limit: i64,
+}
+fn limit_default() -> i64 {
+    1000
 }
 
 impl LeafQuery {
-    pub fn last_event(&self) -> Option<i64> {
-        self.limit.map(|l| l + self.start.unwrap_or(1) - 1)
+    pub fn last_event(&self) -> i64 {
+        self.limit + self.start.unwrap_or(1) - 1
     }
 
     /// Convert to a [`LeafQuery`] so that you can run it to get a single result instead of a
@@ -188,6 +192,14 @@ impl LeafQuery {
 }
 
 pub type LeafQueryReponse = SqlRows;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LeafSubscribeEventsResponse {
+    /// The rows returned by the subscritption
+    pub rows: SqlRows,
+    /// Indicates whether or not there will be another result immediately after this, for example, when backfilling.
+    pub has_more: bool,
+}
 
 /// A result from a leaf query.
 pub type SqlRows = Vec<SqlRow>;

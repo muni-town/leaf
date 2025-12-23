@@ -8,7 +8,7 @@ use async_lock::{Mutex, RwLock};
 use atproto_plc::{Did, SigningKey};
 use dasl::cid::{Cid, Codec::Drisl as DrislCodec};
 use leaf_stream_types::{
-    Event, IncomingEvent, LeafQuery, LeafQueryReponse, QueryValidationError, SqlRows,
+    Event, IncomingEvent, LeafQuery, LeafSubscribeEventsResponse, QueryValidationError, SqlRows,
 };
 use leaf_utils::convert::*;
 use libsql::{AuthAction, Authorization, Connection};
@@ -16,8 +16,9 @@ use tracing::instrument;
 use ulid::Ulid;
 
 pub type SubscriptionResultReceiver =
-    async_channel::Receiver<Result<LeafQueryReponse, StreamError>>;
-pub type SubscriptionResultSender = async_channel::Sender<Result<LeafQueryReponse, StreamError>>;
+    async_channel::Receiver<Result<LeafSubscribeEventsResponse, StreamError>>;
+pub type SubscriptionResultSender =
+    async_channel::Sender<Result<LeafSubscribeEventsResponse, StreamError>>;
 
 pub use module::*;
 mod module;
@@ -273,8 +274,8 @@ impl Stream {
         receiver
     }
 
-    /// Subscribe to the result of a leaf query.
-    pub async fn subscribe(
+    /// Subscribe to events returned by a query.
+    pub async fn subscribe_events(
         &self,
         user: Option<String>,
         subscription_query: LeafQuery,
@@ -292,7 +293,10 @@ impl Stream {
         subscriptions.push(ActiveSubscription {
             sub_id,
             user,
-            latest_event: subscription_query.start.map(|s| s - 1).unwrap_or(0),
+            latest_event: subscription_query
+                .start
+                .map(|s| s - 1)
+                .unwrap_or(state.latest_event),
             subscription_query,
             result_sender: sender,
         });
@@ -721,7 +725,7 @@ impl Stream {
                 let mut query_subscriptions = query_subscriptions.lock().await;
                 let mut latest_event_subscriptions = latest_event_subscriptions.lock().await;
 
-                // Clean up any close subscriptions
+                // Clean up any closed subscriptions
                 query_subscriptions.retain(|x| !x.result_sender.is_closed());
                 latest_event_subscriptions.retain(|x| !x.is_closed());
 
@@ -744,19 +748,22 @@ impl Stream {
                     let query = sub
                         .subscription_query
                         .update_for_subscription(sub.latest_event + 1);
-                    let query_last_event = query
-                        .last_event()
-                        .map(|x| x.min(stream_latest_event))
-                        .unwrap_or(stream_latest_event);
+                    let query_last_event = query.last_event().min(stream_latest_event);
 
-                    let result = this.query(sub.user.clone(), query).await;
-                    let is_empty = result.as_ref().map(|x| x.is_empty()).unwrap_or(false);
+                    let query_limit = query.limit;
+                    let result = this.query(sub.user.clone(), query).await.map(|rows| {
+                        LeafSubscribeEventsResponse {
+                            has_more: rows.len() as i64 >= query_limit
+                                && query_last_event < stream_latest_event,
+                            rows,
+                        }
+                    });
 
-                    if !is_empty {
-                        sub.result_sender.try_send(result).ok();
-                    }
+                    let has_more = result.as_ref().map(|x| x.has_more).unwrap_or(false);
 
-                    if query_last_event < stream_latest_event {
+                    sub.result_sender.try_send(result).ok();
+
+                    if has_more {
                         sender.try_send(WorkerMessage::NeedsUpdate(sub.sub_id)).ok();
                     }
                     sub.latest_event = query_last_event;

@@ -5,7 +5,7 @@ use futures::future::{Either, select};
 use leaf_stream::{
     atproto_plc::Did,
     dasl::{self, cid::Cid, drisl::serde_bytes},
-    types::{IncomingEvent, LeafQuery, ModuleCodec, SqlRows},
+    types::{IncomingEvent, LeafQuery, LeafSubscribeEventsResponse, ModuleCodec},
 };
 use serde::{Deserialize, Serialize};
 use socketioxide::extract::{AckSender, SocketRef, TryData};
@@ -253,7 +253,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let socket_ = socket.clone();
     let unsubscribers_ = unsubscribers.clone();
     socket.on(
-        "stream/subscribe",
+        "stream/subscribe_events",
         async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
                 let StreamSubscribeArgs { stream_did, query } =
@@ -271,7 +271,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let receiver = stream.subscribe(did_.clone(), query).await;
+                let receiver = stream.subscribe_events(did_.clone(), query).await;
 
                 tokio::spawn(async move {
                     let (unsubscribe_tx, unsubscribe_rx) = oneshot::channel();
@@ -468,7 +468,7 @@ struct StreamSubscribeResp {
 #[serde(rename_all = "camelCase")]
 struct StreamSubscribeNotification {
     subscription_id: Ulid,
-    response: Result<SqlRows, String>,
+    response: Result<LeafSubscribeEventsResponse, String>,
 }
 
 #[derive(Deserialize)]

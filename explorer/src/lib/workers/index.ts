@@ -28,10 +28,10 @@ export type BackendInterface = {
 	getProfile(did?: string): Promise<ProfileViewDetailed | undefined>;
 	query(streamDid: string, query: LeafQuery): Promise<SqlRows>;
 	hasModule(moduleCid: string): Promise<boolean>;
-	streamInfo(streamDid: string): Promise<{ moduleCid: string }>;
+	streamInfo(streamDid: string): Promise<{ moduleCid?: string }>;
 	createStream(moduleCid: string): Promise<{ streamDid: string }>;
 	updateModule(streamDid: string, moduleCid: string): Promise<void>;
-	subscribe(streamDid: string, query: LeafQuery): Promise<string>;
+	subscribeEvents(streamDid: string, query: LeafQuery): Promise<string>;
 	unsubscribe(subId: string): Promise<void>;
 	uploadModule(module: BasicModule): Promise<{ moduleCid: string }>;
 	sendEvents(streamDid: string, events: Uint8Array[]): Promise<void>;

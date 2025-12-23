@@ -53,6 +53,11 @@ export type SqlRow<V extends SqlValue | SqlValueRaw = SqlValue> = {
 };
 export type SqlRows<V extends SqlValue | SqlValueRaw = SqlValue> = SqlRow<V>[];
 
+export type SubscribeEventsResp<V extends SqlValue | SqlValueRaw = SqlValue> = {
+  rows: SqlRows<V>;
+  has_more: boolean;
+};
+
 export type EventPayload = BytesWrapper;
 
 export type Result<T extends void | Record<string, any>, E = string> =
@@ -81,7 +86,7 @@ export type StreamInfoArgs = {
   streamDid: Did;
 };
 export type StreamInfoResp = Result<{
-  moduleCid: CidLinkWrapper;
+  moduleCid?: CidLinkWrapper;
 }>;
 
 export type StreamUpdateModuleArgs = {
@@ -102,7 +107,7 @@ export type StreamSubscribeArgs = {
 };
 export type StreamSubscribeNotification = {
   subscriptionId: SubscriptionId;
-  response: Result<SqlRows>;
+  response: Result<SubscribeEventsResp>;
 };
 export type StreamSubscribeResp = Result<{ subscriptionId: SubscriptionId }>;
 

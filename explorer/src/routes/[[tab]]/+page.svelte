@@ -127,7 +127,7 @@
 				delete (param as any)['value'];
 			}
 		}
-		subscriptionId = await backend.subscribe(streamDid.value, q);
+		subscriptionId = await backend.subscribeEvents(streamDid.value, q);
 	}
 
 	async function unsubscribe() {

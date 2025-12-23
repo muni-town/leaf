@@ -29,7 +29,8 @@ const isSharedWorker = 'SharedWorkerGlobalScope' in globalThis;
 const status = reactiveWorkerState<BackendStatus>(new BroadcastChannel('backend-status'), true);
 (globalThis as any).status = status;
 
-const atprotoOauthScope = 'atproto rpc:app.bsky.actor.getProfile?aud=did:web:api.bsky.app%23bsky_appview rpc:town.muni.leaf.authenticate?aud=*';
+const atprotoOauthScope =
+	'atproto rpc:app.bsky.actor.getProfile?aud=did:web:api.bsky.app%23bsky_appview rpc:town.muni.leaf.authenticate?aud=*';
 
 interface KeyValue {
 	key: string;
@@ -243,10 +244,10 @@ function connectMessagePort(port: MessagePortApi) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
 			await state.leafClient.updateModule(streamDid, moduleCid);
 		},
-		async subscribe(streamDid, query) {
+		async subscribeEvents(streamDid, query) {
 			if (!state.leafClient) throw 'No leaf client';
 			const subId = ulid();
-			const unsub = await state.leafClient.subscribe(streamDid, query, (resp) => {
+			const unsub = await state.leafClient.subscribeEvents(streamDid, query, (resp) => {
 				subscriptionBroadcast.postMessage({ subId, resp });
 			});
 			unsubscribers.set(subId, unsub);
@@ -271,7 +272,7 @@ function connectMessagePort(port: MessagePortApi) {
 function createLeafClient(agent: Agent, url: string) {
 	return new LeafClient(url, async () => {
 		const resp = await agent.com.atproto.server.getServiceAuth({
-      lxm: 'town.muni.leaf.authenticate',
+			lxm: 'town.muni.leaf.authenticate',
 			aud: `did:web:${new URL(url).hostname}`
 		});
 		if (!resp) throw 'Error authenticating for leaf server';

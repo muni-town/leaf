@@ -161,10 +161,7 @@ impl LeafModule for BasicModule {
                                     "$start".to_string(),
                                     libsql::Value::Integer(query.start.unwrap_or(1)),
                                 ),
-                                (
-                                    "$limit".to_string(),
-                                    libsql::Value::Integer(query.limit.unwrap_or(100)),
-                                ),
+                                ("$limit".to_string(), libsql::Value::Integer(query.limit)),
                                 (
                                     "$requesting_user".to_string(),
                                     match user.clone() {
