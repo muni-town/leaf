@@ -1,6 +1,6 @@
 {
   "name": "@muni-town/leaf-client",
-  "version": "0.1.0-alpha.14",
+  "version": "0.1.0-alpha.15",
   "license": "MPL-2.0",
   "type": "module",
   "packageManager": "pnpm@10.26.0",
