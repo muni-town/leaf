@@ -506,6 +506,12 @@ impl Stream {
         module_db.execute("begin immediate", ()).await?;
 
         let result = async {
+            // TODO: we should probably have a separate mechanism for storing the batch signature
+            // once, and we should also include the event indexes in the signature.
+
+            // Sign the whole event batch. It is much slower to sign each event individually.
+            let signature = signing_key.sign(&dasl::drisl::to_vec(&events).unwrap())?;
+
             for event in events {
                 // Execute the authorizer
                 tracing::debug!("Running authorizer");
@@ -517,7 +523,6 @@ impl Stream {
 
                 tracing::debug!("Authorized");
 
-                let signature = signing_key.sign(&event.payload)?;
 
                 // Insert the event into the events table
                 let idx = module_db
@@ -543,7 +548,7 @@ impl Stream {
                             idx,
                             user: event.user,
                             payload: event.payload,
-                            signature,
+                            signature: signature.clone(),
                         },
                     )
                     .await;
