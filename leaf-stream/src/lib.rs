@@ -562,10 +562,10 @@ impl Stream {
                     .execute(
                         r#"
                             update events.stream_state
-                            set module_event_cursor = module_event_cursor + 1
+                            set module_event_cursor = ?
                             where id = 1
                         "#,
-                        (),
+                        [idx],
                     )
                     .await?;
             }
