@@ -842,7 +842,7 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
         // TODO: this is kind of specific to the module which isn't ideal. We may need to move the
         // authorization responsibility to the module.
         (libsql::AuthAction::Function { function_name }, _db) => match function_name {
-            "unauthorized" | "throw" | "coalesce" | "->>" | "->" | "drisl_extract" => {
+            "unauthorized" | "throw" | "coalesce" | "->>" | "->" | "drisl_extract" | "drisl_exists" => {
                 libsql::Authorization::Allow
             }
             _ => libsql::Authorization::Deny,

@@ -8,10 +8,10 @@ pub enum DrislExtractExprSegment {
 pub fn extract_sql_value_from_drisl(
     value: Value,
     expr: &str,
-) -> Result<libsql::Value, anyhow::Error> {
+) -> Result<Option<libsql::Value>, anyhow::Error> {
     let expr = parse_drisl_extract_expr(expr)?;
     let value = extract_from_drisl_with_expr(value, &expr);
-    Ok(drisl_to_sql(value))
+    Ok(value.map(drisl_to_sql))
 }
 
 pub fn drisl_to_sql(value: Value) -> libsql::Value {
@@ -29,32 +29,35 @@ pub fn drisl_to_sql(value: Value) -> libsql::Value {
     }
 }
 
-pub fn extract_from_drisl_with_expr(value: Value, expr: &[DrislExtractExprSegment]) -> Value {
-    let (next, rest) = match expr {
-        [first, rest @ ..] => (first, rest),
-        _ => return value,
+pub fn extract_from_drisl_with_expr(
+    value: Value,
+    expr: &[DrislExtractExprSegment],
+) -> Option<Value> {
+    let (extractor, remaining_extractors) = match expr {
+        [next, rest @ ..] => (next, rest),
+        _ => return Some(value),
     };
 
     use DrislExtractExprSegment::*;
     use dasl::drisl::Value::*;
-    let value = match (next, value) {
-        (FieldAccess(f), Map(map)) => map.get(f).cloned().unwrap_or(Null),
-        (ArrayAccess(idx), Array(list)) => list.get(*idx).cloned().unwrap_or(Null),
+    let value = match (extractor, value) {
+        (FieldAccess(f), Map(map)) => map.get(f).cloned(),
+        (ArrayAccess(idx), Array(list)) => list.get(*idx).cloned(),
         (ExtractDiscriminant, Map(map)) => {
             if map.len() != 1 {
-                Null
+                None
             } else {
-                Text(map.keys().next().unwrap().clone())
+                Some(Text(map.keys().next().unwrap().clone()))
             }
         }
-        (ExtractDiscriminant, discriminant @ Text(_)) => discriminant,
-        _ => Null,
-    };
+        (ExtractDiscriminant, discriminant @ Text(_)) => Some(discriminant),
+        _ => None,
+    }?;
 
-    if !rest.is_empty() {
-        extract_from_drisl_with_expr(value, rest)
+    if !remaining_extractors.is_empty() {
+        extract_from_drisl_with_expr(value, remaining_extractors)
     } else {
-        value
+        Some(value)
     }
 }
 
@@ -147,55 +150,59 @@ mod test {
 
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".name").unwrap(),
-            V::Text("John".into())
+            Some(V::Text("John".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".age").unwrap(),
-            V::Integer(32)
+            Some(V::Integer(32))
         );
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".result.Ok").unwrap(),
-            V::Integer(7)
+            Some(V::Integer(7))
+        );
+        assert_eq!(
+            extract_sql_value_from_drisl(b.clone(), ".result.Ok").unwrap(),
+            Some(V::Null)
         );
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".result.Err").unwrap(),
-            V::Null
+            None,
         );
         assert_eq!(
             extract_sql_value_from_drisl(b.clone(), ".result.Err").unwrap(),
-            V::Null
+            None,
         );
         assert_eq!(
             extract_sql_value_from_drisl(c.clone(), ".result.Err").unwrap(),
-            V::Text("error".into())
+            Some(V::Text("error".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(d.clone(), ".e").unwrap(),
-            V::Text("Hello".into())
+            Some(V::Text("Hello".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(d.clone(), ".e.?discriminant").unwrap(),
-            V::Text("Hello".into())
+            Some(V::Text("Hello".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(e.clone(), ".e.?discriminant").unwrap(),
-            V::Text("N".into())
+            Some(V::Text("N".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(e.clone(), ".e.N").unwrap(),
-            V::Integer(77)
+            Some(V::Integer(77))
         );
         assert_eq!(
             extract_sql_value_from_drisl(f.clone(), ".e.World").unwrap(),
-            V::Text("mary".into())
+            Some(V::Text("mary".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(f.clone(), ".e.N").unwrap(),
-            V::Null
+            None,
         );
         assert_eq!(
             extract_sql_value_from_drisl(f.clone(), ".items.1").unwrap(),
-            V::Integer(8)
+            Some(V::Integer(8))
         );
     }
 }

@@ -281,7 +281,26 @@ fn install_udfs(db: &libsql::Connection) -> libsql::Result<()> {
                 anyhow::bail!("Second argument to drisl_extract must be sring");
             };
             let value = dasl::drisl::from_slice(blob)?;
+            extract_sql_value_from_drisl(value, path).map(|v| v.unwrap_or(Value::Null))
+        }),
+    })?;
+
+    db.create_scalar_function(ScalarFunctionDef {
+        name: "drisl_exists".to_string(),
+        num_args: 2,
+        deterministic: true,
+        innocuous: true,
+        direct_only: false,
+        callback: Arc::new(|values| {
+            let Value::Blob(blob) = values.first().unwrap() else {
+                anyhow::bail!("First argument to drisl_exists must be blob");
+            };
+            let Value::Text(path) = values.get(1).unwrap() else {
+                anyhow::bail!("Second argument to drisl_exists must be sring");
+            };
+            let value = dasl::drisl::from_slice(blob)?;
             extract_sql_value_from_drisl(value, path)
+                .map(|v| Value::Integer(if v.is_some() { 1 } else { 0 }))
         }),
     })?;
 
