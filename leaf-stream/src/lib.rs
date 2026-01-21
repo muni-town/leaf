@@ -70,18 +70,29 @@ enum ModuleState {
     /// has a module configured for it that has not been loaded yet. If it is [`None`] then it means
     /// that there is no module selected for this stream yet.
     Unloaded(Option<Cid>),
-    // A module has been loaded.
+    /// A module has been loaded.
     Loaded {
         module: Arc<dyn LeafModule>,
         module_db: libsql::Connection,
+    },
+    /// A module has been loaded, but could not be caught up so that it's ready for handling events.
+    Errored {
+        module: Arc<dyn LeafModule>,
+        error: String,
     },
 }
 impl ModuleState {
     fn id(&self) -> Option<Cid> {
         match self {
-            ModuleState::Unloaded(id) => *id,
+            ModuleState::Unloaded(cid) => *cid,
             ModuleState::Loaded { module, .. } => Some(module.id()),
+            ModuleState::Errored { module, .. } => Some(module.id()),
         }
+    }
+    fn take(&mut self) -> Self {
+        let mut value = ModuleState::Unloaded(self.id());
+        std::mem::swap(self, &mut value);
+        value
     }
 }
 
@@ -90,6 +101,7 @@ impl std::fmt::Debug for ModuleState {
         match self {
             Self::Unloaded(arg0) => f.debug_tuple("Unloaded").field(arg0).finish(),
             Self::Loaded { .. } => f.debug_tuple("Loaded").field(&"dyn LeafModule").finish(),
+            Self::Errored { error, .. } => f.debug_tuple("Errored").field(error).finish(),
         }
     }
 }
@@ -334,44 +346,45 @@ impl Stream {
         module_db: libsql::Connection,
     ) -> Result<(), StreamError> {
         let mut state = self.state.write().await;
-        match &state.module_state {
-            ModuleState::Unloaded(needed_id) => {
-                if needed_id.map(|id| id == module.id()).unwrap_or(true) {
-                    // Make sure an `events` database is connected, which must be connected to the
-                    // same database with the same virtual filesystem.
-                    let files: Vec<String> = module_db
-                        .query(
-                            "select file from pragma_database_list where name = 'events'",
-                            (),
-                        )
-                        .await?
-                        .parse_rows()
-                        .await?;
-                    let Some(db_filename) = files.first() else {
-                        return Err(StreamError::ModuleDbMissingEventsAttachment);
-                    };
-                    if db_filename != &state.db_filename {
-                        return Err(StreamError::ModuleDbEventsAttachmentHasWrongFilename);
-                    }
-
-                    // Allow the module to install UDFs.
-                    module.init_db_conn(&module_db).await?;
-
-                    state.module_state = ModuleState::Loaded { module, module_db };
-                    drop(state);
-
-                    // Make sure we catch up the new module if it needs it.
-                    self.raw_catch_up_module().await?;
-
-                    Ok(())
-                } else {
-                    Err(StreamError::InvalidModuleId {
-                        needed: needed_id.unwrap_or_else(|| Cid::empty_sha2_256(DrislCodec)),
-                        provided: module.id(),
-                    })
-                }
-            }
+        let needed_id = match &state.module_state {
+            ModuleState::Unloaded(needed_id) => Ok(*needed_id),
+            ModuleState::Errored { module, .. } => Ok(Some(module.id())),
             ModuleState::Loaded { .. } => Err(StreamError::ModuleNotNeeded),
+        }?;
+
+        if needed_id.map(|id| id == module.id()).unwrap_or(true) {
+            // Make sure an `events` database is connected, which must be connected to the
+            // same database with the same virtual filesystem.
+            let files: Vec<String> = module_db
+                .query(
+                    "select file from pragma_database_list where name = 'events'",
+                    (),
+                )
+                .await?
+                .parse_rows()
+                .await?;
+            let Some(db_filename) = files.first() else {
+                return Err(StreamError::ModuleDbMissingEventsAttachment);
+            };
+            if db_filename != &state.db_filename {
+                return Err(StreamError::ModuleDbEventsAttachmentHasWrongFilename);
+            }
+
+            // Allow the module to install UDFs.
+            module.init_db_conn(&module_db).await?;
+
+            state.module_state = ModuleState::Loaded { module, module_db };
+            drop(state);
+
+            // Make sure we catch up the new module if it needs it.
+            self.raw_catch_up_module().await?;
+
+            Ok(())
+        } else {
+            Err(StreamError::InvalidModuleId {
+                needed: needed_id.unwrap_or_else(|| Cid::empty_sha2_256(DrislCodec)),
+                provided: module.id(),
+            })
         }
     }
 
@@ -381,6 +394,9 @@ impl Stream {
         match module {
             ModuleState::Unloaded(module_cid) => Err(StreamError::ModuleNotProvided(*module_cid)),
             ModuleState::Loaded { module, module_db } => Ok((module.clone(), module_db)),
+            ModuleState::Errored { error, .. } => Err(StreamError::ModuleError(
+                anyhow::format_err!("Module is currently in an error state: {error}"),
+            )),
         }
     }
 
@@ -393,6 +409,29 @@ impl Stream {
     /// > [`raw_set_module()`][Self::raw_set_module].
     #[instrument(skip(self), err)]
     pub async fn raw_catch_up_module(&self) -> Result<i64, StreamError> {
+        match self.raw_catch_up_module_impl().await {
+            Ok(idx) => Ok(idx),
+            Err(e) => {
+                let mut state = self.state.write().await;
+
+                // If we run into an error while trying to catch up the module, put the module into
+                // an errored state.
+                match state.module_state.take() {
+                    ModuleState::Loaded { module, .. } => {
+                        state.module_state = ModuleState::Errored {
+                            module,
+                            error: format!("{e}"),
+                        };
+                    }
+                    s => state.module_state = s,
+                }
+
+                Err(e)
+            }
+        }
+    }
+
+    pub async fn raw_catch_up_module_impl(&self) -> Result<i64, StreamError> {
         let mut state = self.state.write().await;
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
 
@@ -842,9 +881,8 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
         // TODO: this is kind of specific to the module which isn't ideal. We may need to move the
         // authorization responsibility to the module.
         (libsql::AuthAction::Function { function_name }, _db) => match function_name {
-            "unauthorized" | "throw" | "coalesce" | "->>" | "->" | "drisl_extract" | "drisl_exists" => {
-                libsql::Authorization::Allow
-            }
+            "unauthorized" | "throw" | "coalesce" | "->>" | "->" | "drisl_extract"
+            | "drisl_exists" => libsql::Authorization::Allow,
             _ => libsql::Authorization::Deny,
         },
         (op, db) => {

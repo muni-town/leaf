@@ -54,7 +54,9 @@ impl Streams {
         if let Some(Some(module_cid)) = stream.needs_module().await {
             STORAGE.update_stream_module(id.clone(), module_cid).await?;
             let (module, module_db) = load_module(&stream_dir, module_cid).await?;
-            stream.provide_module(module, module_db).await?;
+            if let Err(e) = stream.provide_module(module, module_db).await {
+                tracing::warn!("Error providing stream module when opening stream: {e}");
+            }
         }
 
         // Spawn a task that will watch the latest event in the stream and update the main database
