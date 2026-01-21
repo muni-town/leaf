@@ -101,14 +101,28 @@ pub async fn load_module(
     module_cid: Cid,
 ) -> anyhow::Result<(Arc<dyn LeafModule>, libsql::Connection)> {
     let Some(module) = STORAGE.get_module(module_cid).await? else {
-        anyhow::bail!("Could not load module needed by stream: {}", module_cid);
+        anyhow::bail!("Could not load module needed by stream: {module_cid}");
     };
-    let module_db_path = stream_dir.join(format!("module_{}.db", module_cid));
+    let module_db_name = &format!("module_{module_cid}.db");
+    let module_db_path = stream_dir.join(module_db_name);
     let module_db = libsql::Builder::new_local(module_db_path)
         .build()
         .await
         .context("error opening module db")?
         .connect()?;
+
+    // List the files in the stream directory
+    let mut read_dir = tokio::fs::read_dir(stream_dir).await?;
+    while let Some(entry) = read_dir.next_entry().await? {
+        let filename = entry.file_name();
+        let filename = filename.as_os_str().to_string_lossy();
+
+        // Clean up ( remove ) any module database files that are not for the module that we just
+        // loaded.
+        if filename.starts_with("module_") && !filename.starts_with(module_db_name) {
+            tokio::fs::remove_file(entry.path()).await?;
+        }
+    }
 
     // Set our standard pragmas
     module_db.execute_batch(GLOBAL_SQLITE_PRAGMA).await?;
