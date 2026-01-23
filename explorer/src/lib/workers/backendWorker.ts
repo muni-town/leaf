@@ -232,6 +232,10 @@ function connectMessagePort(port: MessagePortApi) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
 			return await state.leafClient.streamInfo(streamId);
 		},
+		async setHandle(streamId, handle) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			return await state.leafClient.setHandle(streamId, handle);
+		},
 		async uploadModule(module) {
 			if (!state.leafClient) throw new Error('Leaf not connected');
 			return await state.leafClient.uploadBasicModule(module);

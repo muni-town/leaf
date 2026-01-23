@@ -22,6 +22,8 @@ import {
   StreamInfoResp,
   StreamQueryArgs,
   StreamQueryResp,
+  StreamSetHandleArgs,
+  StreamSetHandleResp,
   StreamSubscribeArgs,
   StreamSubscribeNotification,
   StreamSubscribeResp,
@@ -307,6 +309,22 @@ export class LeafClient {
       throw new Error(resp.Err);
     }
     return convertBytesWrappers(resp.Ok);
+  }
+
+  async setHandle(streamDid: string, handle: string | null): Promise<void> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "stream/set_handle",
+      toBinary(
+        encode({
+          streamDid: streamDid as Did,
+          handle,
+        } satisfies StreamSetHandleArgs),
+      ),
+    );
+    const resp: StreamSetHandleResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
+    }
   }
 }
 

@@ -29,6 +29,7 @@ export type BackendInterface = {
 	query(streamDid: string, query: LeafQuery): Promise<SqlRows>;
 	hasModule(moduleCid: string): Promise<boolean>;
 	streamInfo(streamDid: string): Promise<{ moduleCid?: string }>;
+  setHandle(StreamDid: string, handle: string | null): Promise<void>;
 	createStream(moduleCid: string): Promise<{ streamDid: string }>;
 	updateModule(streamDid: string, moduleCid: string): Promise<void>;
 	subscribeEvents(streamDid: string, query: LeafQuery): Promise<string>;

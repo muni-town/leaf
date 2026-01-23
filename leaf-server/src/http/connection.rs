@@ -20,7 +20,7 @@ fn response<T: Serialize>(v: anyhow::Result<T>) -> bytes::Bytes {
     )
 }
 
-use crate::{did::create_did, error::LogError, storage::STORAGE, streams::STREAMS};
+use crate::{did::{create_did, update_did_handle}, error::LogError, storage::STORAGE, streams::STREAMS};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let span = Span::current();
@@ -378,6 +378,38 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 .ok();
         },
     );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
+        "stream/set_handle",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only the stream creator can update its handle");
+                };
+
+                let StreamSetHandleArgs { stream_did, handle } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Check if user owns the stream
+                let stream_owners = STORAGE.get_did_owners(stream_did.clone()).await?;
+                if !stream_owners.iter().any(|x| x == &did_) {
+                    anyhow::bail!("Only a stream owner can set its handle");
+                }
+
+                // Update the DID document with the new handle
+                update_did_handle(stream_did, handle).await?;
+
+                anyhow::Ok(())
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/set_handle"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
 }
 
 #[derive(Deserialize)]
@@ -449,6 +481,13 @@ struct EventPayload(#[serde(with = "serde_bytes")] Vec<u8>);
 struct StreamQueryArgs {
     stream_did: Did,
     query: LeafQuery,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamSetHandleArgs {
+    stream_did: Did,
+    handle: Option<String>,
 }
 
 #[derive(Deserialize)]

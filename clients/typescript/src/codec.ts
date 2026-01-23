@@ -118,5 +118,10 @@ export type StreamQueryArgs = {
   streamDid: Did;
   query: LeafQuery;
 };
-
 export type StreamQueryResp = Result<SqlRows<SqlValueRaw>>;
+
+export type StreamSetHandleArgs = {
+  streamDid: Did;
+  handle: string | null;
+};
+export type StreamSetHandleResp = Result<void>;

@@ -14,13 +14,15 @@
 		type SqlValue
 	} from '@muni-town/leaf-client';
 	import { page } from '$app/state';
-	import { encode, decode } from '@atcute/cbor';
+	import { encode } from '@atcute/cbor';
 	import { stringifyEvent } from '$lib/utils';
 
 	let loading = $state(false);
 
 	const events = getContext<string[]>('events');
 	const streamDid = getContext<{ value: string }>('streamId');
+
+	let streamHandle = $state('');
 
 	let moduleId = $state(localStorage.getItem('module') || '');
 	$effect(() => {
@@ -294,6 +296,30 @@
 			>
 				<h2 class="mb-4 text-xl font-bold">StreamInfo</h2>
 				<button class="btn btn-outline" disabled={loading}>Get Info</button>
+			</form>
+
+			<!-- Set Handle -->
+			<form
+				class="m-8 flex flex-col gap-2"
+				onsubmit={async () => {
+					loading = true;
+					try {
+						await backend.setHandle(streamDid.value, streamHandle || null);
+						events.push(`Set handle to ${streamHandle}`);
+					} catch (e: any) {
+						console.error(e);
+						events.push(e.toString());
+					}
+					loading = false;
+				}}
+			>
+				<h2 class="mb-4 text-xl font-bold">Set Handle</h2>
+				<input
+					class="input w-full"
+					bind:value={streamHandle}
+					placeholder="example.handle.com"
+				/>
+				<button class="btn btn-outline" disabled={loading}>Set Handle</button>
 			</form>
 		{:else if currentTab == 'Create Stream'}
 			<div class="m-3 flex flex-col gap-2">
