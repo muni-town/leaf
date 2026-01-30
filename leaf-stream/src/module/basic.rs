@@ -59,6 +59,20 @@ impl LeafModule for BasicModule {
         })
     }
 
+    fn init_state_db_schema(
+        &'_ self,
+        module_db: &libsql::Connection,
+    ) -> BoxFuture<'_, anyhow::Result<()>> {
+        let def = self.def.clone();
+        let module_db = module_db.clone();
+        Box::pin(async move {
+            if !def.state_init_sql.is_empty() {
+                module_db.execute_batch(&def.state_init_sql).await?;
+            }
+            Ok(())
+        })
+    }
+
     fn materialize(
         &'_ self,
         module_db: &libsql::Connection,
@@ -86,6 +100,33 @@ impl LeafModule for BasicModule {
             .await?;
 
             module_db.execute_batch(&def.materializer).await?;
+            Ok(())
+        })
+    }
+
+    fn materialize_state_event(
+        &'_ self,
+        module_db: &libsql::Connection,
+        IncomingEvent { user, payload }: IncomingEvent,
+    ) -> BoxFuture<'_, anyhow::Result<()>> {
+        let def = self.def.clone();
+        let module_db = module_db.clone();
+        Box::pin(async move {
+            // Setup the temporary `event` table to contain the state event to materialize.
+            // Note: state events don't have an idx, so we set it to NULL
+            module_db
+                .execute("drop table if exists temp.event", ())
+                .await?;
+            module_db
+            .execute(
+                r#"
+                            create temp table if not exists event as select ? as user, ? as payload
+                        "#,
+                (user, payload),
+            )
+            .await?;
+
+            module_db.execute_batch(&def.state_materializer).await?;
             Ok(())
         })
     }

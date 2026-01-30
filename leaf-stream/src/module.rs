@@ -66,6 +66,20 @@ pub trait LeafModule: Sync + Send {
         module_db: &libsql::Connection,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
+    /// Called to initialize the state database.
+    ///
+    /// The state database is attached to the module database as "state".
+    /// This method will be called:
+    /// - When the stream is first loaded
+    /// - If the state database is reset
+    ///
+    /// > **Note:** It is **ilegal** to change the authorizer of `module_db`. That will be
+    /// > handled by the stream.
+    fn init_state_db_schema(
+        &'_ self,
+        module_db: &libsql::Connection,
+    ) -> BoxFuture<'_, anyhow::Result<()>>;
+
     /// Called to materialize a new event
     ///
     /// > **Note:** It is **ilegal** to change the authorizer of the `module_db`. That will be
@@ -74,6 +88,19 @@ pub trait LeafModule: Sync + Send {
         &'_ self,
         module_db: &libsql::Connection,
         event: Event,
+    ) -> BoxFuture<'_, anyhow::Result<()>>;
+
+    /// Called to materialize a new state event
+    ///
+    /// State events are like regular events but are not stored in the stream's event database.
+    /// They are used for stateful data like "last read" markers, theme preferences, etc.
+    ///
+    /// > **Note:** It is **ilegal** to change the authorizer of the `module_db`. That will be
+    /// > handled by the stream.
+    fn materialize_state_event(
+        &'_ self,
+        module_db: &libsql::Connection,
+        event: IncomingEvent,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Called to authorize a new event

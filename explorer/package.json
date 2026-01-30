@@ -44,7 +44,10 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"esbuild"
-		]
+		],
+		"overrides": {
+			"@muni-town/leaf-client": "link:../clients/typescript"
+		}
 	},
 	"dependencies": {
 		"@atcute/cbor": "^2.2.8",

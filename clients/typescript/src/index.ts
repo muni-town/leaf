@@ -16,6 +16,8 @@ import {
   SqlRows,
   StreamCreateArgs,
   StreamCreateResp,
+  StreamClearStateArgs,
+  StreamClearStateResp,
   StreamEventBatchArgs,
   StreamEventBatchResp,
   StreamInfoArgs,
@@ -24,6 +26,8 @@ import {
   StreamQueryResp,
   StreamSetHandleArgs,
   StreamSetHandleResp,
+  StreamStateEventBatchArgs,
+  StreamStateEventBatchResp,
   StreamSubscribeArgs,
   StreamSubscribeNotification,
   StreamSubscribeResp,
@@ -247,6 +251,33 @@ export class LeafClient {
       ),
     );
     const resp: StreamEventBatchResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
+    }
+  }
+
+  async sendStateEvents(streamDid: string, events: Uint8Array[]): Promise<void> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "stream/state_event_batch",
+      toBinary(
+        encode({
+          streamDid: streamDid as Did,
+          events: events.map((x) => new BytesWrapper(x)),
+        } satisfies StreamStateEventBatchArgs),
+      ),
+    );
+    const resp: StreamStateEventBatchResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
+    }
+  }
+
+  async clearState(streamDid: string): Promise<void> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "stream/clear_state",
+      toBinary(encode({ streamDid: streamDid as Did } satisfies StreamClearStateArgs)),
+    );
+    const resp: StreamClearStateResp = decode(fromBinary(data));
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
