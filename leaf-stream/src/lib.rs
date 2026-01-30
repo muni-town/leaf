@@ -554,6 +554,7 @@ impl Stream {
 
         // Handle errors by rolling back the transaction
         if let Err(e) = result {
+            module_db.authorizer(None)?;
             module_db.execute("rollback", ()).await?;
             return Err(e.into());
         } else {
