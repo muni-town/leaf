@@ -15,6 +15,8 @@ export type BasicModule = ModuleCodec<
     initSql: string;
     authorizer: string;
     materializer: string;
+    stateMaterializer: string;
+    stateInitSql: string;
     queries: {
       name: string;
       sql: string;
@@ -125,3 +127,14 @@ export type StreamSetHandleArgs = {
   handle: string | null;
 };
 export type StreamSetHandleResp = Result<void>;
+
+export type StreamStateEventBatchArgs = {
+  streamDid: Did;
+  events: EventPayload[];
+};
+export type StreamStateEventBatchResp = Result<void>;
+
+export type StreamClearStateArgs = {
+  streamDid: Did;
+};
+export type StreamClearStateResp = Result<void>;

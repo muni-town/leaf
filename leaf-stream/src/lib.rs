@@ -159,6 +159,52 @@ impl Stream {
         self.state.read().await.module_state.id()
     }
 
+    /// Clear the state database for this stream.
+    ///
+    /// This removes all data from the state database, which is used for state events.
+    pub async fn clear_state_db(&self) -> Result<(), StreamError> {
+        let state = self.state.read().await;
+
+        // Get the module DB connection (which has state attached as "state")
+        let (module, module_db) = match Self::ensure_module_loaded(&state.module_state) {
+            Ok((module, module_db)) => (module, module_db),
+            Err(_) => {
+                tracing::warn!(
+                    "Module not loaded for stream {}, cannot clear state database",
+                    self.id
+                );
+                return Ok(());
+            }
+        };
+
+        // Get all table names in the state database
+        let tables: Vec<String> = module_db
+            .query(
+                "select name from state.sqlite_schema where type='table' and name not like 'sqlite_%'",
+                (),
+            )
+            .await?
+            .parse_rows()
+            .await?;
+
+        // Drop all tables
+        for table in tables {
+            module_db
+                .execute(&format!("drop table if exists state.{}", table), ())
+                .await?;
+        }
+
+        // Re-initialize the state database schema
+        module_db.authorizer(Some(Arc::new(state_materialize_authorizer)))?;
+        let state_init_result = module.init_state_db_schema(module_db).await;
+        module_db.authorizer(None)?;
+        state_init_result?;
+
+        tracing::info!(stream_did=%self.id, "Cleared state database for stream");
+
+        Ok(())
+    }
+
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
@@ -442,6 +488,12 @@ impl Stream {
             let init_result = module.init_db_schema(module_db).await;
             module_db.authorizer(None)?;
             init_result?;
+
+            // Initialize the state database schema
+            module_db.authorizer(Some(Arc::new(state_materialize_authorizer)))?;
+            let state_init_result = module.init_state_db_schema(module_db).await;
+            module_db.authorizer(None)?;
+            state_init_result?;
         }
 
         assert!(
@@ -636,6 +688,62 @@ impl Stream {
         // the module is the last event in the batch.
 
         Ok(None)
+    }
+
+    /// Attempt to add the batch of state events to the stream.
+    ///
+    /// State events are like regular events but are not stored in the stream's event database.
+    /// They have their own materializer and separate, attached state database.
+    ///
+    /// Either the whole batch of state events will be added, or the entire batch will be rejected,
+    /// making multiple state events act as an atomic transaction.
+    #[instrument(skip(self, events), err)]
+    pub async fn add_state_events(&self, events: Vec<IncomingEvent>) -> Result<(), StreamError> {
+        let state = self.state.write().await;
+
+        // Ensure the module is loaded
+        let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
+
+        // Start a new transaction on the module_db (which has state attached as "state")
+        tracing::debug!("Starting state event transaction");
+        module_db.execute("begin immediate", ()).await?;
+
+        let result = async {
+            for event in events {
+                // Use state_materialize_authorizer to allow writes to state database
+                module_db.authorizer(Some(Arc::new(state_materialize_authorizer)))?;
+                let result = module
+                    .materialize_state_event(&module_db, event.clone())
+                    .await;
+                module_db.authorizer(None)?;
+                result?;
+
+                tracing::debug!("Materialized state event");
+            }
+
+            anyhow::Ok(())
+        }
+        .await;
+
+        // Handle errors by rolling back the transaction
+        if let Err(e) = result {
+            module_db.authorizer(None)?;
+            module_db.execute("rollback", ()).await?;
+            return Err(e.into());
+        } else {
+            module_db.execute("commit", ()).await?;
+        }
+
+        // Update query subscriptions, note that the state.latest_event hasn't actually changed
+        // since this is a state event and we aren't tracking event indexes.
+        state.worker_sender.as_ref().map(|s| {
+            s.try_send(WorkerMessage::NewEvents {
+                latest_event: state.latest_event,
+            })
+            .ok()
+        });
+
+        Ok(())
     }
 
     /// Get the provided range of events from the stream.
@@ -854,6 +962,56 @@ fn module_materialize_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriza
         | (Recursive { .. }, None | Some("main") | Some("temp"))
         | (Read { .. }, Some("events"))
         | (Select { .. }, Some("events")) => Allow,
+        op => {
+            tracing::warn!(
+                ?op,
+                "Denying SQL operation from default_module_db_authorizer"
+            );
+            Deny
+        }
+    }
+}
+
+/// Authorizer for state event materialization
+///
+/// This authorizer allows:
+/// - Writing to the state database (where state events are stored)
+/// - Writing to temp database (for temporary event table)
+/// - Reading from main, events, state, and temp databases
+/// - Using specific functions for authorization and data extraction
+fn state_materialize_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorization {
+    use AuthAction::*;
+    use Authorization::*;
+
+    match (ctx.action, ctx.database_name) {
+        (CreateIndex { .. }, Some("state") | Some("temp"))
+        | (CreateTable { .. }, Some("state") | Some("temp"))
+        | (CreateTempIndex { .. }, Some("state") | Some("temp"))
+        | (CreateTempTable { .. }, Some("state") | Some("temp"))
+        | (CreateTempTrigger { .. }, Some("state") | Some("temp"))
+        | (CreateTempView { .. }, Some("state") | Some("temp"))
+        | (CreateTrigger { .. }, Some("state") | Some("temp"))
+        | (CreateView { .. }, Some("state") | Some("temp"))
+        | (Delete { .. }, Some("state") | Some("temp"))
+        | (DropIndex { .. }, Some("state") | Some("temp"))
+        | (DropTable { .. }, Some("state") | Some("temp"))
+        | (DropTempIndex { .. }, Some("state") | Some("temp"))
+        | (DropTempTable { .. }, Some("state") | Some("temp"))
+        | (DropTempTrigger { .. }, Some("state") | Some("temp"))
+        | (DropTempView { .. }, Some("state") | Some("temp"))
+        | (DropTrigger { .. }, Some("state") | Some("temp"))
+        | (DropView { .. }, Some("state") | Some("temp"))
+        | (Insert { .. }, Some("state") | Some("temp"))
+        | (Read { .. }, Some("state") | Some("temp"))
+        | (Select { .. }, Some("state") | Some("temp"))
+        | (Update { .. }, Some("state") | Some("temp"))
+        | (AlterTable { .. }, Some("state") | Some("temp"))
+        | (Reindex { .. }, Some("state") | Some("temp"))
+        | (Analyze { .. }, Some("state") | Some("temp"))
+        | (Function { .. }, Some("state") | Some("temp"))
+        | (Recursive { .. }, Some("state") | Some("temp"))
+        | (Read { .. }, Some("events") | Some("main"))
+        | (Select { .. }, Some("events") | Some("main")) => Allow,
         op => {
             tracing::warn!(
                 ?op,

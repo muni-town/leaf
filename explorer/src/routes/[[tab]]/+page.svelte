@@ -22,6 +22,8 @@
 	const events = getContext<string[]>('events');
 	const streamDid = getContext<{ value: string }>('streamId');
 
+	let eventMode = $state<'regular' | 'state'>('regular');
+
 	let streamHandle = $state('');
 
 	let moduleId = $state(localStorage.getItem('module') || '');
@@ -41,6 +43,8 @@
 		authorizer: '',
 		initSql: '',
 		materializer: '',
+		stateMaterializer: '',
+		stateInitSql: '',
 		queries: []
 	};
 	let newStreamModule: Omit<BasicModule, '$type'> = $state(
@@ -140,7 +144,20 @@
 
 	async function sendEvent() {
 		if (!backendStatus.did) return;
-		await backend.sendEvents(streamDid.value, [encode(JSON.parse(payload))]);
+		if (eventMode === 'state') {
+			await backend.sendStateEvents(streamDid.value, [encode(JSON.parse(payload))]);
+		} else {
+			await backend.sendEvents(streamDid.value, [encode(JSON.parse(payload))]);
+		}
+	}
+
+	async function clearState() {
+		if (!backendStatus.did) return;
+		if (!confirm('Are you sure you want to clear the state? This action cannot be undone.')) {
+			return;
+		}
+		await backend.clearState(streamDid.value);
+		events.push('State cleared');
 	}
 </script>
 
@@ -335,6 +352,26 @@
 				<h2 class="text-md m-2 flex items-center justify-between font-bold">
 					Payload <button class="btn btn-sm" onclick={sendEvent}>Send Event</button>
 				</h2>
+				<div class="m-2 flex items-center gap-3">
+					<span class="font-bold">Event Type:</span>
+					<div class="join">
+						<button
+							class="btn btn-sm join-item"
+							class:btn-active={eventMode === 'regular'}
+							onclick={() => (eventMode = 'regular')}>Regular</button
+						>
+						<button
+							class="btn btn-sm join-item"
+							class:btn-active={eventMode === 'state'}
+							onclick={() => (eventMode = 'state')}>State</button
+						>
+					</div>
+					{#if eventMode === 'state'}
+						<button class="btn btn-sm btn-error" onclick={clearState}
+							>Clear State</button
+						>
+					{/if}
+				</div>
 				<CodeMirror
 					lang={jsonLang()}
 					bind:value={payload}
@@ -357,6 +394,25 @@
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="CREATE TABLE IF NOT EXISTS example ();"
+				/>
+				<h2 class="m-3 text-xl font-bold">State Init SQL</h2>
+				<div class="m-3 gap-2 text-sm opacity-40">
+					<p>
+						This code will be run to initialize the state database and should be
+						idempotent.
+					</p>
+					<p>
+						The state database is attached to the module database as "state". This SQL
+						is executed when the stream is first loaded or if the state database is
+						reset.
+					</p>
+				</div>
+				<CodeMirror
+					lang={sqlLang()}
+					bind:value={newStreamModule.stateInitSql}
+					lineNumbers={false}
+					theme={oneDarkTheme}
+					placeholder="CREATE TABLE IF NOT EXISTS state.example ();"
 				/>
 				<h2 class="m-3 text-xl font-bold">Authorizer SQL</h2>
 				<div class="m-3 gap-2 text-sm opacity-40">
@@ -394,6 +450,30 @@
 					lineNumbers={false}
 					theme={oneDarkTheme}
 					placeholder="-- materialization sql"
+				/>
+				<h2 class="m-3 text-xl font-bold">State Event Materializer SQL</h2>
+				<div class="m-3 gap-2 text-sm opacity-40">
+					<p>SQL used to materialize state events.</p>
+					<p>
+						State events are used for transient, state that doesn't need to be part of
+						the permanent event log.
+					</p>
+					<p>
+						To access the event that is being materialized you can query the <code
+							>user</code
+						>
+						and <code>payload</code> from the <code>event</code> table.
+					</p>
+					<p>
+						<strong>Note:</strong> state events don't have an idx like normal events.
+					</p>
+				</div>
+				<CodeMirror
+					lang={sqlLang()}
+					bind:value={newStreamModule.stateMaterializer}
+					lineNumbers={false}
+					theme={oneDarkTheme}
+					placeholder="-- state event materialization sql"
 				/>
 				<h2 class="mx-3 mb-2 mt-5 flex items-center text-xl font-bold">
 					Queries

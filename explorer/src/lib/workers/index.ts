@@ -29,13 +29,15 @@ export type BackendInterface = {
 	query(streamDid: string, query: LeafQuery): Promise<SqlRows>;
 	hasModule(moduleCid: string): Promise<boolean>;
 	streamInfo(streamDid: string): Promise<{ moduleCid?: string }>;
-  setHandle(StreamDid: string, handle: string | null): Promise<void>;
+	setHandle(StreamDid: string, handle: string | null): Promise<void>;
 	createStream(moduleCid: string): Promise<{ streamDid: string }>;
 	updateModule(streamDid: string, moduleCid: string): Promise<void>;
 	subscribeEvents(streamDid: string, query: LeafQuery): Promise<string>;
 	unsubscribe(subId: string): Promise<void>;
 	uploadModule(module: BasicModule): Promise<{ moduleCid: string }>;
 	sendEvents(streamDid: string, events: Uint8Array[]): Promise<void>;
+	sendStateEvents(streamDid: string, events: Uint8Array[]): Promise<void>;
+	clearState(streamDid: string): Promise<void>;
 	setLeafUrl(url: string): Promise<void>;
 	/** Adds a new message port connection to the backend that can call the backend interface. */
 	addClient(port: MessagePort): Promise<void>;

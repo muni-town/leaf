@@ -56,7 +56,7 @@ class Backend {
 	#leafUrl: string | undefined;
 
 	#oauthReady: Promise<void>;
-	#resolveOauthReady: () => void = () => {};
+	#resolveOauthReady: () => void = () => { };
 	get ready() {
 		return state.#oauthReady;
 	}
@@ -223,6 +223,14 @@ function connectMessagePort(port: MessagePortApi) {
 		},
 		async sendEvents(streamDid, events) {
 			await state.leafClient?.sendEvents(streamDid as Did, events);
+		},
+		async sendStateEvents(streamDid, events) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			await state.leafClient.sendStateEvents(streamDid as Did, events);
+		},
+		async clearState(streamDid) {
+			if (!state.leafClient) throw new Error('Leaf not connected');
+			await state.leafClient.clearState(streamDid as Did);
 		},
 		async hasModule(moduleCid) {
 			if (!state.leafClient) throw new Error('Leaf not connected');

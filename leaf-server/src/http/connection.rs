@@ -20,7 +20,12 @@ fn response<T: Serialize>(v: anyhow::Result<T>) -> bytes::Bytes {
     )
 }
 
-use crate::{did::{create_did, update_did_handle}, error::LogError, storage::STORAGE, streams::STREAMS};
+use crate::{
+    did::{create_did, update_did_handle},
+    error::LogError,
+    storage::STORAGE,
+    streams::STREAMS,
+};
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
     let span = Span::current();
@@ -241,6 +246,97 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
         },
     );
 
+    let span_ = span.clone();
+    let did_ = did.clone();
+    let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/state_event_batch",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can send state events");
+                };
+
+                let StreamStateEventBatchArgs { stream_did, events } =
+                    dasl::drisl::from_slice(&bytes?[..])?;
+
+                let open_streams = open_streams_.upgradable_read().await;
+                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                    stream.clone()
+                } else {
+                    let stream = STREAMS.load(stream_did.clone()).await?;
+                    let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
+                    open_streams.insert(stream_did.clone(), stream.clone());
+                    stream
+                };
+
+                stream
+                    .add_state_events(
+                        events
+                            .into_iter()
+                            .map(|x| IncomingEvent {
+                                user: did_.clone(),
+                                payload: x.0,
+                            })
+                            .collect(),
+                    )
+                    .await?;
+
+                anyhow::Ok(())
+            }
+            .instrument(
+                tracing::info_span!(parent: span_.clone(), "handle stream/state_event_batch"),
+            )
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    let open_streams_ = open_streams.clone();
+    socket.on(
+        "stream/clear_state",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can clear state");
+                };
+
+                let StreamClearStateArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                let open_streams = open_streams_.upgradable_read().await;
+                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                    stream.clone()
+                } else {
+                    let stream = STREAMS.load(stream_did.clone()).await?;
+                    let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
+                    open_streams.insert(stream_did.clone(), stream.clone());
+                    stream
+                };
+
+                // Check if user owns the stream
+                let stream_owners = STORAGE.get_did_owners(stream_did.clone()).await?;
+                if !stream_owners.iter().any(|x| x == &did_) {
+                    anyhow::bail!("Only a stream owner can set its handle");
+                }
+
+                stream.clear_state_db().await?;
+
+                anyhow::Ok(())
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/clear_state"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
     // TODO: right now there's a weird situation where, even if you get an unauthorized error when
     // subscribing to a query, it will just keep returning a new unauthorized result every time a
     // new event comes in, which gives you info about the frequency of events and lets you leech
@@ -389,7 +485,8 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only the stream creator can update its handle");
                 };
 
-                let StreamSetHandleArgs { stream_did, handle } = dasl::drisl::from_slice(&bytes?[..])?;
+                let StreamSetHandleArgs { stream_did, handle } =
+                    dasl::drisl::from_slice(&bytes?[..])?;
 
                 // Check if user owns the stream
                 let stream_owners = STORAGE.get_did_owners(stream_did.clone()).await?;
@@ -471,6 +568,19 @@ struct StreamUpdateModuleArgs {
 struct StreamEventBatchArgs {
     stream_did: Did,
     events: Vec<EventPayload>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamStateEventBatchArgs {
+    stream_did: Did,
+    events: Vec<EventPayload>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamClearStateArgs {
+    stream_did: Did,
 }
 
 #[derive(Deserialize)]

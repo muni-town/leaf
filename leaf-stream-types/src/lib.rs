@@ -82,6 +82,8 @@ pub struct BasicModuleDef {
     /// Idempodent initialization SQL that will be used to setup the module's SQLite database.
     ///
     /// This may be multiple statements separated by semicolons;
+    ///
+    /// The SQL should be idempotent as it may be executed multiple times.
     pub init_sql: String,
 
     /// SQL statements that will be used to authorize incoming events before they are inserted
@@ -90,6 +92,22 @@ pub struct BasicModuleDef {
 
     /// SQL statements that will be used to materialize an event that has been authorized.
     pub materializer: String,
+
+    /// SQL statements that will be used to materialize state events into the state db.
+    pub state_materializer: String,
+
+    /// Idempodent initialization SQL that will be used to setup the state database.
+    ///
+    /// This may be multiple statements separated by semicolons.
+    ///
+    /// This SQL is executed on the state database (attached as "state") after it is attached
+    /// to the module database. It will be executed:
+    /// - When the stream is first loaded
+    /// - If the state database is reset.
+    ///
+    /// The SQL should be idempotent as it may be executed multiple times.
+    #[serde(default)]
+    pub state_init_sql: String,
 
     /// The list of queries defined by this module.
     ///

@@ -135,5 +135,14 @@ pub async fn load_module(
         )
         .await?;
 
+    // Attach the state DB to the module DB
+    // SQLite will create the file automatically if it doesn't exist
+    module_db
+        .execute(
+            "attach ? as state",
+            [stream_dir.join("state.db").to_string_lossy().to_string()],
+        )
+        .await?;
+
     Ok((module, module_db))
 }
