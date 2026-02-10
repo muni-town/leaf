@@ -62,6 +62,7 @@ pub struct S3BackupConfig {
 pub struct ListStreamsItem {
     pub id: Did,
     pub module_cid: Option<Cid>,
+    pub client_stamp: Option<String>,
     pub latest_event: Option<i64>,
 }
 
@@ -207,14 +208,15 @@ impl Storage {
         &self,
         stream_did: Did,
         owner: String,
+        client_stamp: Option<String>,
     ) -> anyhow::Result<StreamHandle> {
         let stream = STREAMS.load(stream_did.clone()).await?;
 
         self.db()
             .await
             .execute(
-                "insert into streams (did, module_cid, latest_event) values (?, null, 0)",
-                [stream_did.as_str().to_string()],
+                "insert into streams (did, module_cid, client_stamp, latest_event) values (?, null, ?, 0)",
+                (stream_did.as_str().to_string(), client_stamp),
             )
             .await?;
 
@@ -235,10 +237,13 @@ impl Storage {
 
     /// Get the list of streams and the latest event we have for each
     pub async fn list_streams(&self) -> anyhow::Result<Vec<ListStreamsItem>> {
-        let rows: Vec<(Did, Option<Cid>, Option<i64>)> = self
+        let rows: Vec<(Did, Option<Cid>, Option<String>, Option<i64>)> = self
             .db()
             .await
-            .query("select did, module_cid, latest_event from streams", ())
+            .query(
+                "select did, module_cid, client_stamp, latest_event from streams",
+                (),
+            )
             .await?
             .parse_rows()
             .await?;
@@ -248,11 +253,33 @@ impl Storage {
                 Ok::<_, anyhow::Error>(ListStreamsItem {
                     id: x.0,
                     module_cid: x.1,
-                    latest_event: x.2,
+                    client_stamp: x.2,
+                    latest_event: x.3,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(items)
+    }
+
+    /// Get persisted stream metadata from storage.
+    pub async fn get_stream_info(
+        &self,
+        stream_did: &Did,
+    ) -> anyhow::Result<(Option<Cid>, Option<String>)> {
+        let rows: Vec<(Option<Cid>, Option<String>)> = self
+            .db()
+            .await
+            .query(
+                "select module_cid, client_stamp from streams where did = ?",
+                [stream_did.as_str().to_string()],
+            )
+            .await?
+            .parse_rows()
+            .await?;
+
+        rows.into_iter()
+            .next()
+            .ok_or_else(|| anyhow::format_err!("stream not found"))
     }
 
     /// Update the recorded current module for the stream in the leaf database.
@@ -748,6 +775,18 @@ struct StreamMetadata {
 pub async fn run_database_migrations(db: &Connection) -> anyhow::Result<()> {
     db.execute_transactional_batch(include_str!("schema.sql"))
         .await?;
+
+    db.execute("alter table streams add column client_stamp text", ())
+        .await
+        .or_else(|error| {
+            let message = error.to_string().to_ascii_lowercase();
+            if message.contains("duplicate column name") {
+                Ok(0)
+            } else {
+                Err(error)
+            }
+        })?;
+
     Ok(())
 }
 
@@ -767,4 +806,84 @@ pub fn start_background_tasks() {
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Storage;
+    use leaf_stream::atproto_plc::Did;
+    use std::path::PathBuf;
+
+    fn temp_data_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("leaf-server-tests-{name}-{}", ulid::Ulid::new()))
+    }
+
+    #[tokio::test]
+    async fn legacy_stream_info_has_no_client_stamp() {
+        let storage = Storage::default();
+        let data_dir = temp_data_dir("legacy");
+        storage
+            .initialize(&data_dir, None)
+            .await
+            .expect("initialize storage");
+
+        let did = "did:plc:z72i7hdynmk6r22z27h6tvur"
+            .parse::<Did>()
+            .expect("parse did");
+
+        let db = storage.db().await;
+        db.execute(
+            "insert into dids (did) values (?)",
+            [did.as_str().to_string()],
+        )
+        .await
+        .expect("insert did");
+        db.execute(
+            "insert into streams (did, module_cid, client_stamp, latest_event) values (?, null, null, 0)",
+            [did.as_str().to_string()],
+        )
+        .await
+        .expect("insert legacy stream row");
+
+        let (_module_cid, client_stamp) = storage
+            .get_stream_info(&did)
+            .await
+            .expect("read stream info");
+        assert_eq!(client_stamp, None);
+    }
+
+    #[tokio::test]
+    async fn stamped_stream_info_returns_persisted_client_stamp() {
+        let storage = Storage::default();
+        let data_dir = temp_data_dir("stamped");
+        storage
+            .initialize(&data_dir, None)
+            .await
+            .expect("initialize storage");
+
+        let did = "did:plc:4r6f4jzw7fd5z2rch4hsd4si"
+            .parse::<Did>()
+            .expect("parse did");
+        let stamp = "01J9A90M5Q6VFXV9PRN00TS9TW".to_string();
+
+        let db = storage.db().await;
+        db.execute(
+            "insert into dids (did) values (?)",
+            [did.as_str().to_string()],
+        )
+        .await
+        .expect("insert did");
+        db.execute(
+            "insert into streams (did, module_cid, client_stamp, latest_event) values (?, null, ?, 0)",
+            (did.as_str().to_string(), Some(stamp.clone())),
+        )
+        .await
+        .expect("insert stamped stream row");
+
+        let (_module_cid, client_stamp) = storage
+            .get_stream_info(&did)
+            .await
+            .expect("read stream info");
+        assert_eq!(client_stamp, Some(stamp));
+    }
 }

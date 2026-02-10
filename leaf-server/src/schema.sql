@@ -51,6 +51,8 @@ create table if not exists "streams" (
     "did"    text not null primary key references dids(did),
     -- ID of the WASM module needed by this stream, if any
     "module_cid" blob references module_blobs(cid),
+    -- Optional client-side stamp sent when creating a stream
+    "client_stamp" text,
     -- The index of the latest event in the stream
     "latest_event" integer not null
 ) strict;
