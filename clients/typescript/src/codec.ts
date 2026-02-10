@@ -80,9 +80,13 @@ export type ModuleExistsResp = Result<{ moduleExists: boolean }>;
 
 export type StreamCreateArgs = {
   moduleCid: CidLink;
+  clientStamp?: string;
 };
 
-export type StreamCreateResp = Result<{ streamDid: Did }>;
+export type StreamCreateResp = Result<{
+  streamDid: Did;
+  clientStamp?: string;
+}>;
 
 export type StreamInfoArgs = {
   streamDid: Did;

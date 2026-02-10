@@ -89,7 +89,10 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let Some(did_) = did_ else {
                     anyhow::bail!("Only authenticated users can create_streams");
                 };
-                let StreamCreateArgs { module_cid } = dasl::drisl::from_slice(&bytes?[..])?;
+                let StreamCreateArgs {
+                    module_cid,
+                    client_stamp,
+                } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 // Abort early if we don't have the module
                 if !STORAGE.has_module_blob(module_cid).await? {
@@ -110,7 +113,10 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 // Set the stream's module
                 STREAMS.update_module(stream, module_cid).await?;
 
-                anyhow::Ok(StreamCreateResp { stream_did })
+                anyhow::Ok(StreamCreateResp {
+                    stream_did,
+                    client_stamp,
+                })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/create"))
             .await;
@@ -548,12 +554,96 @@ struct StreamInfoResp {
 #[serde(rename_all = "camelCase")]
 struct StreamCreateArgs {
     module_cid: Cid,
+    client_stamp: Option<Ulid>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StreamCreateResp {
     stream_did: Did,
+    client_stamp: Option<Ulid>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StreamCreateArgs, StreamCreateResp};
+    use leaf_stream::{
+        atproto_plc::Did,
+        dasl::{
+            cid::Cid,
+            drisl::{from_slice, to_vec},
+        },
+    };
+    use serde::{Deserialize, Serialize};
+    use ulid::Ulid;
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyStreamCreateArgs {
+        module_cid: Cid,
+    }
+
+    #[test]
+    fn stream_create_args_old_shape_still_deserializes() {
+        let module_cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+            .parse::<Cid>()
+            .expect("parse cid");
+        let bytes = to_vec(&LegacyStreamCreateArgs {
+            module_cid: module_cid.clone(),
+        })
+        .expect("serialize old request shape");
+
+        let parsed: StreamCreateArgs = from_slice(&bytes).expect("deserialize old request shape");
+
+        assert_eq!(parsed.module_cid, module_cid);
+        assert_eq!(parsed.client_stamp, None);
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StreamCreateArgsWithClientStamp {
+        module_cid: Cid,
+        client_stamp: Option<Ulid>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StreamCreateAckCompat {
+        stream_did: Did,
+        client_stamp: Option<Ulid>,
+    }
+
+    #[test]
+    fn stream_create_with_client_stamp_round_trips() {
+        let module_cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+            .parse::<Cid>()
+            .expect("parse cid");
+        let stream_did = "did:plc:z72i7hdynmk6r22z27h6tvur"
+            .parse::<Did>()
+            .expect("parse did");
+        let client_stamp = Ulid::new();
+
+        let args_bytes = to_vec(&StreamCreateArgsWithClientStamp {
+            module_cid,
+            client_stamp: Some(client_stamp),
+        })
+        .expect("serialize request with client stamp");
+
+        let parsed_args: StreamCreateArgs =
+            from_slice(&args_bytes).expect("deserialize request with client stamp");
+        assert_eq!(parsed_args.client_stamp, Some(client_stamp));
+
+        let resp_bytes = to_vec(&StreamCreateResp {
+            stream_did: stream_did.clone(),
+            client_stamp: Some(client_stamp),
+        })
+        .expect("serialize response");
+
+        let parsed_resp: StreamCreateAckCompat =
+            from_slice(&resp_bytes).expect("deserialize response with client stamp");
+        assert_eq!(parsed_resp.stream_did, stream_did);
+        assert_eq!(parsed_resp.client_stamp, Some(client_stamp));
+    }
 }
 
 #[derive(Deserialize)]
