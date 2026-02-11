@@ -15,3 +15,12 @@ The Dockerfile for `leaf-server` uses statically linked C code that is compiled 
 For local dev on arm64 machines, we can pass in a build arg: `docker build --build-arg TARGET=aarch64-unknown-linux-musl -t leaf-server:arm64 .`
 
 Then in either case we can run it as usual: `docker run -it --rm -p 5530:5530 -v $(pwd)/data:/data leaf-server`
+
+## Protocol compatibility policy
+
+For this iteration of the wire protocol, compatibility is maintained with additive changes only:
+
+- Existing event names remain unchanged (for example `stream/create`, `stream/info`, and existing socket events).
+- Existing required fields keep their current semantics (`streamDid`, `moduleCid`).
+- Any newly introduced fields are additive and optional.
+- No breaking wire changes are introduced in this iteration.
