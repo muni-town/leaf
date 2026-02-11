@@ -93,6 +93,7 @@ export type StreamInfoArgs = {
 };
 export type StreamInfoResp = Result<{
   moduleCid?: CidLinkWrapper;
+  clientStamp?: string;
 }>;
 
 export type StreamUpdateModuleArgs = {

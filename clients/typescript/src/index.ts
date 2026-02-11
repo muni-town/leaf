@@ -202,7 +202,7 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async streamInfo(streamDid: string): Promise<{ moduleCid?: string }> {
+  async streamInfo(streamDid: string): Promise<{ moduleCid?: string; clientStamp?: string }> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/info",
       toBinary(
@@ -213,7 +213,7 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return { moduleCid: resp.Ok.moduleCid?.$link };
+    return { moduleCid: resp.Ok.moduleCid?.$link, clientStamp: resp.Ok.clientStamp };
   }
 
   async updateModule(

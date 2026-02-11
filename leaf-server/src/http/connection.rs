@@ -104,7 +104,13 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 let stream_did = create_did(did_.clone()).await?;
 
-                let stream = STORAGE.create_stream(stream_did.clone(), did_).await?;
+                let stream = STORAGE
+                    .create_stream(
+                        stream_did.clone(),
+                        did_,
+                        client_stamp.map(|stamp| stamp.to_string()),
+                    )
+                    .await?;
                 open_streams_
                     .write()
                     .await
@@ -136,17 +142,20 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let StreamInfoArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let _stream = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_did, stream.clone());
+                    open_streams.insert(stream_did.clone(), stream.clone());
                     stream
                 };
 
+                let (module_cid, client_stamp) = STORAGE.get_stream_info(&stream_did).await?;
+
                 anyhow::Ok(StreamInfoResp {
-                    module_cid: stream.module_cid().await,
+                    module_cid,
+                    client_stamp,
                 })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/info"))
@@ -369,7 +378,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_did, stream.clone());
+                    open_streams.insert(stream_did.clone(), stream.clone());
                     stream
                 };
 
@@ -464,7 +473,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
                     let mut open_streams = RwLockUpgradableReadGuard::upgrade(open_streams).await;
-                    open_streams.insert(stream_did, stream.clone());
+                    open_streams.insert(stream_did.clone(), stream.clone());
                     stream
                 };
 
@@ -548,6 +557,7 @@ struct StreamInfoArgs {
 #[serde(rename_all = "camelCase")]
 struct StreamInfoResp {
     module_cid: Option<Cid>,
+    client_stamp: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -566,7 +576,7 @@ struct StreamCreateResp {
 
 #[cfg(test)]
 mod tests {
-    use super::{StreamCreateArgs, StreamCreateResp};
+    use super::{StreamCreateArgs, StreamCreateResp, StreamInfoResp};
     use leaf_stream::{
         atproto_plc::Did,
         dasl::{
@@ -577,6 +587,54 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use ulid::Ulid;
 
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyStreamInfoResp {
+        module_cid: Option<Cid>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StreamInfoRespCompat {
+        module_cid: Option<Cid>,
+        client_stamp: Option<String>,
+    }
+
+    #[test]
+    fn stream_info_legacy_shape_deserializes_without_client_stamp() {
+        let module_cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+            .parse::<Cid>()
+            .expect("parse cid");
+        let bytes = to_vec(&LegacyStreamInfoResp {
+            module_cid: Some(module_cid.clone()),
+        })
+        .expect("serialize legacy stream info response");
+
+        let parsed: StreamInfoRespCompat =
+            from_slice(&bytes).expect("deserialize legacy stream info");
+
+        assert_eq!(parsed.module_cid, Some(module_cid));
+        assert_eq!(parsed.client_stamp, None);
+    }
+
+    #[test]
+    fn stream_info_with_client_stamp_round_trips() {
+        let module_cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+            .parse::<Cid>()
+            .expect("parse cid");
+        let client_stamp = "01J9A90M5Q6VFXV9PRN00TS9TW".to_string();
+        let bytes = to_vec(&StreamInfoResp {
+            module_cid: Some(module_cid.clone()),
+            client_stamp: Some(client_stamp.clone()),
+        })
+        .expect("serialize stamped stream info response");
+
+        let parsed: StreamInfoRespCompat =
+            from_slice(&bytes).expect("deserialize stamped stream info");
+
+        assert_eq!(parsed.module_cid, Some(module_cid));
+        assert_eq!(parsed.client_stamp, Some(client_stamp));
+    }
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct LegacyStreamCreateArgs {
