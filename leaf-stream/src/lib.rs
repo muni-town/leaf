@@ -36,6 +36,15 @@ pub struct Stream {
     id: Did,
     state: Arc<RwLock<StreamState>>,
 }
+pub enum StreamUpdate {
+    /// New events were added to the stream.
+    NewEvents {
+        /// The new latest event index.
+        latest_idx: i64,
+    },
+    /// Ephemeral state events were received and may have changed the stream's state database.
+    StateChanged,
+}
 
 #[derive(Debug)]
 struct StreamState {
@@ -45,14 +54,16 @@ struct StreamState {
     latest_event: i64,
     module_event_cursor: i64,
     query_subscriptions: Arc<Mutex<Vec<ActiveSubscription>>>,
-    latest_event_subscriptions: Arc<Mutex<Vec<async_channel::Sender<i64>>>>,
+    update_subscriptions: Arc<Mutex<Vec<async_channel::Sender<StreamUpdate>>>>,
     worker_sender: Option<async_channel::Sender<WorkerMessage>>,
 }
 
 enum WorkerMessage {
-    /// We have new events: all subscriptions should be updated.
-    NewEvents { latest_event: i64 },
-    /// A specific subscription needs to be updated.
+    /// The stream has changed. The latest event will be null if the change was an update to the
+    /// stream state and didn't result in a new latest event idx.
+    StreamUpdated { latest_idx: Option<i64> },
+    /// A specific subscription needs to be updated. This is sent when paginating over a specific
+    /// subscription, which needs to trigger an update, but isn't due to the stream itself changing.
     NeedsUpdate(Ulid),
 }
 
@@ -312,22 +323,19 @@ impl Stream {
                 latest_event,
                 module_event_cursor,
                 query_subscriptions: Default::default(),
-                latest_event_subscriptions: Arc::new(Mutex::new(Vec::new())),
+                update_subscriptions: Arc::new(Mutex::new(Vec::new())),
                 worker_sender: None,
             })),
         })
     }
 
-    /// Get a subscription to the latest event index in the stream.
-    ///
-    /// Every time new events are added to this stream, the new latest event will be sent to the
-    /// receiver.
-    pub async fn subscribe_latest_event(&self) -> async_channel::Receiver<i64> {
+    /// Get a subscription to updates to the stream.
+    pub async fn subscribe_updates(&self) -> async_channel::Receiver<StreamUpdate> {
         let state = self.state.read().await;
-        let mut latest_event_subscriptions = state.latest_event_subscriptions.lock().await;
+        let mut update_subscriptions = state.update_subscriptions.lock().await;
 
         let (sender, receiver) = async_channel::bounded(12);
-        latest_event_subscriptions.push(sender);
+        update_subscriptions.push(sender);
 
         receiver
     }
@@ -679,8 +687,8 @@ impl Stream {
 
         // Update query subscriptions
         state.worker_sender.as_ref().map(|s| {
-            s.try_send(WorkerMessage::NewEvents {
-                latest_event: state.latest_event,
+            s.try_send(WorkerMessage::StreamUpdated {
+                latest_idx: Some(state.latest_event),
             })
             .ok()
         });
@@ -714,7 +722,7 @@ impl Stream {
                 // Use state_materialize_authorizer to allow writes to state database
                 module_db.authorizer(Some(Arc::new(state_materialize_authorizer)))?;
                 let result = module
-                    .materialize_state_event(&module_db, event.clone())
+                    .materialize_state_event(module_db, event.clone())
                     .await;
                 module_db.authorizer(None)?;
                 result?;
@@ -735,13 +743,11 @@ impl Stream {
             module_db.execute("commit", ()).await?;
         }
 
-        // Update query subscriptions, note that the state.latest_event hasn't actually changed
-        // since this is a state event and we aren't tracking event indexes.
+        // Update query subscriptions, note that the latest event is None because this was a state
+        // event that is not persisted and hasn't changed the latest event.
         state.worker_sender.as_ref().map(|s| {
-            s.try_send(WorkerMessage::NewEvents {
-                latest_event: state.latest_event,
-            })
-            .ok()
+            s.try_send(WorkerMessage::StreamUpdated { latest_idx: None })
+                .ok()
         });
 
         Ok(())
@@ -872,7 +878,7 @@ impl Stream {
                     let state = this.state.read().await;
                     (
                         state.query_subscriptions.clone(),
-                        state.latest_event_subscriptions.clone(),
+                        state.update_subscriptions.clone(),
                     )
                 };
                 let mut query_subscriptions = query_subscriptions.lock().await;
@@ -883,9 +889,14 @@ impl Stream {
                 latest_event_subscriptions.retain(|x| !x.is_closed());
 
                 let subs = match message {
-                    WorkerMessage::NewEvents { latest_event } => {
+                    WorkerMessage::StreamUpdated { latest_idx } => {
                         for sub in &*latest_event_subscriptions {
-                            sub.try_send(latest_event).ok();
+                            sub.try_send(if let Some(latest_idx) = latest_idx {
+                                StreamUpdate::NewEvents { latest_idx }
+                            } else {
+                                StreamUpdate::StateChanged
+                            })
+                            .ok();
                         }
                         query_subscriptions.iter_mut().collect::<Vec<_>>()
                     }

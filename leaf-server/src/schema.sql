@@ -54,3 +54,12 @@ create table if not exists "streams" (
     -- The index of the latest event in the stream
     "latest_event" integer not null
 ) strict;
+
+create table if not exists "backup_status" (
+    -- The stream ID
+    "did"           text not null primary key references dids(did),
+    -- The unix timestamp in seconds of the last time that this stream was backed up
+    "backed_up_at"  integer not null,
+    -- The unix timestamp in seconds of the last time that this stream was updated
+    "updated_at"    integer not null
+)
