@@ -593,6 +593,12 @@ mod tests {
         module_cid: Option<Cid>,
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyStreamInfoClientView {
+        module_cid: Option<Cid>,
+    }
+
     #[derive(Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct StreamInfoRespCompat {
@@ -671,6 +677,12 @@ mod tests {
         client_stamp: Option<Ulid>,
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyStreamCreateAckClientView {
+        stream_did: Did,
+    }
+
     #[test]
     fn stream_create_with_client_stamp_round_trips() {
         let module_cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
@@ -701,6 +713,41 @@ mod tests {
             from_slice(&resp_bytes).expect("deserialize response with client stamp");
         assert_eq!(parsed_resp.stream_did, stream_did);
         assert_eq!(parsed_resp.client_stamp, Some(client_stamp));
+    }
+
+    #[test]
+    fn stream_info_upgraded_response_is_ignored_by_legacy_client_parser() {
+        let module_cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+            .parse::<Cid>()
+            .expect("parse cid");
+        let bytes = to_vec(&StreamInfoResp {
+            module_cid: Some(module_cid.clone()),
+            client_stamp: Some("01J9A90M5Q6VFXV9PRN00TS9TW".to_string()),
+        })
+        .expect("serialize upgraded stream info response");
+
+        let parsed: LegacyStreamInfoClientView =
+            from_slice(&bytes).expect("deserialize into legacy client stream info shape");
+
+        assert_eq!(parsed.module_cid, Some(module_cid));
+    }
+
+    #[test]
+    fn stream_create_upgraded_response_is_ignored_by_legacy_client_parser() {
+        let stream_did = "did:plc:z72i7hdynmk6r22z27h6tvur"
+            .parse::<Did>()
+            .expect("parse did");
+
+        let bytes = to_vec(&StreamCreateResp {
+            stream_did: stream_did.clone(),
+            client_stamp: Some(Ulid::new()),
+        })
+        .expect("serialize upgraded stream create response");
+
+        let parsed: LegacyStreamCreateAckClientView =
+            from_slice(&bytes).expect("deserialize into legacy client stream create shape");
+
+        assert_eq!(parsed.stream_did, stream_did);
     }
 }
 
