@@ -221,15 +221,28 @@ impl Storage {
         Ok(stream)
     }
 
-    /// Persist the latest event we have for a stream.
-    pub async fn set_latest_event(&self, stream_did: Did, latest_event: i64) -> anyhow::Result<()> {
-        self.db()
-            .await
-            .execute(
+    /// Set the updated time for a stream and optionally update the latest event too.
+    ///
+    /// There may not be an update for the latest event if the change to the stream was to the state
+    /// DB from ephemeral state events.
+    pub async fn set_stream_updated(
+        &self,
+        stream_did: Did,
+        latest_event: Option<i64>,
+    ) -> anyhow::Result<()> {
+        let db = self.db().await;
+        db.execute(
+            "update backup_status set updated_auth = unixepoch() where did = ?",
+            [stream_did.as_str().to_string()],
+        )
+        .await?;
+        if let Some(latest_event) = latest_event {
+            db.execute(
                 "update streams set latest_event = ? where did = ?",
                 (latest_event, stream_did.as_str().to_string()),
             )
             .await?;
+        }
         Ok(())
     }
 

@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
-use leaf_stream::{LeafModule, Stream, atproto_plc::Did, dasl::cid::Cid};
+use leaf_stream::{LeafModule, Stream, StreamUpdate, atproto_plc::Did, dasl::cid::Cid};
 use tokio::sync::RwLock;
 use weak_table::WeakValueHashMap;
 
@@ -60,11 +60,16 @@ impl Streams {
         }
 
         // Spawn a task that will watch the latest event in the stream and update the main database
-        let latest_event_rx = stream.subscribe_latest_event().await;
+        let latest_event_rx = stream.subscribe_updates().await;
         let id_ = id.clone();
         tokio::spawn(async move {
-            while let Ok(latest_event) = latest_event_rx.recv().await {
-                if let Err(e) = STORAGE.set_latest_event(id_.clone(), latest_event).await {
+            while let Ok(update) = latest_event_rx.recv().await {
+                let latest_idx = if let StreamUpdate::NewEvents { latest_idx } = update {
+                    Some(latest_idx)
+                } else {
+                    None
+                };
+                if let Err(e) = STORAGE.set_stream_updated(id_.clone(), latest_idx).await {
                     tracing::error!("Error updating latest event for stream in database: {e}");
                 }
             }
