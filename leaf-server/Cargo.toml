@@ -79,3 +79,5 @@ futures = "0.3.31"
 s3-simple = { version = "0.6.0", default-features = false }
 p256 = "0.13.2"
 k256 = "0.13.4"
+zeroize = { version = "1.8.2", features = ["derive"] }
+tempfile = "3.25.0"

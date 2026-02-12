@@ -1,15 +1,19 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, LazyLock, Weak},
     time::Duration,
 };
 
 use async_lock::{RwLock, RwLockUpgradableReadGuard};
 use leaf_stream::{
-    BasicModule, LeafModule,
+    BasicModule, LeafModule, StreamUpdate,
     atproto_plc::{Did, SigningKey},
-    dasl::cid::{Cid, Codec::Drisl},
+    dasl::{
+        self,
+        cid::{Cid, Codec::Drisl},
+    },
     types::{Event, ModuleCodec},
 };
 use leaf_utils::convert::{FromRows, ParseRows};
@@ -20,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use weak_table::WeakValueHashMap;
+use zeroize::ZeroizeOnDrop;
 
 use crate::{
     async_oncelock::AsyncOnceLock,
@@ -33,8 +38,12 @@ pub static STORAGE: LazyLock<Storage> = LazyLock::new(Storage::default);
 static MODULES: LazyLock<RwLock<WeakValueHashMap<Cid, Weak<dyn LeafModule>>>> =
     LazyLock::new(|| RwLock::new(WeakValueHashMap::new()));
 
-pub static BUCKET_MODULE_DIR: &str = "modules";
-pub static BUCKET_STREAMS_DIR: &str = "streams";
+pub const BUCKET_MODULE_DIR: &str = "modules";
+pub const BUCKET_STREAMS_DIR: &str = "streams";
+pub const MODULE_ARCHIVE_EXT: &str = ".module.drisl.zstd";
+pub const EVENTS_ARCHIVE_EXT: &str = ".events.drisl.zstd";
+pub const STATEDB_FILENAME: &str = "state.db.zstd";
+pub const METADATA_FILENAME: &str = "metadata.drisl";
 
 #[derive(Default)]
 pub struct Storage {
@@ -60,9 +69,15 @@ pub struct S3BackupConfig {
 
 #[derive(Debug, Clone)]
 pub struct ListStreamsItem {
-    pub id: Did,
+    pub did: Did,
+    pub owners: Vec<String>,
     pub module_cid: Option<Cid>,
     pub latest_event: Option<i64>,
+    pub state_db_updated_at: Option<i64>,
+    pub state_db_backed_up_at: Option<i64>,
+    pub backup_latest_event: Option<i64>,
+    pub backup_module_cid: Option<Cid>,
+    pub backup_owners: Option<Vec<String>>,
 }
 
 impl Storage {
@@ -228,43 +243,153 @@ impl Storage {
     pub async fn set_stream_updated(
         &self,
         stream_did: Did,
-        latest_event: Option<i64>,
+        stream_update: StreamUpdate,
+    ) -> anyhow::Result<()> {
+        let db = self.db().await;
+
+        match stream_update {
+            StreamUpdate::NewEvents { latest_idx } => {
+                db.execute(
+                    "update streams set latest_event = ? where did = ?",
+                    (latest_idx, stream_did.as_str().to_string()),
+                )
+                .await?;
+            }
+            StreamUpdate::StateChanged => {
+                db.execute(
+                    "
+                        insert into backup_status (did) values (?) \
+                        on conflict do nothing
+                    ",
+                    [stream_did.as_str().to_string()],
+                )
+                .await?;
+                db.execute(
+                    "
+                        update backup_status
+                        set state_db_updated_at = unixepoch()
+                        where did = ?
+                    ",
+                    [stream_did.as_str().to_string()],
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Set the backed up time for a stream.
+    pub async fn set_stream_backed_up(
+        &self,
+        stream_did: Did,
+        stream_update: StreamUpdate,
     ) -> anyhow::Result<()> {
         let db = self.db().await;
         db.execute(
-            "update backup_status set updated_auth = unixepoch() where did = ?",
+            "
+                    insert into backup_status (did) values (?) \
+                    on conflict do nothing
+                ",
             [stream_did.as_str().to_string()],
         )
         .await?;
-        if let Some(latest_event) = latest_event {
-            db.execute(
-                "update streams set latest_event = ? where did = ?",
-                (latest_event, stream_did.as_str().to_string()),
-            )
-            .await?;
+
+        match stream_update {
+            StreamUpdate::NewEvents { latest_idx } => {
+                db.execute(
+                    "
+                        update backup_status
+                        set backup_latest_event = ?
+                        where did = ?
+                    ",
+                    (latest_idx, stream_did.as_str().to_string()),
+                )
+                .await?;
+            }
+            StreamUpdate::StateChanged => {
+                db.execute(
+                    "
+                        update backup_status
+                        set state_db_backed_up_at = unixepoch()
+                        where did = ?
+                    ",
+                    [stream_did.as_str().to_string()],
+                )
+                .await?;
+            }
         }
         Ok(())
     }
 
     /// Get the list of streams and the latest event we have for each
     pub async fn list_streams(&self) -> anyhow::Result<Vec<ListStreamsItem>> {
-        let rows: Vec<(Did, Option<Cid>, Option<i64>)> = self
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            Did,
+            Option<Cid>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<Cid>,
+            Option<String>,
+        )> = self
             .db()
             .await
-            .query("select did, module_cid, latest_event from streams", ())
+            .query(
+                "
+                select
+                    did, 
+                    module_cid, 
+                    latest_event,
+                    state_db_updated_at,
+                    state_db_backed_up_at,
+                    backup_latest_event,
+                    backup_module_cid,
+                    backup_owners \
+                from streams \
+                left join backup_status \
+                    on streams.did = backup_status.did",
+                (),
+            )
             .await?
             .parse_rows()
             .await?;
-        let items = rows
+        let mut items = rows
             .into_iter()
-            .map(|x| {
-                Ok::<_, anyhow::Error>(ListStreamsItem {
-                    id: x.0,
-                    module_cid: x.1,
-                    latest_event: x.2,
-                })
-            })
+            .map(
+                |(
+                    did,
+                    module_cid,
+                    latest_event,
+                    state_db_updated_at,
+                    state_db_backed_up_at,
+                    backup_latest_event,
+                    backup_module_cid,
+                    backup_owners,
+                )| {
+                    Ok::<_, anyhow::Error>(ListStreamsItem {
+                        did,
+                        owners: Vec::new(), // Note: we will fetch the owners below
+                        module_cid,
+                        latest_event,
+                        state_db_updated_at,
+                        state_db_backed_up_at,
+                        backup_latest_event,
+                        backup_module_cid,
+                        backup_owners: backup_owners
+                            .map(|x| serde_json::from_str::<Vec<String>>(&x))
+                            .transpose()?,
+                    })
+                },
+            )
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Fetch the owners for each stream
+        for item in items.iter_mut() {
+            item.owners = self.get_did_owners(item.did.clone()).await?;
+        }
+
         Ok(items)
     }
 
@@ -467,47 +592,46 @@ impl Storage {
 
     #[instrument(skip(self), err)]
     pub async fn backup_to_s3(&self) -> anyhow::Result<()> {
-        // FIXME: reimplement S3 backups
-        Ok(())
-        // let Some(bucket) = &*self.backup_bucket.read().await else {
-        //     return Ok(());
-        // };
+        let Some(bucket) = &*self.backup_bucket.read().await else {
+            return Ok(());
+        };
 
-        // // List modules in the bucket
-        // let modules_in_backup = bucket
-        //     .list(BUCKET_MODULE_DIR, None)
-        //     .await?
-        //     .into_iter()
-        //     .flat_map(|x| x.contents.into_iter())
-        //     .filter_map(|x| {
-        //         Cid::from_str(
-        //             x.key
-        //                 .strip_prefix(&format!("{BUCKET_MODULE_DIR}/"))
-        //                 .unwrap_or_default()
-        //                 .strip_suffix(".module.zstd")
-        //                 .unwrap_or_default(),
-        //         )
-        //         .ok()
-        //     })
-        //     .collect::<HashSet<_>>();
+        // List modules in the bucket
+        let modules_in_backup = bucket
+            .list(BUCKET_MODULE_DIR, None)
+            .await?
+            .into_iter()
+            .flat_map(|x| x.contents.into_iter())
+            .filter_map(|x| {
+                Cid::from_str(
+                    x.key
+                        .strip_prefix(&format!("{BUCKET_MODULE_DIR}/"))
+                        .unwrap_or_default()
+                        .strip_suffix(MODULE_ARCHIVE_EXT)
+                        .unwrap_or_default(),
+                )
+                .ok()
+            })
+            .collect::<HashSet<_>>();
 
-        // // List modules we have locally
-        // let modules_local = self.list_module_blobs().await?;
+        // List modules we have locally
+        let modules_local = self.list_module_blobs().await?;
 
-        // // Upload local modules not in backup
-        // for module_not_in_backup in modules_local.difference(&modules_in_backup) {
-        //     let Some(module) = self.get_module_blob(*module_not_in_backup).await? else {
-        //         continue;
-        //     };
-        //     let compressed = zstd::encode_all(&module[..], 0)?;
-        //     bucket
-        //         .put(
-        //             format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}.module.zstd"),
-        //             &compressed,
-        //         )
-        //         .await?;
-        // }
+        // Upload local modules not in backup
+        for module_not_in_backup in modules_local.difference(&modules_in_backup) {
+            let Some(module) = self.get_module_blob(*module_not_in_backup).await? else {
+                continue;
+            };
+            let compressed = zstd::encode_all(&module[..], 0)?;
+            bucket
+                .put(
+                    format!("{BUCKET_MODULE_DIR}/{module_not_in_backup}{MODULE_ARCHIVE_EXT}"),
+                    &compressed,
+                )
+                .await?;
+        }
 
+        // We'll do this in a separate restore step
         // // Download backup modules that aren't local
         // for module_not_local in modules_in_backup.difference(&modules_local) {
         //     let resp = bucket
@@ -529,114 +653,139 @@ impl Storage {
         //     }
         // }
 
-        // // Get the list of streams we have on the server
-        // let streams_local = self.list_streams().await?;
-        // let stream_dids_local = streams_local.iter().map(|x| x.id).collect::<HashSet<_>>();
+        // Get the list of streams we have on the server
+        let streams_local = self.list_streams().await?;
 
-        // // Get the list of streams that exist on S3
-        // let streams_dir = format!("{BUCKET_STREAMS_DIR}/");
-        // let stream_dids_on_s3 = bucket
-        //     .list(&streams_dir, Some("/"))
-        //     .await?
-        //     .into_iter()
-        //     .flat_map(|x| {
-        //         x.common_prefixes.into_iter().flat_map(|x| {
-        //             x.into_iter().filter_map(|x| {
-        //                 x.prefix
-        //                     .strip_prefix(&streams_dir)
-        //                     .and_then(|x| x.strip_suffix("/"))
-        //                     .map(|x| x.to_owned())
-        //             })
-        //         })
-        //     })
-        //     .flat_map(|x| Cid::from_str(&x).ok())
-        //     .collect::<HashSet<_>>();
+        // For each stream we have locally
+        for stream in streams_local {
+            // Check whether the stream events need to be backed up
+            let stream_events_need_backup =
+                stream.backup_latest_event.unwrap_or(0) < stream.latest_event.unwrap_or(0);
 
-        // // For each stream we have locally
-        // for stream in streams_local {
-        //     // Get the latest event we have locally. The `0` means that all we have is the genesis,
-        //     // aka. an empty stream.
-        //     let latest_event_local = stream.latest_event.unwrap_or(0);
+            // Check whether the state DB needs to be backed up
+            let state_db_needs_backup =
+                stream.state_db_backed_up_at.unwrap_or(0) < stream.state_db_updated_at.unwrap_or(0);
 
-        //     // Get the latest event from the S3 bucket
-        //     let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream.id);
-        //     let ranges_on_s3 = bucket
-        //         .list(&stream_dir, None)
-        //         .await?
-        //         .into_iter()
-        //         // We get the list of pages
-        //         .flat_map(|x| x.contents.into_iter())
-        //         .filter_map(|x| {
-        //             // Find the name of the stream
-        //             let name = x
-        //                 .key
-        //                 .strip_prefix(&format!("{stream_dir}/"))
-        //                 .unwrap_or_default();
-        //             // And parse the [start]-[end].lvg.zstd filename
-        //             let (start, end) = name
-        //                 .strip_suffix(".lvt.zstd")
-        //                 .unwrap_or("")
-        //                 .split_once('-')?;
-        //             // And grab start and end
-        //             let start = start.parse::<i64>().ok()?;
-        //             let end = end.parse::<i64>().ok()?;
-        //             Some((start, end))
-        //         })
-        //         .collect::<Vec<_>>();
-        //     let latest_in_s3 = ranges_on_s3.iter().map(|x| x.1).max();
+            // Check whether the module ID changed
+            let module_cid_changed = stream.module_cid != stream.backup_module_cid;
 
-        //     // Check if we need to send new events to S3:
-        //     // - If there is a latest s3 event, then we need to update it if it is less than our
-        //     // local latest event.
-        //     // - If there is no latest event on s3, then we need to send the genesis and latest
-        //     //   events that we have locally.
-        //     if latest_in_s3.map(|l| l < latest_event_local).unwrap_or(true) {
-        //         // Open the local stream
-        //         let s = STREAMS.load(stream.id).await?;
+            // Check whether or not the owners have changed
+            let owners_changed = Some(&stream.owners) != stream.backup_owners.as_ref();
 
-        //         // Get the events that are newer than the latest s3 event.
-        //         let events = s
-        //             .raw_get_events((latest_in_s3.map(|l| l + 1).unwrap_or(1))..)
-        //             .await?;
-        //         let events_len = events.len() as i64;
+            // Check whether the stream metadata needs to be backed up
+            let metadata_needs_backup = module_cid_changed || owners_changed;
 
-        //         if events_len == 0 && latest_in_s3.is_some() {
-        //             // This should be unreachable, but skip this just in case
-        //             tracing::error!(?latest_in_s3, "Hit unreachable condition: ignoring.");
-        //             continue;
-        //         }
+            let needs_any_backup =
+                metadata_needs_backup || state_db_needs_backup || stream_events_need_backup;
 
-        //         // Create and compress the event archive
-        //         let archive = EventArchive { genesis, events };
-        //         let archive_bytes = archive.encode();
-        //         let compressed = zstd::encode_all(&archive_bytes[..], 0)?;
+            // Skip if there is nothing to backup
+            if !needs_any_backup {
+                continue;
+            }
 
-        //         // Push the archive to s3
-        //         let name = format!(
-        //             "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
-        //             s.id,
-        //             latest_in_s3.map(|l| l + 1).unwrap_or(0),
-        //             latest_in_s3.map(|l| l + events_len).unwrap_or(events_len)
-        //         );
-        //         bucket.put(name, &compressed).await?;
+            // Backup the stream's metadata if needed
+            if metadata_needs_backup {
+                let metadata = StreamMetadata {
+                    did: stream.did.clone(),
+                    did_key: self.get_did_signing_key(stream.did.clone()).await?.into(),
+                    owners: stream.owners.clone(),
+                    module_cid: stream.module_cid,
+                };
+                let metadata_bytes = dasl::drisl::to_vec(&metadata)?;
+                let stream_did = &stream.did;
+                let file_name = format!("{BUCKET_STREAMS_DIR}/{stream_did}/{METADATA_FILENAME}");
+                bucket.put(file_name, &metadata_bytes).await?;
+            }
 
-        //     // If s3 has a newer event than we have locally.
-        //     } else if latest_in_s3
-        //         .map(|l| l > latest_event_local)
-        //         .unwrap_or(false)
-        //     {
-        //         // For now just log a warning. This shouldn't normally happen, we expect either the
-        //         // local stream to be completely empty or newer than s3. Having s3 newer means there
-        //         // is some kind of corruption or an out-of-date local database which shouldn't
-        //         // happen under normal circumstances.
-        //         tracing::warn!(
-        //             %stream.id,
-        //             "There is newer backup data available on S3 than there is locally for a stream. \
-        //             This should not normally happen so the s3 backup will not be restored. This should \
-        //             be investigated manually."
-        //         )
-        //     }
-        // }
+            // Backup the stream's events if needed
+            'events_backup: {
+                if stream_events_need_backup {
+                    // Open the local stream
+                    let s = STREAMS.load(stream.did.clone()).await?;
+
+                    // Get the starting event in the range we need to backup
+                    let start_event = stream.backup_latest_event.map(|l| l + 1).unwrap_or(1);
+
+                    // Get the events that are newer than the latest backed up event.
+                    let events = s
+                        .raw_get_events((stream.backup_latest_event.map(|l| l + 1).unwrap_or(1))..)
+                        .await?;
+                    let events_len = events.len() as i64;
+
+                    // Skip stream backup if there are no events in the range
+                    if events_len == 0 {
+                        break 'events_backup;
+                    }
+
+                    // Get the end idx in the range we are backing up
+                    let end_event = start_event + events_len;
+
+                    // Create and compress the event archive
+                    let archive = EventArchive { events };
+                    let archive_bytes = dasl::drisl::to_vec(&archive)?;
+                    let compressed = zstd::encode_all(&archive_bytes[..], 0)?;
+
+                    // Push the archive to s3
+                    let stream_did = &stream.did;
+                    let name = format!(
+                        "{BUCKET_STREAMS_DIR}/{stream_did}/{start_event}-{end_event}{EVENTS_ARCHIVE_EXT}"
+                    );
+                    bucket.put(name, &compressed).await?;
+
+                    // Record the backup status for the stream events
+                    self.set_stream_backed_up(
+                        stream.did.clone(),
+                        StreamUpdate::NewEvents {
+                            latest_idx: end_event,
+                        },
+                    )
+                    .await?;
+                }
+            }
+
+            // Backup the stream's state DB if needed
+            // TODO: this needs more testing to make sure it works, once we start using it.
+            if state_db_needs_backup {
+                let temp_dir = tempfile::tempdir()?;
+                let statedb_path = self
+                    .data_dir()?
+                    .join("streams")
+                    .join(stream.did.as_str())
+                    .join("state.db");
+                let statedb_backup_path = temp_dir.path().join("state.db");
+
+                // Open a new connection to the state database
+                let statedb = libsql::Builder::new_local(statedb_path)
+                    .build()
+                    .await?
+                    .connect()?;
+
+                // Vacuum the database into a new one, making an atomic snapshot
+                statedb
+                    .execute(
+                        "vacuum into ?",
+                        [statedb_backup_path
+                            .to_str()
+                            .ok_or_else(|| anyhow::format_err!("Non-UTF8 string"))?],
+                    )
+                    .await?;
+                // Read the newly backed up database file
+                let statedb_backup = tokio::fs::read(statedb_backup_path).await?;
+                // Zstd compress it
+                let compressed = zstd::encode_all(&statedb_backup[..], 0)?;
+
+                // Push the archive to s3
+                let stream_did = &stream.did;
+                let name = format!("{BUCKET_STREAMS_DIR}/{stream_did}/{STATEDB_FILENAME}");
+                bucket.put(name, &compressed).await?;
+
+                // Record the backup status for the state DB
+                self.set_stream_backed_up(stream.did.clone(), StreamUpdate::StateChanged)
+                    .await?;
+            }
+        }
+
+        // TODO: this needs to be moved to the restore CLI.
 
         // // Get the list of streams that are on S3, but not local. These will need to be created.
         // let stream_dids_on_s3_but_not_local = stream_dids_on_s3.difference(&stream_dids_local);
@@ -742,7 +891,7 @@ impl Storage {
         //     }
         // }
 
-        // Ok(())
+        Ok(())
     }
 }
 
@@ -753,8 +902,25 @@ struct EventArchive {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct StreamMetadata {
-    owner: String,
-    module_cid: Cid,
+    did: Did,
+    did_key: StreamMetadataDidKey,
+    owners: Vec<String>,
+    module_cid: Option<Cid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, ZeroizeOnDrop)]
+enum StreamMetadataDidKey {
+    P256([u8; 32]),
+    K256([u8; 32]),
+}
+
+impl From<SigningKey> for StreamMetadataDidKey {
+    fn from(value: SigningKey) -> Self {
+        match value {
+            SigningKey::P256(ref key) => Self::P256(key.to_bytes().into()),
+            SigningKey::K256(ref key) => Self::K256(key.to_bytes().into()),
+        }
+    }
 }
 
 #[instrument(skip(db))]

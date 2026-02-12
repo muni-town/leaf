@@ -58,8 +58,18 @@ create table if not exists "streams" (
 create table if not exists "backup_status" (
     -- The stream ID
     "did"           text not null primary key references dids(did),
-    -- The unix timestamp in seconds of the last time that this stream was backed up
-    "backed_up_at"  integer not null,
-    -- The unix timestamp in seconds of the last time that this stream was updated
-    "updated_at"    integer not null
-)
+
+    -- The unix timestamp in seconds of the last time that the state DB was updated
+    "state_db_updated_at"   integer,
+    -- The unix timestamp in seconds of the last time that the state DB was backed up
+    "state_db_backed_up_at" integer,
+
+    -- The latest event that we we have backed up
+    "backup_latest_event"   integer,
+
+    -- The module CID of the stream that we most recently backed up
+    "backup_module_cid"     text,
+
+    -- JSON list of the owners of the the stream in the backup
+    "backup_owners"          text
+) strict;

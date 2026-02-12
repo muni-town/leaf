@@ -56,7 +56,7 @@ pub async fn update_did_handle(stream_did: Did, handle: Option<String>) -> anyho
     let audit_log: AuditLog = audit_log_resp.json().await?;
 
     // Get the latest op in the log
-    let Some(previous) = audit_log.0.iter().filter(|x| !x.nullified).next_back() else {
+    let Some(previous) = audit_log.0.iter().rfind(|x| !x.nullified) else {
         anyhow::bail!(
             "Cannot update DID handle: ould not find previous operation in operation log."
         )
