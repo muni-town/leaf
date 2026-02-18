@@ -15,7 +15,7 @@ export type BasicModule = ModuleCodec<
     initSql: string;
     authorizer: string;
     materializer: string;
-    stateMaterializer: string;
+    stateMaterializer?: string;
     stateInitSql: string;
     queries: {
       name: string;
