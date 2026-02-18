@@ -94,6 +94,7 @@ pub struct BasicModuleDef {
     pub materializer: String,
 
     /// SQL statements that will be used to materialize state events into the state db.
+    #[serde(default)]
     pub state_materializer: String,
 
     /// Idempodent initialization SQL that will be used to setup the state database.
@@ -161,10 +162,12 @@ pub enum LeafModuleQueryParamKind {
 
 /// An event in a stream.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Event<Payload = Vec<u8>> {
+pub struct Event {
     pub idx: i64,
     pub user: String,
-    pub payload: Payload,
+    #[serde(with = "dasl::drisl::serde_bytes")]
+    pub payload: Vec<u8>,
+    #[serde(with = "dasl::drisl::serde_bytes")]
     pub signature: Vec<u8>,
 }
 

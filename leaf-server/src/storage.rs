@@ -339,7 +339,7 @@ impl Storage {
             .query(
                 "
                 select
-                    did, 
+                    streams.did, 
                     module_cid, 
                     latest_event,
                     state_db_updated_at,
@@ -631,28 +631,6 @@ impl Storage {
                 .await?;
         }
 
-        // We'll do this in a separate restore step
-        // // Download backup modules that aren't local
-        // for module_not_local in modules_in_backup.difference(&modules_local) {
-        //     let resp = bucket
-        //         .get(format!(
-        //             "{BUCKET_MODULE_DIR}/{module_not_local}.module.zstd"
-        //         ))
-        //         .await?;
-        //     let resp_bytes = resp.bytes().await?;
-        //     let decompressed = zstd::decode_all(&resp_bytes[..])?;
-        //     let cid = Cid::digest_sha2(Drisl, &decompressed);
-        //     if cid == *module_not_local {
-        //         self.add_module_blob(decompressed).await?;
-        //     } else {
-        //         tracing::error!(
-        //             actual_hash=%cid,
-        //             hash_in_filename=%module_not_local,
-        //             "Error importing module from s3: module hash did not match filename."
-        //         );
-        //     }
-        // }
-
         // Get the list of streams we have on the server
         let streams_local = self.list_streams().await?;
 
@@ -785,112 +763,6 @@ impl Storage {
             }
         }
 
-        // TODO: this needs to be moved to the restore CLI.
-
-        // // Get the list of streams that are on S3, but not local. These will need to be created.
-        // let stream_dids_on_s3_but_not_local = stream_dids_on_s3.difference(&stream_dids_local);
-
-        // 'stream: for stream_did in stream_dids_on_s3_but_not_local {
-        //     tracing::info!(
-        //         stream.id=%stream_did,
-        //         "Found stream in S3 backup that is not local. Attempting to import."
-        //     );
-
-        //     let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream_did);
-        //     let mut ranges_on_s3 = bucket
-        //         .list(&stream_dir, None)
-        //         .await?
-        //         .into_iter()
-        //         // We get the list of pages
-        //         .flat_map(|x| x.contents.into_iter())
-        //         .filter_map(|x| {
-        //             // Find the name of the stream
-        //             let name = x
-        //                 .key
-        //                 .strip_prefix(&format!("{stream_dir}/"))
-        //                 .unwrap_or_default();
-        //             // And parse the [start]-[end].lvt.zstd filename
-        //             let (start, end) = name
-        //                 .strip_suffix(".lvt.zstd")
-        //                 .unwrap_or("")
-        //                 .split_once('-')?;
-        //             // And grab start and end
-        //             let start = start.parse::<i64>().ok()?;
-        //             let end = end.parse::<i64>().ok()?;
-        //             Some((start, end))
-        //         })
-        //         .collect::<Vec<_>>();
-        //     ranges_on_s3.sort_by(|x, y| x.0.cmp(&y.0));
-
-        //     // Make sure ranges are non-overlapping and without holes
-        //     let mut last_idx = -1;
-        //     for (start, end) in &ranges_on_s3 {
-        //         if *start != last_idx + 1 {
-        //             tracing::warn!(
-        //                 stream.id=%stream_did,
-        //                 "Ranges of events on s3 are not continuous, skipping import."
-        //             );
-        //             continue 'stream;
-        //         }
-        //         last_idx = *end;
-        //     }
-
-        //     // Download each archive and apply it to the stream
-        //     let count = ranges_on_s3.len();
-        //     let mut stream = None;
-        //     for (i, (start, end)) in ranges_on_s3.into_iter().enumerate() {
-        //         let is_last_range = i + 1 == count;
-        //         let archive_path = format!(
-        //             "{BUCKET_STREAMS_DIR}/{}/{}-{}.lvt.zstd",
-        //             stream_did, start, end
-        //         );
-        //         let resp = bucket.get(archive_path).await?;
-        //         let bytes = resp.bytes().await?;
-        //         let decompressed = zstd::decode_all(&bytes[..])?;
-        //         let archive = EventArchive::decode(&mut &decompressed[..])?;
-
-        //         // If this is the initial archive
-        //         if start == 0 {
-        //             // Get the genesis info
-        //             let Some(genesis) = archive.genesis else {
-        //                 tracing::error!(
-        //                     stream.id=%stream_did,
-        //                     "Cannot import: first event batch does not contain the stream genesis."
-        //                 );
-        //                 continue 'stream;
-        //             };
-
-        //             // Create the stream
-        //             let s = self.create_stream(genesis).await?;
-        //             if s.id() != *stream_did {
-        //                 tracing::error!(
-        //                     expected_stream_did=%stream_did,
-        //                     imported_stream_did=%s.id(),
-        //                     "Imported stream genesis but got different sream ID than expected. \
-        //                     Aborting import after having created new stream with unexpected ID."
-        //                 );
-        //                 continue 'stream;
-        //             }
-        //             stream = Some(s);
-        //         }
-
-        //         // Get the stream
-        //         let Some(s) = &stream else {
-        //             tracing::error!("Stream backup missing genesis");
-        //             continue 'stream;
-        //         };
-
-        //         // Import the events from the archive
-        //         s.raw_import_events(archive.events).await?;
-
-        //         // Set the module and catch it up
-        //         if is_last_range {
-        //             // FIXME： we need the module definition to be included here.
-        //             // s.raw_set_module(archive.module_def).await?;
-        //         }
-        //     }
-        // }
-
         Ok(())
     }
 }
@@ -910,7 +782,9 @@ struct StreamMetadata {
 
 #[derive(Serialize, Deserialize, Debug, ZeroizeOnDrop)]
 enum StreamMetadataDidKey {
+    #[serde(with = "dasl::drisl::serde_bytes")]
     P256([u8; 32]),
+    #[serde(with = "dasl::drisl::serde_bytes")]
     K256([u8; 32]),
 }
 
