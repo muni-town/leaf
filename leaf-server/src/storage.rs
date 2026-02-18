@@ -279,10 +279,10 @@ impl Storage {
     }
 
     /// Set the backed up time for a stream.
-    pub async fn set_stream_backed_up(
+    async fn set_stream_backed_up(
         &self,
         stream_did: Did,
-        stream_update: StreamUpdate,
+        update: BackupUpdate,
     ) -> anyhow::Result<()> {
         let db = self.db().await;
         db.execute(
@@ -294,30 +294,48 @@ impl Storage {
         )
         .await?;
 
-        match stream_update {
-            StreamUpdate::NewEvents { latest_idx } => {
-                db.execute(
-                    "
+        match update {
+            BackupUpdate::Stream(stream_update) => match stream_update {
+                StreamUpdate::NewEvents { latest_idx } => {
+                    db.execute(
+                        "
                         update backup_status
                         set backup_latest_event = ?
                         where did = ?
                     ",
-                    (latest_idx, stream_did.as_str().to_string()),
-                )
-                .await?;
-            }
-            StreamUpdate::StateChanged => {
-                db.execute(
-                    "
+                        (latest_idx, stream_did.as_str().to_string()),
+                    )
+                    .await?;
+                }
+                StreamUpdate::StateChanged => {
+                    db.execute(
+                        "
                         update backup_status
                         set state_db_backed_up_at = unixepoch()
                         where did = ?
                     ",
-                    [stream_did.as_str().to_string()],
+                        [stream_did.as_str().to_string()],
+                    )
+                    .await?;
+                }
+            },
+            BackupUpdate::Metadata { owners, module_cid } => {
+                db.execute(
+                    "
+                        update backup_status
+                        set backup_module_cid = ?, backup_owners = ?
+                        where did = ?
+                    ",
+                    (
+                        module_cid.map(|x| x.to_string()),
+                        serde_json::to_string(&owners).unwrap(),
+                        stream_did.as_str().to_string(),
+                    ),
                 )
                 .await?;
             }
         }
+
         Ok(())
     }
 
@@ -673,6 +691,16 @@ impl Storage {
                 let stream_did = &stream.did;
                 let file_name = format!("{BUCKET_STREAMS_DIR}/{stream_did}/{METADATA_FILENAME}");
                 bucket.put(file_name, &metadata_bytes).await?;
+
+                // Record the backup status for the metadata
+                self.set_stream_backed_up(
+                    stream.did.clone(),
+                    BackupUpdate::Metadata {
+                        owners: stream.owners.clone(),
+                        module_cid: stream.module_cid,
+                    },
+                )
+                .await?;
             }
 
             // Backup the stream's events if needed
@@ -713,9 +741,9 @@ impl Storage {
                     // Record the backup status for the stream events
                     self.set_stream_backed_up(
                         stream.did.clone(),
-                        StreamUpdate::NewEvents {
+                        BackupUpdate::Stream(StreamUpdate::NewEvents {
                             latest_idx: end_event,
-                        },
+                        }),
                     )
                     .await?;
                 }
@@ -758,13 +786,27 @@ impl Storage {
                 bucket.put(name, &compressed).await?;
 
                 // Record the backup status for the state DB
-                self.set_stream_backed_up(stream.did.clone(), StreamUpdate::StateChanged)
-                    .await?;
+                self.set_stream_backed_up(
+                    stream.did.clone(),
+                    BackupUpdate::Stream(StreamUpdate::StateChanged),
+                )
+                .await?;
             }
         }
 
         Ok(())
     }
+}
+
+/// An update to the backed up status of a stream.
+enum BackupUpdate {
+    /// We have backed up a [`StreamUpdate`].
+    Stream(StreamUpdate),
+    /// We have backed up the stream metadata.
+    Metadata {
+        owners: Vec<String>,
+        module_cid: Option<Cid>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
