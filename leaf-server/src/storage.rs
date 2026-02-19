@@ -25,6 +25,7 @@ use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use weak_table::WeakValueHashMap;
 use zeroize::ZeroizeOnDrop;
+use zstd::zstd_safe::WriteBuf;
 
 use crate::{
     async_oncelock::AsyncOnceLock,
@@ -217,11 +218,7 @@ impl Storage {
 
     /// Create a new stream
     #[instrument(skip(self), err)]
-    pub async fn create_stream(
-        &self,
-        stream_did: Did,
-        owner: String,
-    ) -> anyhow::Result<StreamHandle> {
+    pub async fn create_stream(&self, stream_did: Did) -> anyhow::Result<StreamHandle> {
         let stream = STREAMS.load(stream_did.clone()).await?;
 
         self.db()
@@ -534,7 +531,12 @@ impl Storage {
     }
 
     #[instrument(skip(self, key), err)]
-    pub async fn create_did(&self, did: Did, key: SigningKey, owner: String) -> anyhow::Result<()> {
+    pub async fn create_did(
+        &self,
+        did: Did,
+        key: SigningKey,
+        owners: Vec<String>,
+    ) -> anyhow::Result<()> {
         let db = self.db().await;
         db.execute("begin immediate", ()).await?;
         db.execute(
@@ -559,11 +561,13 @@ impl Storage {
             ),
         )
         .await?;
-        db.execute(
-            "insert into did_owners (did, owner) values (?, ?)",
-            [did.as_str().to_string(), owner],
-        )
-        .await?;
+        for owner in owners {
+            db.execute(
+                "insert into did_owners (did, owner) values (?, ?)",
+                [did.as_str().to_string(), owner],
+            )
+            .await?;
+        }
         db.execute("commit", ()).await?;
         Ok(())
     }
@@ -802,8 +806,207 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn restore_from_s3_backup(&self, _config: &S3BackupConfig) -> anyhow::Result<()> {
-        todo!()
+    pub async fn restore_from_s3_backup(&self, config: &S3BackupConfig) -> anyhow::Result<()> {
+        tracing::info!("Restoring leaf data from S3 backup");
+
+        // Connect to S3 bucket
+        let bucket = Bucket::new(
+            config.host.clone(),
+            config.name.clone(),
+            s3_simple::Region(config.region.clone()),
+            s3_simple::Credentials {
+                access_key_id: s3_simple::AccessKeyId(config.access_key.clone()),
+                access_key_secret: s3_simple::AccessKeySecret(config.secret_key.clone()),
+            },
+            Some(s3_simple::BucketOptions {
+                path_style: true,
+                list_objects_v2: false,
+            }),
+        )?;
+
+        // List modules in the bucket
+        let modules_in_backup = bucket
+            .list(BUCKET_MODULE_DIR, None)
+            .await?
+            .into_iter()
+            .flat_map(|x| x.contents.into_iter())
+            .filter_map(|x| {
+                Cid::from_str(
+                    x.key
+                        .strip_prefix(&format!("{BUCKET_MODULE_DIR}/"))
+                        .unwrap_or_default()
+                        .strip_suffix(MODULE_ARCHIVE_EXT)
+                        .unwrap_or_default(),
+                )
+                .ok()
+            })
+            .collect::<HashSet<_>>();
+
+        // List modules we have locally
+        let modules_local = self.list_module_blobs().await?;
+
+        // Download modules that aren't local
+        for module_not_local in modules_in_backup.difference(&modules_local) {
+            let resp = bucket
+                .get(format!(
+                    "{BUCKET_MODULE_DIR}/{module_not_local}{MODULE_ARCHIVE_EXT}"
+                ))
+                .await?;
+            let compressed = resp.bytes().await?;
+            let bytes = zstd::decode_all(compressed.as_slice())?;
+
+            self.add_module_blob(bytes).await?;
+        }
+
+        // Get the list of streams that exist on S3
+        let streams_dir = format!("{BUCKET_STREAMS_DIR}/");
+        let stream_dids_on_s3 = bucket
+            .list(&streams_dir, Some("/"))
+            .await?
+            .into_iter()
+            .flat_map(|x| {
+                x.common_prefixes.into_iter().flat_map(|x| {
+                    x.into_iter().filter_map(|x| {
+                        x.prefix
+                            .strip_prefix(&streams_dir)
+                            .and_then(|x| x.strip_suffix("/"))
+                            .map(|x| x.to_owned())
+                    })
+                })
+            })
+            .flat_map(|x| Did::from_str(&x).ok())
+            .collect::<HashSet<_>>();
+
+        let local_streams = self
+            .list_streams()
+            .await?
+            .into_iter()
+            .map(|x| x.did)
+            .collect::<HashSet<_>>();
+
+        // Loop over streams
+        'restore_streams: for stream_did in stream_dids_on_s3 {
+            // Only import streams we don't have locally
+            if local_streams.contains(&stream_did) {
+                tracing::warn!(did=%stream_did, "Skipping restore of stream that we already have locally.");
+                continue 'restore_streams;
+            }
+            tracing::info!(did=%stream_did, "Restoring stream");
+
+            let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream_did);
+
+            // Fetch the stream metadata
+            let bytes = bucket
+                .get(format!("{stream_dir}/{METADATA_FILENAME}"))
+                .await?
+                .bytes()
+                .await?;
+            let metadata: StreamMetadata = dasl::drisl::from_slice(&bytes)?;
+
+            if metadata.did != stream_did {
+                tracing::error!("Stream metadata DID did not match folder it was in, skipping.");
+                continue 'restore_streams;
+            }
+
+            // Create the DID for the stream
+            self.create_did(
+                metadata.did.clone(),
+                metadata.did_key.try_into()?,
+                metadata.owners,
+            )
+            .await?;
+            // Create the stream
+            let stream = self.create_stream(stream_did.clone()).await?;
+
+            // Fetch the list of event archives on S3
+            let mut ranges_on_s3 = bucket
+                .list(&stream_dir, None)
+                .await?
+                .into_iter()
+                // We get the list of pages
+                .flat_map(|x| x.contents.into_iter())
+                .filter_map(|x| {
+                    // Find the name of the stream
+                    let name = x
+                        .key
+                        .strip_prefix(&format!("{stream_dir}/"))
+                        .unwrap_or_default();
+                    // And parse the [start]-[end].events.drisl.zstd filename
+                    let (start, end) = name
+                        .strip_suffix(EVENTS_ARCHIVE_EXT)
+                        .unwrap_or("")
+                        .split_once('-')?;
+                    // And grab start and end
+                    let start = start.parse::<i64>().ok()?;
+                    let end = end.parse::<i64>().ok()?;
+                    Some((start, end))
+                })
+                .collect::<Vec<_>>();
+            ranges_on_s3.sort_by(|x, y| x.0.cmp(&y.0));
+
+            // Make sure ranges are non-overlapping and without holes
+            let mut last_idx = 0;
+            for (start, end) in &ranges_on_s3 {
+                if *start != last_idx + 1 {
+                    tracing::warn!(
+                        did=%stream_did,
+                        "Ranges of events on s3 are not continuous, skipping import."
+                    );
+                    continue 'restore_streams;
+                }
+                last_idx = *end;
+            }
+
+            // Download each archive and apply it to the stream
+            for (start, end) in ranges_on_s3.into_iter() {
+                let archive_path = format!(
+                    "{BUCKET_STREAMS_DIR}/{}/{}-{}{EVENTS_ARCHIVE_EXT}",
+                    stream_did, start, end
+                );
+                let resp = bucket.get(archive_path).await?;
+                let bytes = resp.bytes().await?;
+                let decompressed = zstd::decode_all(&bytes[..])?;
+                let archive: EventArchive = dasl::drisl::from_slice(&decompressed)?;
+
+                // Import the events from the archive
+                stream.raw_import_events(archive.events).await?;
+            }
+
+            // Restore the state database if necessary
+            let statedb_bucket_path =
+                format!("{BUCKET_STREAMS_DIR}/{}/{STATEDB_FILENAME}", stream_did);
+            let has_statedb = bucket.head(&statedb_bucket_path).await.is_ok();
+            if has_statedb {
+                let statedb_path = self
+                    .data_dir()?
+                    .join("streams")
+                    .join(stream_did.as_str())
+                    .join("state.db");
+
+                let compressed = bucket.get(statedb_bucket_path).await?.bytes().await?;
+                let statedb_bytes = zstd::decode_all(compressed.as_slice())?;
+                tokio::fs::write(statedb_path, statedb_bytes).await?;
+            }
+
+            // Set the module for the stream and catch it up
+            stream.raw_set_module(metadata.module_cid).await?;
+
+            // TODO: we want to load the module and catch it up now, so it doesn't error when we try
+            // to connect to it later. There's a bug that means modules can end up in an error state
+            // right now that we have to track down and fix.
+
+            // Update the backed-up status of the stream so that it doesn't re-backup events already
+            // on the backup server.
+            self.set_stream_backed_up(
+                stream_did,
+                BackupUpdate::Stream(StreamUpdate::NewEvents {
+                    latest_idx: last_idx,
+                }),
+            )
+            .await?;
+        }
+
+        Ok(())
     }
 }
 
@@ -845,6 +1048,20 @@ impl From<SigningKey> for StreamMetadataDidKey {
             SigningKey::P256(ref key) => Self::P256(key.to_bytes().into()),
             SigningKey::K256(ref key) => Self::K256(key.to_bytes().into()),
         }
+    }
+}
+impl TryInto<SigningKey> for StreamMetadataDidKey {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<SigningKey, Self::Error> {
+        Ok(match self {
+            StreamMetadataDidKey::P256(bytes) => {
+                SigningKey::P256(p256::ecdsa::SigningKey::from_bytes(&bytes.into())?)
+            }
+            StreamMetadataDidKey::K256(bytes) => {
+                SigningKey::K256(k256::ecdsa::SigningKey::from_bytes(&bytes.into())?)
+            }
+        })
     }
 }
 

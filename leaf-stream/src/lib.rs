@@ -219,17 +219,17 @@ impl Stream {
     /// This is a raw method to set the current module of the stream, without any other processing.
     /// You usually should not use this, but you may need it if you are, for example, importing the
     /// stream from a backup.
-    pub async fn raw_set_module(&self, module_cid: Cid) -> anyhow::Result<()> {
+    pub async fn raw_set_module(&self, module_cid: Option<Cid>) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         state
             .db
             .execute(
                 "update stream_state set module_cid = ?, module_event_cursor = null where id = 1",
-                [module_cid.as_bytes().to_vec()],
+                [module_cid.map(|x| x.as_bytes().to_vec())],
             )
             .await?;
         state.module_event_cursor = 0;
-        state.module_state = ModuleState::Unloaded(Some(module_cid));
+        state.module_state = ModuleState::Unloaded(module_cid);
 
         Ok(())
     }
@@ -811,8 +811,8 @@ impl Stream {
             state
                 .db
                 .execute(
-                    "insert into events (id, user, payload, signature) values (?, ?, ?, ?)",
-                    (event.idx, event.user, event.payload),
+                    "insert into events (idx, user, payload, signature) values (?, ?, ?, ?)",
+                    (event.idx, event.user, event.payload, event.signature),
                 )
                 .await?;
             state.latest_event += 1;

@@ -61,7 +61,7 @@ async fn main() {
 
     // Log server start error
     if let Err(e) = result {
-        tracing::error!("Error starting server: {e}");
+        tracing::error!("Error: {e}");
     }
 }
 
