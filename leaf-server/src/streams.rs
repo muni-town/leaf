@@ -85,7 +85,7 @@ impl Streams {
         let data_dir = STORAGE.data_dir()?;
         let stream_dir = data_dir.join("streams").join(stream.id().as_str());
 
-        stream.raw_set_module(module_cid).await?;
+        stream.raw_set_module(Some(module_cid)).await?;
         let (module, db) = load_module(&stream_dir, module_cid).await?;
         stream.provide_module(module, db).await?;
         STORAGE

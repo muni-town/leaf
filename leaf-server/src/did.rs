@@ -41,7 +41,7 @@ pub async fn create_did(owner: String) -> anyhow::Result<Did> {
         anyhow::bail!("PLC directory error: {status}: {body}");
     }
 
-    STORAGE.create_did(did.clone(), key, owner).await?;
+    STORAGE.create_did(did.clone(), key, vec![owner]).await?;
 
     Ok(did)
 }

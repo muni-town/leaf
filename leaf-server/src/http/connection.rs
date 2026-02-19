@@ -101,7 +101,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 let stream_did = create_did(did_.clone()).await?;
 
-                let stream = STORAGE.create_stream(stream_did.clone(), did_).await?;
+                let stream = STORAGE.create_stream(stream_did.clone()).await?;
                 open_streams_
                     .write()
                     .await
