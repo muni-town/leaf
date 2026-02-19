@@ -12,20 +12,48 @@
 	const parsedFilter = $derived.by(() => {
 		const idx = filterRule.indexOf('=');
 		if (idx === -1) return null;
-		return { column: filterRule.slice(0, idx).trim(), value: filterRule.slice(idx + 1) };
+		const [column, ...path] = filterRule.slice(0, idx).trim().split('.');
+		return { column, path, value: filterRule.slice(idx + 1) };
 	});
 
-	function rowMatchesFilter(row: SqlRow, filter: { column: string; value: string }): boolean {
+	function getNestedValue(obj: unknown, path: string[]): unknown {
+		let current = obj;
+		for (const key of path) {
+			if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
+			current = (current as Record<string, unknown>)[key];
+		}
+		return current;
+	}
+
+	function primitiveMatchesFilter(v: unknown, filterValue: string): boolean {
+		if (typeof v === 'string') return v === filterValue;
+		if (typeof v === 'number' || typeof v === 'boolean') return String(v) === filterValue;
+		return false;
+	}
+
+	function rowMatchesFilter(
+		row: SqlRow,
+		filter: { column: string; path: string[]; value: string }
+	): boolean {
 		const v = row[filter.column];
 		if (!v) return false;
-		switch (v.$type) {
-			case 'muni.town.sqliteValue.text':
-				return v.value === filter.value;
-			case 'muni.town.sqliteValue.integer':
-			case 'muni.town.sqliteValue.real':
-				return String(v.value) === filter.value;
-			default:
-				return false;
+		if (filter.path.length === 0) {
+			switch (v.$type) {
+				case 'muni.town.sqliteValue.text':
+					return v.value === filter.value;
+				case 'muni.town.sqliteValue.integer':
+				case 'muni.town.sqliteValue.real':
+					return String(v.value) === filter.value;
+				default:
+					return false;
+			}
+		}
+		if (v.$type !== 'muni.town.sqliteValue.blob') return false;
+		try {
+			const decoded = decode(v.value);
+			return primitiveMatchesFilter(getNestedValue(decoded, filter.path), filter.value);
+		} catch {
+			return false;
 		}
 	}
 
