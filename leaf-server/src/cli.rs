@@ -14,6 +14,10 @@ pub struct Args {
     #[arg(long, env)]
     pub profiling: bool,
 
+    /// Directory to store the leaf data in
+    #[arg(short = 'd', long, env, default_value = "./data")]
+    pub data_dir: PathBuf,
+
     /// Set the PLC directory to use
     #[arg(long, env, default_value = "http://localhost:3001")]
     pub plc_directory: String,
@@ -25,6 +29,38 @@ pub struct Args {
 #[derive(clap::Subcommand, Debug)]
 pub enum Command {
     Server(ServerArgs),
+    Backup(BackupArgs),
+}
+
+#[derive(clap::Parser, Debug)]
+pub struct BackupArgs {
+    #[clap(subcommand)]
+    pub command: BackupCommand,
+}
+
+/// Restore from backup or reset backup cache.
+#[derive(clap::Subcommand, Debug)]
+pub enum BackupCommand {
+    /// Resets the local cache of which data has been backed up.
+    ///
+    /// The server keeps a local cache of which data has been backed up, so it knows what needs to
+    /// be backed up when new data comes in.
+    ///
+    /// This command will reset the server's cache of the state of the backup so that all data will
+    /// be backed up again.
+    ///
+    /// For example, if you change the backup s3 bucket or clear out the backup data, this command
+    /// **must** be called to make sure that the server knows it must re-backup **all** the old
+    /// data, not just new data.
+    ResetBackupCache,
+    /// Completely restore the server's data from a backup endpoint.
+    ///
+    /// This is a potentially destructive operation, so the data dir should be copied / backed up
+    /// before trying to run a restore.
+    Restore {
+        #[clap(flatten)]
+        backup_config: S3BackupConfig,
+    },
 }
 
 /// Run the leaf server.
@@ -33,9 +69,6 @@ pub struct ServerArgs {
     /// The address to start the server on
     #[arg(short = 'l', long, env, default_value = "0.0.0.0:5530")]
     pub listen_address: String,
-    /// Directory to store the leaf data in
-    #[arg(short = 'd', long, env, default_value = "./data")]
-    pub data_dir: PathBuf,
     /// The DID of this service
     ///
     /// This is used to validate that ATProto auth JWTs are intended for this service and not
@@ -55,15 +88,17 @@ pub struct ServerArgs {
     pub unsafe_auth_token: Option<String>,
 
     #[clap(flatten)]
-    pub backup_config: S3BackupConfigArgs,
+    pub backup_config: OptionalS3BackupConfig,
 }
 
 #[derive(Debug, Clone, clap::Args)]
 #[group(
     required = false,
     multiple = true,
-    requires_all = ["host", "name", "region", "access_key", "secret_key"])]
-pub struct S3BackupConfigArgs {
+    requires_all = ["host", "name", "region", "access_key", "secret_key"],
+    id = "backup_args"
+)]
+pub struct OptionalS3BackupConfig {
     #[arg(long = "s3-host", env = "S3_HOST")]
     pub host: Option<Url>,
     #[arg(long = "s3-bucket", env = "S3_BUCKET")]
@@ -76,8 +111,8 @@ pub struct S3BackupConfigArgs {
     pub secret_key: Option<String>,
 }
 
-impl From<S3BackupConfigArgs> for S3BackupConfig {
-    fn from(v: S3BackupConfigArgs) -> Self {
+impl From<OptionalS3BackupConfig> for S3BackupConfig {
+    fn from(v: OptionalS3BackupConfig) -> Self {
         Self {
             host: v.host.unwrap(),
             name: v.name.unwrap(),

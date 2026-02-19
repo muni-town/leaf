@@ -11,12 +11,12 @@ use crate::{
 mod async_oncelock;
 mod backups;
 mod cli;
+mod did;
 mod error;
 mod http;
 mod otel;
 mod storage;
 mod streams;
-mod did;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);
@@ -45,6 +45,18 @@ async fn main() {
 
     let result = match &ARGS.command {
         cli::Command::Server(args) => start_server(args).await,
+        cli::Command::Backup(backup_args) => {
+            async {
+                STORAGE.initialize(&ARGS.data_dir, None).await?;
+                match &backup_args.command {
+                    cli::BackupCommand::ResetBackupCache => STORAGE.reset_backup_cache().await,
+                    cli::BackupCommand::Restore { backup_config } => {
+                        STORAGE.restore_from_s3_backup(backup_config).await
+                    }
+                }
+            }
+            .await
+        }
     };
 
     // Log server start error
@@ -55,7 +67,7 @@ async fn main() {
 
 /// Start the leaf server
 #[tracing::instrument(err, name = "run_server")]
-async fn start_server(args: &'static ServerArgs) -> anyhow::Result<()> {
+async fn start_server(server_args: &'static ServerArgs) -> anyhow::Result<()> {
     tracing::info!(args=?&*ARGS, "Starting Leaf server");
 
     // Make Ctrl+C trigger graceful shutdown
@@ -67,9 +79,9 @@ async fn start_server(args: &'static ServerArgs) -> anyhow::Result<()> {
     // Initialize storage
     STORAGE
         .initialize(
-            &args.data_dir,
-            if args.backup_config.name.is_some() {
-                Some(args.backup_config.clone().into())
+            &ARGS.data_dir,
+            if server_args.backup_config.name.is_some() {
+                Some(server_args.backup_config.clone().into())
             } else {
                 None
             },
@@ -77,7 +89,7 @@ async fn start_server(args: &'static ServerArgs) -> anyhow::Result<()> {
         .await?;
 
     // Start the web API
-    http::start_api(args).await?;
+    http::start_api(server_args).await?;
 
     // Then wait for shutdown signal
     wait_for_shutdown().await;

@@ -9,7 +9,9 @@ use crate::{ARGS, cli::Command, storage::STORAGE};
 static CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
 pub async fn create_did(owner: String) -> anyhow::Result<Did> {
-    let Command::Server(args) = &ARGS.command;
+    let Command::Server(args) = &ARGS.command else {
+        panic!("Invalid command");
+    };
 
     let key = SigningKey::generate_k256();
     let (did, operation, keys) = DidBuilder::new()
