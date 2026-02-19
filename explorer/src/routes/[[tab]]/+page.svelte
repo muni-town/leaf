@@ -69,7 +69,7 @@
 	let query: LeafQuery = $derived({
 		name: queryName,
 		params: Object.fromEntries(
-			queryParams.map((x) => [x.name, { $type: x.$type, value: x.value }])
+			queryParams.map((x) => [x.name.replace(/^\$/, ''), { $type: x.$type, value: x.value }])
 		),
 		start: queryStart,
 		limit: queryLimit
