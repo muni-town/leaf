@@ -724,7 +724,7 @@ impl Storage {
                     }
 
                     // Get the end idx in the range we are backing up
-                    let end_event = start_event + events_len;
+                    let end_event = start_event + events_len - 1;
 
                     // Create and compress the event archive
                     let archive = EventArchive { events };
