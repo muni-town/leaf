@@ -2,48 +2,30 @@ import { BytesWrapper, decode } from '@atcute/cbor';
 import type { SqlRows } from '@muni-town/leaf-client';
 
 export function stringifyEvent(event: SqlRows): string {
-	const updateToJson = (v: any) => {
-		if (Array.isArray(v)) {
-			for (const r of v) {
-				updateToJson(r);
+	return JSON.stringify(
+		event,
+		(_key, value) => {
+			if (value instanceof BytesWrapper) {
+				return { $bytes: value.$bytes, $bytesAsString: new TextDecoder().decode(value.buf) };
 			}
-			return;
-		}
-		if (typeof v == 'object') {
-			if (!v) {
-				return v;
-			} else if (v instanceof BytesWrapper) {
-				v.toJSON = () => ({
-					$bytes: v.$bytes,
-					$bytesAsString: new TextDecoder().decode(v.buf)
-				});
-			} else if ('toJSON' in v) {
-				return v;
-			} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.integer') {
-				v.toJSON = () => v.value;
-			} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.text') {
-				v.toJSON = () => v.value;
-			} else if ('$type' in v && v.$type == 'muni.town.sqliteValue.blob') {
-				v.toJSON = () => {
-					try {
-						const d = decode(v.value);
-						updateToJson(d);
-						return { $drisl: d };
-					} catch (_e) {
-						return {
-							$bytes: new BytesWrapper(v.value).$bytes,
-							$bytesAsString: new TextDecoder().decode(v.value)
-						};
-					}
-				};
-			} else {
-				for (const key in v) {
-					updateToJson(v[key]);
+			if (value !== null && typeof value === 'object' && '$type' in value) {
+				switch (value.$type) {
+					case 'muni.town.sqliteValue.integer':
+					case 'muni.town.sqliteValue.text':
+						return value.value;
+					case 'muni.town.sqliteValue.blob':
+						try {
+							return { $drisl: decode(value.value) };
+						} catch {
+							return {
+								$bytes: new BytesWrapper(value.value).$bytes,
+								$bytesAsString: new TextDecoder().decode(value.value)
+							};
+						}
 				}
-				return;
 			}
-		}
-	};
-	updateToJson(event);
-	return JSON.stringify(event, null, '  ');
+			return value;
+		},
+		'  '
+	);
 }

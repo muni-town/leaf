@@ -15,12 +15,13 @@
 	} from '@muni-town/leaf-client';
 	import { page } from '$app/state';
 	import { encode } from '@atcute/cbor';
-	import { stringifyEvent } from '$lib/utils';
+	import type { SqlRows } from '@muni-town/leaf-client';
 
 	let loading = $state(false);
 
-	const events = getContext<string[]>('events');
+	const events = getContext<Array<string | SqlRows>>('events');
 	const streamDid = getContext<{ value: string }>('streamId');
+	const persistLog = getContext<{ value: boolean }>('persistLog');
 
 	let eventMode = $state<'regular' | 'state'>('regular');
 
@@ -115,7 +116,8 @@
 		}
 
 		const result = await backend.query(streamDid.value, q);
-		events.push(stringifyEvent(result));
+		if (!persistLog.value) events.splice(0, events.length);
+		events.push(result);
 	}
 
 	async function subscribe() {
@@ -162,12 +164,10 @@
 </script>
 
 <div class="flex min-h-0 min-w-0 shrink flex-row gap-3 px-5">
-	<div class="border-accent bg-base-100 thin-scroll w-[24em] shrink overflow-y-auto shadow-md">
-		<div role="tablist" class="tabs tabs-border">
+	<div class="thin-scroll min-w-[24em] shrink overflow-y-auto border-accent bg-base-100 shadow-md">
+		<div role="tablist" class="tabs-border tabs">
 			{#each tabs as tab}
-				<a href={`#/${tab}`} role="tab" class="tab" class:tab-active={currentTab == tab}
-					>{tab}</a
-				>
+				<a href={`#/${tab}`} role="tab" class="tab" class:tab-active={currentTab == tab}>{tab}</a>
 			{/each}
 		</div>
 		{#if currentTab == 'Query'}
@@ -255,10 +255,8 @@
 							<option value="muni.town.sqliteValue.blob">Blob</option>
 						</select>
 						<input class="input" bind:value={param.value} />
-						<button
-							type="button"
-							onclick={() => queryParams.splice(i, 1)}
-							class="btn btn-sm">X</button
+						<button type="button" onclick={() => queryParams.splice(i, 1)} class="btn btn-sm"
+							>X</button
 						>
 					</div>
 				{/each}
@@ -266,13 +264,9 @@
 				<button type="submit" class="btn btn-outline" onclick={runQuery}>Query</button>
 				{#if subscriptionId}
 					Subscribed: {subscriptionId}
-					<button type="submit" class="btn btn-outline" onclick={unsubscribe}
-						>Unsubscribe</button
-					>
+					<button type="submit" class="btn btn-outline" onclick={unsubscribe}>Unsubscribe</button>
 				{:else}
-					<button type="submit" class="btn btn-outline" onclick={subscribe}
-						>Subscribe</button
-					>
+					<button type="submit" class="btn btn-outline" onclick={subscribe}>Subscribe</button>
 				{/if}
 			</form>
 
@@ -283,9 +277,7 @@
 					loading = true;
 					try {
 						const hasModule = await backend.hasModule(moduleId);
-						events.push(
-							hasModule ? `Has module: ${moduleId}` : `No module: ${moduleId}`
-						);
+						events.push(hasModule ? `Has module: ${moduleId}` : `No module: ${moduleId}`);
 					} catch (e: any) {
 						events.push(e.toString());
 					}
@@ -331,11 +323,7 @@
 				}}
 			>
 				<h2 class="mb-4 text-xl font-bold">Set Handle</h2>
-				<input
-					class="input w-full"
-					bind:value={streamHandle}
-					placeholder="example.handle.com"
-				/>
+				<input class="input w-full" bind:value={streamHandle} placeholder="example.handle.com" />
 				<button class="btn btn-outline" disabled={loading}>Set Handle</button>
 			</form>
 		{:else if currentTab == 'Create Stream'}
@@ -346,7 +334,7 @@
 		{/if}
 	</div>
 
-	<div class="bg-base-100 thin-scroll min-w-[20em] grow overflow-auto shadow-md">
+	<div class="thin-scroll min-w-[20em] grow overflow-auto bg-base-100 shadow-md">
 		{#if currentTab == 'Query'}
 			<div class="flex h-full flex-col gap-3">
 				<h2 class="text-md m-2 flex items-center justify-between font-bold">
@@ -356,20 +344,18 @@
 					<span class="font-bold">Event Type:</span>
 					<div class="join">
 						<button
-							class="btn btn-sm join-item"
+							class="btn join-item btn-sm"
 							class:btn-active={eventMode === 'regular'}
 							onclick={() => (eventMode = 'regular')}>Regular</button
 						>
 						<button
-							class="btn btn-sm join-item"
+							class="btn join-item btn-sm"
 							class:btn-active={eventMode === 'state'}
 							onclick={() => (eventMode = 'state')}>State</button
 						>
 					</div>
 					{#if eventMode === 'state'}
-						<button class="btn btn-sm btn-error" onclick={clearState}
-							>Clear State</button
-						>
+						<button class="btn btn-sm btn-error" onclick={clearState}>Clear State</button>
 					{/if}
 				</div>
 				<CodeMirror
@@ -385,8 +371,7 @@
 			<div>
 				<h2 class="m-3 text-xl font-bold">Init SQL</h2>
 				<p class="m-3 text-sm opacity-40">
-					This code will be run to initialize the module database and should be
-					idempotent.
+					This code will be run to initialize the module database and should be idempotent.
 				</p>
 				<CodeMirror
 					lang={sqlLang()}
@@ -397,14 +382,10 @@
 				/>
 				<h2 class="m-3 text-xl font-bold">State Init SQL</h2>
 				<div class="m-3 gap-2 text-sm opacity-40">
+					<p>This code will be run to initialize the state database and should be idempotent.</p>
 					<p>
-						This code will be run to initialize the state database and should be
-						idempotent.
-					</p>
-					<p>
-						The state database is attached to the module database as "state". This SQL
-						is executed when the stream is first loaded or if the state database is
-						reset.
+						The state database is attached to the module database as "state". This SQL is executed
+						when the stream is first loaded or if the state database is reset.
 					</p>
 				</div>
 				<CodeMirror
@@ -418,9 +399,7 @@
 				<div class="m-3 gap-2 text-sm opacity-40">
 					<p>SQL used to authorize new events before the are accepted into the stream.</p>
 					<p>
-						To access the event that is being authorized you can query the <code
-							>user</code
-						>
+						To access the event that is being authorized you can query the <code>user</code>
 						and <code>payload</code> from the <code>event</code> table.
 					</p>
 				</div>
@@ -433,14 +412,9 @@
 				/>
 				<h2 class="m-3 text-xl font-bold">Materializer SQL</h2>
 				<div class="m-3 gap-2 text-sm opacity-40">
+					<p>SQL used to materialize new events after they have been accepted into the stream.</p>
 					<p>
-						SQL used to materialize new events after they have been accepted into the
-						stream.
-					</p>
-					<p>
-						To access the event that is being materialized you can query the <code
-							>user</code
-						>
+						To access the event that is being materialized you can query the <code>user</code>
 						and <code>payload</code> from the <code>event</code> table.
 					</p>
 				</div>
@@ -455,13 +429,11 @@
 				<div class="m-3 gap-2 text-sm opacity-40">
 					<p>SQL used to materialize state events.</p>
 					<p>
-						State events are used for transient, state that doesn't need to be part of
-						the permanent event log.
+						State events are used for transient, state that doesn't need to be part of the permanent
+						event log.
 					</p>
 					<p>
-						To access the event that is being materialized you can query the <code
-							>user</code
-						>
+						To access the event that is being materialized you can query the <code>user</code>
 						and <code>payload</code> from the <code>event</code> table.
 					</p>
 					<p>
@@ -475,7 +447,7 @@
 					theme={oneDarkTheme}
 					placeholder="-- state event materialization sql"
 				/>
-				<h2 class="mx-3 mb-2 mt-5 flex items-center text-xl font-bold">
+				<h2 class="mx-3 mt-5 mb-2 flex items-center text-xl font-bold">
 					Queries
 					<div class="grow"></div>
 					<button
@@ -496,11 +468,8 @@
 							<input class="input" placeholder="query name" bind:value={query.name} />
 							<button
 								class="btn"
-								onclick={() =>
-									(newStreamModule.queries = newStreamModule.queries.splice(
-										i,
-										0
-									))}>Delete Query</button
+								onclick={() => (newStreamModule.queries = newStreamModule.queries.splice(i, 0))}
+								>Delete Query</button
 							>
 						</div>
 						<div class="m-3 gap-2 text-sm opacity-40">
@@ -510,8 +479,8 @@
 									>$requesting_user</code
 								>
 								placeholder, as well as and
-								<code>$start</code> and <code>$limit</code> in order to limit results
-								based on the event index and count.
+								<code>$start</code> and <code>$limit</code> in order to limit results based on the event
+								index and count.
 							</p>
 						</div>
 						<CodeMirror
@@ -537,18 +506,10 @@
 						</h3>
 						{#each query.params as param, i}
 							<div class="flex justify-between">
-								<input
-									class="input"
-									placeholder="$myParam"
-									bind:value={param.name}
-								/>
+								<input class="input" placeholder="$myParam" bind:value={param.name} />
 								<select class="select" bind:value={param.kind}>
-									<option selected value={{ tag: 'any', value: undefined }}
-										>Any</option
-									>
-									<option value={{ tag: 'integer', value: undefined }}
-										>Integer</option
-									>
+									<option selected value={{ tag: 'any', value: undefined }}>Any</option>
+									<option value={{ tag: 'integer', value: undefined }}>Integer</option>
 									<option value={{ tag: 'real', value: undefined }}>Real</option>
 									<option value={{ tag: 'text', value: undefined }}>Text</option>
 									<option value={{ tag: 'blob', value: undefined }}>Blob</option>
@@ -562,9 +523,7 @@
 										bind:checked={param.optional}
 									/>
 								</label>
-								<button
-									class="btn"
-									onclick={() => (query.params = query.params.splice(i, 0))}
+								<button class="btn" onclick={() => (query.params = query.params.splice(i, 0))}
 									>Delete Param</button
 								>
 							</div>

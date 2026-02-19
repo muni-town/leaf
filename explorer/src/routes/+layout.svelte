@@ -4,7 +4,7 @@
 	import { backend, backendStatus } from '$lib/workers';
 	import { onMount, setContext } from 'svelte';
 	import { page } from '$app/state';
-	import { stringifyEvent } from '$lib/utils';
+	import type { SqlRows, SubscribeEventsResp } from '@muni-town/leaf-client';
 
 	let leafUrl = $state(localStorage.getItem('leaf-url') || 'https://leaf-dev.muni.town');
 	onMount(() => {
@@ -14,12 +14,12 @@
 	let loginLoading = $state(false);
 
 	const leafEventsChanel = new BroadcastChannel('leaf-events');
-	leafEventsChanel.onmessage = (ev) => {
-		const event = ev.data;
-		leafEvents.push(stringifyEvent(event));
+	leafEventsChanel.onmessage = (ev: MessageEvent<{ subId: string; resp: SubscribeEventsResp }>) => {
+		leafEvents.push(ev.data.resp.rows);
 	};
-	let leafEvents = $state([]) as string[];
+	let leafEvents = $state<Array<string | SqlRows>>([]);
 	let streamId = $state(localStorage.getItem('stream-id') || '');
+	let persistLog = $state(false);
 	$effect(() => {
 		localStorage.setItem('stream-id', streamId);
 	});
@@ -31,6 +31,11 @@
 		},
 		set value(v) {
 			streamId = v;
+		}
+	});
+	setContext('persistLog', {
+		get value() {
+			return persistLog;
 		}
 	});
 
@@ -112,6 +117,10 @@
 				Stream ID
 				<input class="input" bind:value={streamId} />
 				<div class="grow"></div>
+				<label class="flex cursor-pointer items-center gap-2">
+					<input type="checkbox" class="toggle toggle-sm" bind:checked={persistLog} />
+					Persist log
+				</label>
 				<button
 					class="btn"
 					onclick={() => {
