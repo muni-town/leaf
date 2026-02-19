@@ -53,7 +53,6 @@ pub struct Storage {
 }
 
 #[derive(Debug, Clone, clap::Args)]
-#[group(required = false, multiple = true)]
 pub struct S3BackupConfig {
     #[arg(long = "s3-host", env = "S3_HOST")]
     pub host: Url,
@@ -336,6 +335,12 @@ impl Storage {
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn reset_backup_cache(&self) -> anyhow::Result<()> {
+        let db = self.db().await;
+        db.execute("delete from backup_status", ()).await?;
         Ok(())
     }
 
@@ -795,6 +800,10 @@ impl Storage {
         }
 
         Ok(())
+    }
+
+    pub async fn restore_from_s3_backup(&self, _config: &S3BackupConfig) -> anyhow::Result<()> {
+        todo!()
     }
 }
 

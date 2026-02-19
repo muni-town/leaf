@@ -145,7 +145,9 @@ fn get_token(data: &Value) -> anyhow::Result<&str> {
 #[instrument(skip(token), err)]
 async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
     // Check for shared key auth bypass
-    let Command::Server(server_args) = &ARGS.command;
+    let Command::Server(server_args) = &ARGS.command else {
+        panic!("Invalid command");
+    };
 
     if let Some(unsafe_auth_token) = &server_args.unsafe_auth_token
         && token == unsafe_auth_token
