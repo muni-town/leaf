@@ -188,11 +188,19 @@ export class LeafClient {
     return resp.Ok.moduleExists;
   }
 
-  async createStream(moduleCid: string): Promise<{ streamDid: string }> {
+  async createStream(
+    moduleCid: string,
+    clientStamp?: string,
+  ): Promise<{ streamDid: string; clientStamp?: string }> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/create",
       toBinary(
-        encode({ moduleCid: { $link: moduleCid } } satisfies StreamCreateArgs),
+        encode(
+          {
+            moduleCid: { $link: moduleCid },
+            clientStamp,
+          } satisfies StreamCreateArgs,
+        ),
       ),
     );
     const resp: StreamCreateResp = decode(fromBinary(data));
@@ -202,7 +210,7 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async streamInfo(streamDid: string): Promise<{ moduleCid?: string }> {
+  async streamInfo(streamDid: string): Promise<{ moduleCid?: string; clientStamp?: string }> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/info",
       toBinary(
@@ -213,7 +221,7 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
-    return { moduleCid: resp.Ok.moduleCid?.$link };
+    return { moduleCid: resp.Ok.moduleCid?.$link, clientStamp: resp.Ok.clientStamp };
   }
 
   async updateModule(

@@ -54,6 +54,22 @@ pub struct ServerArgs {
     #[arg(long, env)]
     pub unsafe_auth_token: Option<String>,
 
+    /// Window size for per-actor throttling on high-risk socket endpoints.
+    #[arg(long, env, default_value_t = 30)]
+    pub throttle_window_secs: u64,
+
+    /// Maximum `stream/create` attempts allowed per actor inside one throttle window.
+    #[arg(long, env, default_value_t = 8)]
+    pub stream_create_limit_per_window: u32,
+
+    /// Maximum `stream/subscribe_events` attempts allowed per actor inside one throttle window.
+    #[arg(long, env, default_value_t = 20)]
+    pub stream_subscribe_limit_per_window: u32,
+
+    /// Maximum active `stream/subscribe_events` subscriptions per actor.
+    #[arg(long, env, default_value_t = 64)]
+    pub max_active_subscriptions_per_actor: u32,
+
     #[clap(flatten)]
     pub backup_config: S3BackupConfigArgs,
 }
