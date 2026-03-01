@@ -9,15 +9,22 @@ use tokio::sync::RwLock;
 use weak_table::WeakValueHashMap;
 
 use crate::storage::{GLOBAL_SQLITE_PRAGMA, STORAGE};
+use crate::unreads::UnreadsDB;
 
-/// Global cache of open Leaf streams.
+/// Global cache of open Leaf streams with their unreads database connections.
 pub static STREAMS: LazyLock<Streams> = LazyLock::new(Streams::default);
 
-pub type StreamHandle = Arc<Stream>;
+/// A stream handle with its associated unreads database connection.
+pub struct StreamWithUnreads {
+    pub stream: Arc<Stream>,
+    pub unreads_db: UnreadsDB,
+}
+
+pub type StreamHandle = Arc<StreamWithUnreads>;
 
 #[derive(Default)]
 pub struct Streams {
-    streams: RwLock<WeakValueHashMap<Did, Weak<Stream>>>,
+    streams: RwLock<WeakValueHashMap<Did, Weak<StreamWithUnreads>>>,
 }
 
 impl Streams {
@@ -70,8 +77,12 @@ impl Streams {
             }
         });
 
+        // Initialize the unreads database for this stream
+        let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+
         // Store the stream handle in the cache
-        let handle = Arc::new(stream);
+        let stream = Arc::new(stream);
+        let handle = Arc::new(StreamWithUnreads { stream, unreads_db });
         self.streams
             .write()
             .await
@@ -89,15 +100,19 @@ impl Streams {
         Ok(handle)
     }
 
-    pub async fn update_module(&self, stream: Arc<Stream>, module_cid: Cid) -> anyhow::Result<()> {
+    pub async fn update_module(
+        &self,
+        s: Arc<StreamWithUnreads>,
+        module_cid: Cid,
+    ) -> anyhow::Result<()> {
         let data_dir = STORAGE.data_dir()?;
-        let stream_dir = data_dir.join("streams").join(stream.id().as_str());
+        let stream_dir = data_dir.join("streams").join(s.stream.id().as_str());
 
-        stream.raw_set_module(Some(module_cid)).await?;
+        s.stream.raw_set_module(Some(module_cid)).await?;
         let (module, db) = load_module(&stream_dir, module_cid).await?;
-        stream.provide_module(module, db).await?;
+        s.stream.provide_module(module, db).await?;
         STORAGE
-            .update_stream_module(stream.id().clone(), module_cid)
+            .update_stream_module(s.stream.id().clone(), module_cid)
             .await?;
 
         Ok(())

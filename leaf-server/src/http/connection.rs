@@ -25,7 +25,6 @@ use crate::{
     error::LogError,
     storage::STORAGE,
     streams::STREAMS,
-    unreads::UnreadsDB,
 };
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
@@ -131,7 +130,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let StreamInfoArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -141,7 +140,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 };
 
                 anyhow::Ok(StreamInfoResp {
-                    module_cid: stream.module_cid().await,
+                    module_cid: s.stream.module_cid().await,
                 })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/info"))
@@ -184,7 +183,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only a stream owner can update its module");
                 }
 
-                STREAMS.update_module(stream, module_cid).await?;
+                STREAMS.update_module(stream.clone(), module_cid).await?;
 
                 anyhow::Ok(())
             }
@@ -224,6 +223,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let signing_key = STORAGE.get_did_signing_key(stream_did).await?;
 
                 stream
+                    .stream
                     .add_events(
                         signing_key,
                         events
@@ -262,7 +262,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -271,7 +271,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                stream
+                s.stream
                     .add_state_events(
                         events
                             .into_iter()
@@ -310,7 +310,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let StreamClearStateArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -325,7 +325,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only a stream owner can set its handle");
                 }
 
-                stream.clear_state_db().await?;
+                s.stream.clear_state_db().await?;
 
                 anyhow::Ok(())
             }
@@ -359,7 +359,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let subscription_id = Ulid::new();
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -368,7 +368,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let receiver = stream.subscribe_events(did_.clone(), query).await;
+                let receiver = s.stream.subscribe_events(did_.clone(), query).await;
 
                 tokio::spawn(async move {
                     let (unsubscribe_tx, unsubscribe_rx) = oneshot::channel();
@@ -454,7 +454,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let StreamQueryArgs { stream_did, query } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -463,7 +463,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let response = stream.query(did_.clone(), query).await?;
+                let response = s.stream.query(did_.clone(), query).await?;
 
                 anyhow::Ok(response)
             }
@@ -525,12 +525,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 let UnreadsGetArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
-                // Get the stream directory
-                let data_dir = STORAGE.data_dir()?;
-                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
-
-                // Initialize the unreads database for this stream
-                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+                // Load the stream (which includes the cached unreads_db)
+                let stream_with_unreads = STREAMS.load(stream_did.clone()).await?;
+                let unreads_db = &stream_with_unreads.unreads_db;
 
                 // Verify the user is a member of this space
                 if !unreads_db.is_member(&did_).await? {
@@ -577,12 +574,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     last_read_idx,
                 } = dasl::drisl::from_slice(&bytes?[..])?;
 
-                // Get the stream directory
-                let data_dir = STORAGE.data_dir()?;
-                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
-
-                // Initialize the unreads database for this stream
-                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+                // Load the stream (which includes the cached unreads_db)
+                let s = STREAMS.load(stream_did.clone()).await?;
+                let unreads_db = &s.unreads_db;
 
                 // Verify the user is a member of this space
                 if !unreads_db.is_member(&did_).await? {
@@ -596,8 +590,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                         Some(idx) => idx,
                         None => {
                             // Get the stream to fetch the latest event index
-                            let stream = STREAMS.load(stream_did.clone()).await?;
-                            stream.latest_event().await
+                            s.stream.latest_event().await
                         }
                     };
                     unreads_db
@@ -631,12 +624,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 let UnreadsSpaceMembersArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
-                // Get the stream directory
-                let data_dir = STORAGE.data_dir()?;
-                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
-
-                // Initialize the unreads database for this stream
-                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+                // Load the stream (which includes the cached unreads_db)
+                let s = STREAMS.load(stream_did.clone()).await?;
+                let unreads_db = &s.unreads_db;
 
                 // Verify the user is a member of this space
                 if !unreads_db.is_member(&did_).await? {
@@ -677,12 +667,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
 
                 let UnreadsResetAllArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
-                // Get the stream directory
-                let data_dir = STORAGE.data_dir()?;
-                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
-
-                // Initialize the unreads database for this stream
-                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+                // Load the stream (which includes the cached unreads_db)
+                let s = STREAMS.load(stream_did.clone()).await?;
+                let unreads_db = &s.unreads_db;
 
                 // Verify the user is a member of this space
                 if !unreads_db.is_member(&did_).await? {
