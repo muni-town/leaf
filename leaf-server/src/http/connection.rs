@@ -25,6 +25,7 @@ use crate::{
     error::LogError,
     storage::STORAGE,
     streams::STREAMS,
+    unreads::UnreadsDB,
 };
 
 pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
@@ -507,6 +508,201 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 .ok();
         },
     );
+
+    // ============================================================================
+    // Unreads tracking endpoints
+    // ============================================================================
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
+        "unreads/get",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can query unreads");
+                };
+
+                let UnreadsGetArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Get the stream directory
+                let data_dir = STORAGE.data_dir()?;
+                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
+
+                // Initialize the unreads database for this stream
+                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+
+                // Verify the user is a member of this space
+                if !unreads_db.is_member(&did_).await? {
+                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
+                }
+
+                // Get unreads for the user
+                let unreads = unreads_db.get_user_unreads(&did_).await?;
+
+                // Convert to response format
+                let response: Vec<UnreadsGetItem> = unreads
+                    .into_iter()
+                    .map(|u| UnreadsGetItem {
+                        room_id: u.room_id,
+                        unread_count: u.unread_count as u32,
+                        mention_count: u.mention_count as u32,
+                    })
+                    .collect();
+
+                anyhow::Ok(UnreadsGetResp { unreads: response })
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/get"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
+        "unreads/mark_read",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can mark items as read");
+                };
+
+                let UnreadsMarkReadArgs {
+                    stream_did,
+                    room_id,
+                    last_read_idx,
+                } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Get the stream directory
+                let data_dir = STORAGE.data_dir()?;
+                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
+
+                // Initialize the unreads database for this stream
+                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+
+                // Verify the user is a member of this space
+                if !unreads_db.is_member(&did_).await? {
+                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
+                }
+
+                if let Some(room_id) = room_id {
+                    // Mark specific room as read
+                    // Use provided last_read_idx or get the latest event index from the stream
+                    let last_read_idx = match last_read_idx {
+                        Some(idx) => idx,
+                        None => {
+                            // Get the stream to fetch the latest event index
+                            let stream = STREAMS.load(stream_did.clone()).await?;
+                            stream.latest_event().await
+                        }
+                    };
+                    unreads_db
+                        .mark_as_read(&did_, &room_id, last_read_idx)
+                        .await?;
+                } else {
+                    // Mark all rooms as read
+                    unreads_db.reset_user_unreads(&did_).await?;
+                }
+
+                anyhow::Ok(UnreadsMarkReadResp { success: true })
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/mark_read"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
+        "unreads/space_members",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can query space members");
+                };
+
+                let UnreadsSpaceMembersArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Get the stream directory
+                let data_dir = STORAGE.data_dir()?;
+                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
+
+                // Initialize the unreads database for this stream
+                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+
+                // Verify the user is a member of this space
+                if !unreads_db.is_member(&did_).await? {
+                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
+                }
+
+                // Get space members
+                let members = unreads_db.get_space_members().await?;
+
+                // Convert to response format
+                let response: Vec<UnreadsSpaceMember> = members
+                    .into_iter()
+                    .map(|m| UnreadsSpaceMember {
+                        user_did: m.user_did,
+                        joined_at: m.joined_at.to_string(),
+                    })
+                    .collect();
+
+                anyhow::Ok(UnreadsSpaceMembersResp { members: response })
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/space_members"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
+        "unreads/reset_all",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can reset unreads");
+                };
+
+                let UnreadsResetAllArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Get the stream directory
+                let data_dir = STORAGE.data_dir()?;
+                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
+
+                // Initialize the unreads database for this stream
+                let unreads_db = UnreadsDB::initialize(&stream_dir).await?;
+
+                // Verify the user is a member of this space
+                if !unreads_db.is_member(&did_).await? {
+                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
+                }
+
+                // Reset all unreads for the user
+                unreads_db.reset_user_unreads(&did_).await?;
+
+                anyhow::Ok(UnreadsResetAllResp { success: true })
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/reset_all"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
 }
 
 #[derive(Deserialize)]
@@ -630,4 +826,73 @@ struct StreamUnsubscribeArgs {
 #[serde(rename_all = "camelCase")]
 struct StreamUnsubscribeResp {
     was_subscribed: bool,
+}
+
+// ============================================================================
+// Unreads tracking types
+// ============================================================================
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsGetArgs {
+    stream_did: Did,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsGetItem {
+    room_id: String,
+    unread_count: u32,
+    mention_count: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsGetResp {
+    unreads: Vec<UnreadsGetItem>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsMarkReadArgs {
+    stream_did: Did,
+    room_id: Option<String>,
+    last_read_idx: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsMarkReadResp {
+    success: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsSpaceMembersArgs {
+    stream_did: Did,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsSpaceMember {
+    user_did: String,
+    joined_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsSpaceMembersResp {
+    members: Vec<UnreadsSpaceMember>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsResetAllArgs {
+    stream_did: Did,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsResetAllResp {
+    success: bool,
 }

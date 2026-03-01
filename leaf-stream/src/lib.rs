@@ -23,7 +23,7 @@ pub type SubscriptionResultSender =
 pub use module::*;
 mod module;
 
-mod drisl_extract;
+pub mod drisl_extract;
 
 pub use atproto_plc;
 pub use dasl;

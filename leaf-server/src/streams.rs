@@ -77,6 +77,14 @@ impl Streams {
             .await
             .insert(id.clone(), handle.clone());
 
+        // Start monitoring for unreads tracking
+        if let Err(e) = crate::unreads_materializer::UNREADS_MATERIALIZER
+            .start_monitoring(id.clone(), handle.clone())
+            .await
+        {
+            tracing::warn!("Failed to start unreads monitoring for stream {id}: {e}");
+        }
+
         // Return the stream handle
         Ok(handle)
     }
@@ -91,6 +99,49 @@ impl Streams {
         STORAGE
             .update_stream_module(stream.id().clone(), module_cid)
             .await?;
+
+        Ok(())
+    }
+
+    /// Stop monitoring a stream for unreads tracking.
+    /// This is called when a stream is dropped from the cache.
+    #[tracing::instrument(skip(self))]
+    pub async fn stop_monitoring(&self, id: &Did) -> anyhow::Result<()> {
+        // Stop monitoring via the materializer
+        if let Err(e) = crate::unreads_materializer::UNREADS_MATERIALIZER
+            .stop_monitoring(id)
+            .await
+        {
+            tracing::warn!("Failed to stop unreads monitoring for stream {id}: {e}");
+        }
+
+        Ok(())
+    }
+
+    /// Cleanup monitoring tasks for streams that are no longer in the cache.
+    /// This should be called periodically to prevent memory leaks from orphaned monitoring tasks.
+    #[tracing::instrument(skip(self))]
+    pub async fn cleanup_monitoring(&self) -> anyhow::Result<()> {
+        // Get all stream DIDs currently in the cache
+        let cached_streams: Vec<Did> = {
+            let streams = self.streams.read().await;
+            streams.keys().cloned().collect()
+        };
+
+        // Get all stream DIDs currently being monitored
+        let monitored_streams = crate::unreads_materializer::UNREADS_MATERIALIZER
+            .get_monitored_streams()
+            .await;
+
+        // Stop monitoring for streams that are not in the cache
+        for stream_did in monitored_streams {
+            if !cached_streams.contains(&stream_did) {
+                tracing::info!("Cleaning up orphaned monitoring task for stream {stream_did}");
+                if let Err(e) = self.stop_monitoring(&stream_did).await {
+                    tracing::warn!("Failed to stop monitoring for stream {stream_did}: {e}");
+                }
+            }
+        }
 
         Ok(())
     }
