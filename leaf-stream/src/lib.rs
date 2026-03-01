@@ -55,6 +55,7 @@ struct StreamState {
     module_event_cursor: i64,
     query_subscriptions: Arc<Mutex<Vec<ActiveSubscription>>>,
     update_subscriptions: Arc<Mutex<Vec<async_channel::Sender<StreamUpdate>>>>,
+    event_subscriptions: Arc<Mutex<Vec<async_channel::Sender<Event>>>>,
     worker_sender: Option<async_channel::Sender<WorkerMessage>>,
 }
 
@@ -324,6 +325,7 @@ impl Stream {
                 module_event_cursor,
                 query_subscriptions: Default::default(),
                 update_subscriptions: Arc::new(Mutex::new(Vec::new())),
+                event_subscriptions: Arc::new(Mutex::new(Vec::new())),
                 worker_sender: None,
             })),
         })
@@ -374,6 +376,25 @@ impl Stream {
             .map(|s| s.try_send(WorkerMessage::NeedsUpdate(sub_id)));
 
         // Return the receiver
+        receiver
+    }
+
+    /// Subscribe to receive raw events as they are added to the stream.
+    ///
+    /// This method returns a receiver that will receive each [`Event`] as it is added
+    /// to the stream, in the order they are added.
+    pub async fn subscribe_events_stream(&self) -> async_channel::Receiver<Event> {
+        let state = self.state.read().await;
+        let mut event_subscriptions = state.event_subscriptions.lock().await;
+
+        // Take the opportunity to clean up any closed subscriptions
+        event_subscriptions.retain(|v| !v.is_closed());
+
+        // TODO: I've heard unbounded channels are evil, but I don't want to deal with freezing the
+        // stream right now because we hit a buffer limit. Will re-evaluate later.
+        let (sender, receiver) = async_channel::unbounded();
+        event_subscriptions.push(sender);
+
         receiver
     }
 
@@ -605,6 +626,10 @@ impl Stream {
         tracing::debug!("Starting new transaction");
         module_db.execute("begin immediate", ()).await?;
 
+        // Collect the events that are added so we can send them to subscribers once they are
+        // committed.
+        let mut added_events = Vec::new();
+
         let result = async {
             // TODO: we should probably have a separate mechanism for storing the batch signature
             // once, and we should also include the event indexes in the signature.
@@ -646,8 +671,8 @@ impl Stream {
                         module_db,
                         Event {
                             idx,
-                            user: event.user,
-                            payload: event.payload,
+                            user: event.user.clone(),
+                            payload: event.payload.clone(),
                             signature: signature.clone(),
                         },
                     )
@@ -656,6 +681,14 @@ impl Stream {
                 result?;
 
                 tracing::debug!("Materialized event");
+
+                // Collect the event for broadcasting
+                added_events.push(Event {
+                    idx,
+                    user: event.user,
+                    payload: event.payload,
+                    signature: signature.clone(),
+                });
 
                 // Increment the module event cursor
                 module_db
@@ -683,6 +716,20 @@ impl Stream {
             module_db.execute("commit", ()).await?;
             state.latest_event += event_count as i64;
             state.module_event_cursor += event_count as i64;
+
+            // Send new events to all subscribers
+            {
+                let mut event_subscriptions = state.event_subscriptions.lock().await;
+                // Clean up any closed subscriptions
+                event_subscriptions.retain(|v| !v.is_closed());
+
+                // Send each event to all subscribers
+                for event in &added_events {
+                    for sender in &*event_subscriptions {
+                        sender.try_send(event.clone()).ok();
+                    }
+                }
+            }
         }
 
         // Update query subscriptions
