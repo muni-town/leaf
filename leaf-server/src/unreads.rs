@@ -58,11 +58,11 @@ impl UnreadsDB {
 
     /// Add a member to the space
     #[instrument(skip(self), err)]
-    pub async fn add_member(&self, user_did: &str, event_idx: i64) -> anyhow::Result<()> {
+    pub async fn add_member(&self, user_did: &str, _event_idx: i64) -> anyhow::Result<()> {
         self.db()
             .execute(
-                "insert into space_members (user_did, joined_at, event_idx) values (?, unixepoch(), ?)",
-                (user_did, event_idx),
+                "insert into space_members (user_did) values (?)",
+                [user_did],
             )
             .await?;
         Ok(())
@@ -70,12 +70,9 @@ impl UnreadsDB {
 
     /// Remove a member from the space
     #[instrument(skip(self), err)]
-    pub async fn remove_member(&self, user_did: &str, event_idx: i64) -> anyhow::Result<()> {
+    pub async fn remove_member(&self, user_did: &str, _event_idx: i64) -> anyhow::Result<()> {
         self.db()
-            .execute(
-                "update space_members set left_at = unixepoch(), event_idx = ? where user_did = ? and left_at is null",
-                (event_idx, user_did),
-            )
+            .execute("delete from space_members where user_did = ?", [user_did])
             .await?;
         Ok(())
     }
@@ -83,22 +80,16 @@ impl UnreadsDB {
     /// Get all active members of the space
     #[instrument(skip(self), err)]
     pub async fn get_space_members(&self) -> anyhow::Result<Vec<SpaceMember>> {
-        let rows: Vec<(String, i64)> = self
+        let rows: Vec<String> = self
             .db()
-            .query(
-                "select user_did, joined_at from space_members where left_at is null order by joined_at asc",
-                (),
-            )
+            .query("select user_did from space_members", ())
             .await?
             .parse_rows()
             .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(user_did, joined_at)| SpaceMember {
-                user_did,
-                joined_at,
-            })
+            .map(|user_did| SpaceMember { user_did })
             .collect())
     }
 
@@ -107,10 +98,7 @@ impl UnreadsDB {
     pub async fn is_member(&self, user_did: &str) -> anyhow::Result<bool> {
         let mut rows = self
             .db()
-            .query(
-                "select 1 from space_members where user_did = ? and left_at is null",
-                [user_did],
-            )
+            .query("select 1 from space_members where user_did = ?", [user_did])
             .await?;
         Ok(rows.next().await?.is_some())
     }
@@ -190,16 +178,16 @@ impl UnreadsDB {
         for inc in increments {
             trans
                 .execute(
-                    "insert into room_unreads (room_id, user_did, unread_count, mention_count, last_event_idx, updated_at)
+                    "insert into room_unreads (user_did, room_id, unread_count, mention_count, last_event_idx, updated_at)
                      values (?, ?, ?, ?, ?, unixepoch())
-                     on conflict (room_id, user_did) do update set
+                     on conflict (user_did, room_id) do update set
                         unread_count = unread_count + ?,
                         mention_count = mention_count + ?,
                         last_event_idx = ?,
                         updated_at = unixepoch()",
                     (
-                        inc.room_id.as_str(),
                         inc.user_did.as_str(),
+                        inc.room_id.as_str(),
                         inc.unread_delta,
                         inc.mention_delta,
                         inc.event_idx,
@@ -258,25 +246,16 @@ impl UnreadsDB {
     pub async fn get_materialization_state(&self) -> anyhow::Result<MaterializationState> {
         let mut rows = self
             .db()
-            .query(
-                "select last_event_idx, last_materialized_at from materialization_state",
-                (),
-            )
+            .query("select last_event_idx from materialization_state", ())
             .await?;
 
         if let Some(row) = rows.next().await? {
-            let (last_event_idx, last_materialized_at): (i64, i64) = row.parse_row().await?;
-            return Ok(MaterializationState {
-                last_event_idx,
-                last_materialized_at,
-            });
+            let last_event_idx: i64 = row.parse_row().await?;
+            return Ok(MaterializationState { last_event_idx });
         }
 
         // Return default state if not found
-        Ok(MaterializationState {
-            last_event_idx: 0,
-            last_materialized_at: 0,
-        })
+        Ok(MaterializationState { last_event_idx: 0 })
     }
 
     /// Update the materialization state
@@ -284,10 +263,8 @@ impl UnreadsDB {
     pub async fn update_materialization_state(&self, last_event_idx: i64) -> anyhow::Result<()> {
         self.db()
             .execute(
-                "insert into materialization_state (last_event_idx, last_materialized_at) values (?, unixepoch())
-                 on conflict do update set
-                    last_event_idx = ?,
-                    last_materialized_at = unixepoch()",
+                "insert into materialization_state (last_event_idx) values (?)
+                 on conflict do update set last_event_idx = ?",
                 (last_event_idx, last_event_idx),
             )
             .await?;
@@ -312,8 +289,6 @@ async fn run_database_migrations(db: &Connection) -> anyhow::Result<()> {
 pub struct SpaceMember {
     /// The DID of the user
     pub user_did: String,
-    /// When the user joined the space (unix timestamp)
-    pub joined_at: i64,
 }
 
 /// Represents unread counts for a room
@@ -351,6 +326,4 @@ pub struct UnreadIncrement {
 pub struct MaterializationState {
     /// The last event index that was materialized
     pub last_event_idx: i64,
-    /// Timestamp of last successful materialization
-    pub last_materialized_at: i64,
 }

@@ -651,7 +651,6 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     .into_iter()
                     .map(|m| UnreadsSpaceMember {
                         user_did: m.user_did,
-                        joined_at: m.joined_at.to_string(),
                     })
                     .collect();
 
@@ -876,7 +875,6 @@ struct UnreadsSpaceMembersArgs {
 #[serde(rename_all = "camelCase")]
 struct UnreadsSpaceMember {
     user_did: String,
-    joined_at: String,
 }
 
 #[derive(Serialize)]
