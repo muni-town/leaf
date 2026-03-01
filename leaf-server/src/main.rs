@@ -18,7 +18,6 @@ mod otel;
 mod storage;
 mod streams;
 mod unreads;
-mod unreads_materializer;
 
 #[derive(Default)]
 struct ExitSignal(Arc<Notify>);
@@ -90,17 +89,6 @@ async fn start_server(server_args: &'static ServerArgs) -> anyhow::Result<()> {
         )
         .await?;
 
-    // Start periodic cleanup task for orphaned monitoring tasks
-    tokio::spawn(async {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // Every 5 minutes
-        loop {
-            interval.tick().await;
-            if let Err(e) = crate::streams::STREAMS.cleanup_monitoring().await {
-                tracing::error!("Error during monitoring cleanup: {e}");
-            }
-        }
-    });
-
     // Start the web API
     http::start_api(server_args).await?;
 
@@ -114,10 +102,4 @@ async fn start_server(server_args: &'static ServerArgs) -> anyhow::Result<()> {
 async fn wait_for_shutdown() {
     EXIT_SIGNAL.wait_for_exit_signal().await;
     let _span = tracing::info_span!("server shutdown").entered();
-
-    // Stop all unreads monitoring
-    tracing::info!("Stopping unreads materializer");
-    crate::unreads_materializer::UNREADS_MATERIALIZER
-        .stop_all()
-        .await;
 }
