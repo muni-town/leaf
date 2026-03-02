@@ -131,36 +131,25 @@ impl UnreadsDB {
             .collect())
     }
 
-    /// Increment unread counts for multiple users
-    #[instrument(skip(self, increments), err)]
-    pub async fn increment_unreads(&self, increments: Vec<UnreadIncrement>) -> anyhow::Result<()> {
-        let db = self.db();
-        let trans = db.transaction().await?;
-
-        for inc in increments {
-            trans
-                .execute(
-                    "insert into room_unreads (user_did, room_id, unread_count, mention_count, last_event_idx)
-                     values (?, ?, ?, ?, ?)
-                     on conflict (user_did, room_id) do update set
-                        unread_count = unread_count + ?,
-                        mention_count = mention_count + ?,
-                        last_event_idx = ?",
-                    (
-                        inc.user_did.as_str(),
-                        inc.room_id.as_str(),
-                        inc.unread_delta,
-                        inc.mention_delta,
-                        inc.event_idx,
-                        inc.unread_delta,
-                        inc.mention_delta,
-                        inc.event_idx,
-                    ),
-                )
-                .await?;
-        }
-
-        trans.commit().await?;
+    /// Increment unreads for all space members except the sender in a single SQL operation.
+    #[instrument(skip(self), err)]
+    pub async fn increment_unreads_for_all_members_except(
+        &self,
+        room_id: &str,
+        exclude_user_did: &str,
+        event_idx: i64,
+    ) -> anyhow::Result<()> {
+        self.db()
+            .execute(
+                "insert into room_unreads (user_did, room_id, unread_count, mention_count, last_event_idx)
+                 select user_did, ?, 1, 0, ? from space_members where user_did != ?
+                 on conflict (user_did, room_id) do update set
+                    unread_count = unread_count + 1,
+                    mention_count = mention_count + 0,
+                    last_event_idx = ?",
+                (room_id, event_idx, exclude_user_did, event_idx),
+            )
+            .await?;
         Ok(())
     }
 
@@ -260,21 +249,6 @@ pub struct RoomUnread {
     pub mention_count: i64,
     /// The last event index that was processed
     pub last_event_idx: Option<i64>,
-}
-
-/// Increment operation for unreads
-#[derive(Debug, Clone)]
-pub struct UnreadIncrement {
-    /// The DID of the user
-    pub user_did: String,
-    /// The room ID
-    pub room_id: String,
-    /// Delta for unread count
-    pub unread_delta: i64,
-    /// Delta for mention count
-    pub mention_delta: i64,
-    /// The event index
-    pub event_idx: i64,
 }
 
 /// Represents the materialization state for the stream
@@ -383,16 +357,21 @@ async fn process_event(
                 "Failed to parse DRISL payload for event {} in stream {stream_did}: {e}",
                 event.idx
             );
-            // Return Ok to skip this event without stopping the monitor
             return Ok(());
         }
     };
 
-    // Extract room ID from payload
-    let room_id = extract_room_id(&payload);
-
     // Extract event type (discriminant)
-    let event_type = extract_event_type(&payload);
+    let event_type = extract_from_drisl_with_expr(
+        payload.clone(),
+        &[DrislExtractExprSegment::FieldAccess("$type".to_string())],
+    );
+
+    // Extract room ID from payload
+    let room_id = extract_from_drisl_with_expr(
+        payload.clone(),
+        &[DrislExtractExprSegment::FieldAccess("room".to_string())],
+    );
 
     debug!(
         "Processing event {} in stream {stream_did}: room_id={:?}, event_type={:?}",
@@ -400,113 +379,22 @@ async fn process_event(
     );
 
     // Handle different event types
-    match event_type.as_deref() {
-        Some("space.roomy.space.joinSpace.v0") => {
-            handle_join_space(event, unreads_db).await?;
+    match event_type {
+        Some(Value::Text(event_type)) if event_type == "space.roomy.space.joinSpace.v0" => {
+            unreads_db.add_member(&event.user).await?;
         }
-        Some("space.roomy.space.leaveSpace.v0") => {
-            handle_leave_space(event, unreads_db).await?;
+        Some(Value::Text(event_type)) if event_type == "space.roomy.space.leaveSpace.v0" => {
+            unreads_db.remove_member(&event.user).await?;
         }
         _ => {
             // For other events with a room ID, increment unreads for all members except sender
-            if let Some(room_id) = room_id {
-                handle_event_with_room(event, &room_id, unreads_db).await?;
+            if let Some(Value::Text(room_id)) = room_id {
+                unreads_db
+                    .increment_unreads_for_all_members_except(&room_id, &event.user, event.idx)
+                    .await?;
             }
         }
     }
-
-    Ok(())
-}
-
-/// Extract room ID from a DRISL payload.
-fn extract_room_id(payload: &Value) -> Option<String> {
-    if let Some(Value::Text(room_id)) = extract_from_drisl_with_expr(
-        payload.clone(),
-        &[DrislExtractExprSegment::FieldAccess("room".to_string())],
-    ) {
-        return Some(room_id);
-    }
-
-    None
-}
-
-/// Extract event type (discriminant) from a DRISL payload.
-fn extract_event_type(payload: &Value) -> Option<String> {
-    if let Some(Value::Text(discriminant)) = extract_from_drisl_with_expr(
-        payload.clone(),
-        &[DrislExtractExprSegment::FieldAccess("$type".to_string())],
-    ) {
-        return Some(discriminant);
-    }
-
-    None
-}
-
-/// Handle a JoinSpace event.
-#[instrument(skip(event, unreads_db))]
-async fn handle_join_space(
-    event: &leaf_stream_types::Event,
-    unreads_db: &UnreadsDB,
-) -> anyhow::Result<()> {
-    // Add the user as a member of the space
-    unreads_db.add_member(&event.user).await?;
-
-    Ok(())
-}
-
-/// Handle a LeaveSpace event.
-#[instrument(skip(event, unreads_db))]
-async fn handle_leave_space(
-    event: &leaf_stream_types::Event,
-    unreads_db: &UnreadsDB,
-) -> anyhow::Result<()> {
-    // Remove the user from the space
-    unreads_db.remove_member(&event.user).await?;
-
-    Ok(())
-}
-
-/// Handle a regular event (not JoinSpace/LeaveSpace) with a room ID.
-#[instrument(skip(event, unreads_db))]
-async fn handle_event_with_room(
-    event: &leaf_stream_types::Event,
-    room_id: &str,
-    unreads_db: &UnreadsDB,
-) -> anyhow::Result<()> {
-    // Get all active members of the space
-    let members = unreads_db.get_space_members().await?;
-
-    // Filter out the sender
-    let other_members: Vec<_> = members
-        .into_iter()
-        .filter(|member| member.user_did != event.user)
-        .collect();
-
-    if other_members.is_empty() {
-        debug!("No other members to notify for room {room_id}");
-        return Ok(());
-    }
-
-    // Create increment operations for all other members
-    let increments: Vec<UnreadIncrement> = other_members
-        .iter()
-        .map(|member| UnreadIncrement {
-            user_did: member.user_did.clone(),
-            room_id: room_id.to_string(),
-            unread_delta: 1,
-            mention_delta: 0, // TODO: Extract mentions from payload
-            event_idx: event.idx,
-        })
-        .collect();
-
-    // Increment unreads for all members
-    unreads_db.increment_unreads(increments).await?;
-
-    debug!(
-        "Incremented unreads for {} members in room {room_id} at event index {}",
-        other_members.len(),
-        event.idx
-    );
 
     Ok(())
 }
