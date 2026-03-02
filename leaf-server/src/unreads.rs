@@ -58,10 +58,6 @@ impl UnreadsDB {
         &self.db
     }
 
-    // ============================================================================
-    // space_members table operations
-    // ============================================================================
-
     /// Add a member to the space
     #[instrument(skip(self), err)]
     pub async fn add_member(&self, user_did: &str) -> anyhow::Result<()> {
@@ -108,10 +104,6 @@ impl UnreadsDB {
             .await?;
         Ok(rows.next().await?.is_some())
     }
-
-    // ============================================================================
-    // room_unreads table operations
-    // ============================================================================
 
     /// Get unreads for a user across all rooms
     #[instrument(skip(self), err)]
@@ -198,17 +190,10 @@ impl UnreadsDB {
     #[instrument(skip(self), err)]
     pub async fn reset_user_unreads(&self, user_did: &str) -> anyhow::Result<()> {
         self.db()
-            .execute(
-                "update room_unreads set unread_count = 0, mention_count = 0 where user_did = ?",
-                [user_did],
-            )
+            .execute("delete from room_unreads where user_did = ?", [user_did])
             .await?;
         Ok(())
     }
-
-    // ============================================================================
-    // materialization_state table operations
-    // ============================================================================
 
     /// Get the materialization state
     #[instrument(skip(self), err)]
@@ -340,8 +325,6 @@ async fn monitor_stream(stream_with_unreads: Arc<StreamWithUnreads>) -> anyhow::
         .await?;
     let mut last_processed_idx = state.last_event_idx;
 
-    info!("Starting unreads monitor for stream {stream_did} from event index {last_processed_idx}");
-
     // Process events until the channel is closed
     loop {
         let event = match event_rx.recv().await {
@@ -418,16 +401,16 @@ async fn process_event(
 
     // Handle different event types
     match event_type.as_deref() {
-        Some("JoinSpace") | Some("joinSpace") | Some("town.muni.event.JoinSpace") => {
+        Some("space.roomy.space.joinSpace.v0") => {
             handle_join_space(event, unreads_db).await?;
         }
-        Some("LeaveSpace") | Some("leaveSpace") | Some("town.muni.event.LeaveSpace") => {
+        Some("space.roomy.space.leaveSpace.v0") => {
             handle_leave_space(event, unreads_db).await?;
         }
         _ => {
             // For other events with a room ID, increment unreads for all members except sender
             if let Some(room_id) = room_id {
-                handle_regular_event(event, &room_id, unreads_db).await?;
+                handle_event_with_room(event, &room_id, unreads_db).await?;
             }
         }
     }
@@ -437,32 +420,11 @@ async fn process_event(
 
 /// Extract room ID from a DRISL payload.
 fn extract_room_id(payload: &Value) -> Option<String> {
-    // Try various paths where roomId might be located
-    let paths: Vec<Vec<DrislExtractExprSegment>> = vec![
-        vec![DrislExtractExprSegment::FieldAccess("roomId".to_string())],
-        vec![DrislExtractExprSegment::FieldAccess("room_id".to_string())],
-        vec![
-            DrislExtractExprSegment::FieldAccess("message".to_string()),
-            DrislExtractExprSegment::FieldAccess("roomId".to_string()),
-        ],
-        vec![
-            DrislExtractExprSegment::FieldAccess("message".to_string()),
-            DrislExtractExprSegment::FieldAccess("room_id".to_string()),
-        ],
-        vec![
-            DrislExtractExprSegment::FieldAccess("post".to_string()),
-            DrislExtractExprSegment::FieldAccess("roomId".to_string()),
-        ],
-        vec![
-            DrislExtractExprSegment::FieldAccess("post".to_string()),
-            DrislExtractExprSegment::FieldAccess("room_id".to_string()),
-        ],
-    ];
-
-    for path in &paths {
-        if let Some(Value::Text(room_id)) = extract_from_drisl_with_expr(payload.clone(), path) {
-            return Some(room_id);
-        }
+    if let Some(Value::Text(room_id)) = extract_from_drisl_with_expr(
+        payload.clone(),
+        &[DrislExtractExprSegment::FieldAccess("room".to_string())],
+    ) {
+        return Some(room_id);
     }
 
     None
@@ -470,21 +432,14 @@ fn extract_room_id(payload: &Value) -> Option<String> {
 
 /// Extract event type (discriminant) from a DRISL payload.
 fn extract_event_type(payload: &Value) -> Option<String> {
-    match payload {
-        Value::Map(map) => {
-            // If the map has only one key, it's likely a tagged union discriminant
-            if map.len() == 1 {
-                return Some(map.keys().next().unwrap().clone());
-            }
-            // Try to extract from a $type field
-            if let Some(Value::Text(type_str)) = map.get("$type") {
-                return Some(type_str.clone());
-            }
-            None
-        }
-        Value::Text(text) => Some(text.clone()),
-        _ => None,
+    if let Some(Value::Text(discriminant)) = extract_from_drisl_with_expr(
+        payload.clone(),
+        &[DrislExtractExprSegment::FieldAccess("$type".to_string())],
+    ) {
+        return Some(discriminant);
     }
+
+    None
 }
 
 /// Handle a JoinSpace event.
@@ -495,11 +450,6 @@ async fn handle_join_space(
 ) -> anyhow::Result<()> {
     // Add the user as a member of the space
     unreads_db.add_member(&event.user).await?;
-
-    debug!(
-        "Added member {} to space at event index {}",
-        event.user, event.idx
-    );
 
     Ok(())
 }
@@ -513,20 +463,12 @@ async fn handle_leave_space(
     // Remove the user from the space
     unreads_db.remove_member(&event.user).await?;
 
-    // Clean up unread records for this user
-    unreads_db.reset_user_unreads(&event.user).await?;
-
-    debug!(
-        "Removed member {} from space at event index {} and cleaned up unreads",
-        event.user, event.idx
-    );
-
     Ok(())
 }
 
 /// Handle a regular event (not JoinSpace/LeaveSpace) with a room ID.
 #[instrument(skip(event, unreads_db))]
-async fn handle_regular_event(
+async fn handle_event_with_room(
     event: &leaf_stream_types::Event,
     room_id: &str,
     unreads_db: &UnreadsDB,
