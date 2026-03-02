@@ -611,84 +611,6 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 .ok();
         },
     );
-
-    let span_ = span.clone();
-    let did_ = did.clone();
-    socket.on(
-        "unreads/space_members",
-        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
-            let result = async {
-                let Some(did_) = did_ else {
-                    anyhow::bail!("Only authenticated users can query space members");
-                };
-
-                let UnreadsSpaceMembersArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
-
-                // Load the stream (which includes the cached unreads_db)
-                let s = STREAMS.load(stream_did.clone()).await?;
-                let unreads_db = &s.unreads_db;
-
-                // Verify the user is a member of this space
-                if !unreads_db.is_member(&did_).await? {
-                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
-                }
-
-                // Get space members
-                let members = unreads_db.get_space_members().await?;
-
-                // Convert to response format
-                let response: Vec<UnreadsSpaceMember> = members
-                    .into_iter()
-                    .map(|m| UnreadsSpaceMember {
-                        user_did: m.user_did,
-                    })
-                    .collect();
-
-                anyhow::Ok(UnreadsSpaceMembersResp { members: response })
-            }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/space_members"))
-            .await;
-
-            ack.send(&response(result))
-                .log_error("Internal error sending response")
-                .ok();
-        },
-    );
-
-    let span_ = span.clone();
-    let did_ = did.clone();
-    socket.on(
-        "unreads/reset_all",
-        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
-            let result = async {
-                let Some(did_) = did_ else {
-                    anyhow::bail!("Only authenticated users can reset unreads");
-                };
-
-                let UnreadsResetAllArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
-
-                // Load the stream (which includes the cached unreads_db)
-                let s = STREAMS.load(stream_did.clone()).await?;
-                let unreads_db = &s.unreads_db;
-
-                // Verify the user is a member of this space
-                if !unreads_db.is_member(&did_).await? {
-                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
-                }
-
-                // Reset all unreads for the user
-                unreads_db.reset_user_unreads(&did_).await?;
-
-                anyhow::Ok(UnreadsResetAllResp { success: true })
-            }
-            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/reset_all"))
-            .await;
-
-            ack.send(&response(result))
-                .log_error("Internal error sending response")
-                .ok();
-        },
-    );
 }
 
 #[derive(Deserialize)]
@@ -849,35 +771,5 @@ struct UnreadsMarkReadArgs {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UnreadsMarkReadResp {
-    success: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UnreadsSpaceMembersArgs {
-    stream_did: Did,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UnreadsSpaceMember {
-    user_did: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UnreadsSpaceMembersResp {
-    members: Vec<UnreadsSpaceMember>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UnreadsResetAllArgs {
-    stream_did: Did,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UnreadsResetAllResp {
     success: bool,
 }
