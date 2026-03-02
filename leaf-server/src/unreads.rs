@@ -79,22 +79,6 @@ impl UnreadsDB {
         Ok(())
     }
 
-    /// Get all active members of the space
-    #[instrument(skip(self), err)]
-    pub async fn get_space_members(&self) -> anyhow::Result<Vec<SpaceMember>> {
-        let rows: Vec<String> = self
-            .db()
-            .query("select user_did from space_members", ())
-            .await?
-            .parse_rows()
-            .await?;
-
-        Ok(rows
-            .into_iter()
-            .map(|user_did| SpaceMember { user_did })
-            .collect())
-    }
-
     /// Check if a user is an active member of the space
     #[instrument(skip(self), err)]
     pub async fn is_member(&self, user_did: &str) -> anyhow::Result<bool> {
@@ -230,13 +214,6 @@ async fn run_database_migrations(db: &Connection) -> anyhow::Result<()> {
 // ============================================================================
 // Data types
 // ============================================================================
-
-/// Represents a space member
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SpaceMember {
-    /// The DID of the user
-    pub user_did: String,
-}
 
 /// Represents unread counts for a room
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

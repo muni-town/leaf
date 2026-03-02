@@ -25,7 +25,6 @@ use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use weak_table::WeakValueHashMap;
 use zeroize::ZeroizeOnDrop;
-use zstd::zstd_safe::WriteBuf;
 
 use crate::{
     async_oncelock::AsyncOnceLock,
@@ -854,7 +853,7 @@ impl Storage {
                 ))
                 .await?;
             let compressed = resp.bytes().await?;
-            let bytes = zstd::decode_all(compressed.as_slice())?;
+            let bytes = zstd::decode_all(&compressed[..])?;
 
             self.add_module_blob(bytes).await?;
         }
@@ -985,7 +984,7 @@ impl Storage {
                     .join("state.db");
 
                 let compressed = bucket.get(statedb_bucket_path).await?.bytes().await?;
-                let statedb_bytes = zstd::decode_all(compressed.as_slice())?;
+                let statedb_bytes = zstd::decode_all(&compressed[..])?;
                 tokio::fs::write(statedb_path, statedb_bytes).await?;
             }
 
