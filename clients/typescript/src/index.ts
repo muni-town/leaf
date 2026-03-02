@@ -48,7 +48,7 @@ export * from "./codec.js";
 
 type SocketIoBuffer = Buffer | ArrayBuffer;
 
-async function createDaslCid(bytes: Uint8Array): Promise<Cid> {
+async function createDaslCid(bytes: Uint8Array<ArrayBuffer>): Promise<Cid> {
   return createCid(0x71, bytes);
 }
 

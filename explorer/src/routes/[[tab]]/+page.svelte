@@ -11,7 +11,8 @@
 		BytesWrapper,
 		type BasicModule,
 		type LeafQuery,
-		type SqlValue
+		type SqlValue,
+		type UnreadsGetItem
 	} from '@muni-town/leaf-client';
 	import { page } from '$app/state';
 	import { encode } from '@atcute/cbor';
@@ -24,6 +25,7 @@
 	const persistLog = getContext<{ value: boolean }>('persistLog');
 
 	let eventMode = $state<'regular' | 'state'>('regular');
+	let unreads = $state<UnreadsGetItem[]>([]);
 
 	let streamHandle = $state('');
 
@@ -161,13 +163,34 @@
 		await backend.clearState(streamDid.value);
 		events.push('State cleared');
 	}
+
+	async function getUnreads() {
+		if (!backendStatus.did) return;
+		unreads = await backend.getUnreads(streamDid.value);
+	}
+
+	async function markAllAsRead() {
+		if (!backendStatus.did) return;
+		await backend.markAsRead(streamDid.value);
+		await getUnreads();
+	}
+
+	async function markRoomAsRead(roomId: string) {
+		if (!backendStatus.did) return;
+		await backend.markAsRead(streamDid.value, roomId);
+		await getUnreads();
+	}
 </script>
 
 <div class="flex min-h-0 min-w-0 shrink flex-row gap-3 px-5">
-	<div class="thin-scroll min-w-[24em] shrink overflow-y-auto border-accent bg-base-100 shadow-md">
+	<div
+		class="thin-scroll border-accent bg-base-100 min-w-[24em] shrink overflow-y-auto shadow-md"
+	>
 		<div role="tablist" class="tabs-border tabs">
 			{#each tabs as tab}
-				<a href={`#/${tab}`} role="tab" class="tab" class:tab-active={currentTab == tab}>{tab}</a>
+				<a href={`#/${tab}`} role="tab" class="tab" class:tab-active={currentTab == tab}
+					>{tab}</a
+				>
 			{/each}
 		</div>
 		{#if currentTab == 'Query'}
@@ -255,8 +278,10 @@
 							<option value="muni.town.sqliteValue.blob">Blob</option>
 						</select>
 						<input class="input" bind:value={param.value} />
-						<button type="button" onclick={() => queryParams.splice(i, 1)} class="btn btn-sm"
-							>X</button
+						<button
+							type="button"
+							onclick={() => queryParams.splice(i, 1)}
+							class="btn btn-sm">X</button
 						>
 					</div>
 				{/each}
@@ -264,9 +289,13 @@
 				<button type="submit" class="btn btn-outline" onclick={runQuery}>Query</button>
 				{#if subscriptionId}
 					Subscribed: {subscriptionId}
-					<button type="submit" class="btn btn-outline" onclick={unsubscribe}>Unsubscribe</button>
+					<button type="submit" class="btn btn-outline" onclick={unsubscribe}
+						>Unsubscribe</button
+					>
 				{:else}
-					<button type="submit" class="btn btn-outline" onclick={subscribe}>Subscribe</button>
+					<button type="submit" class="btn btn-outline" onclick={subscribe}
+						>Subscribe</button
+					>
 				{/if}
 			</form>
 
@@ -277,7 +306,9 @@
 					loading = true;
 					try {
 						const hasModule = await backend.hasModule(moduleId);
-						events.push(hasModule ? `Has module: ${moduleId}` : `No module: ${moduleId}`);
+						events.push(
+							hasModule ? `Has module: ${moduleId}` : `No module: ${moduleId}`
+						);
 					} catch (e: any) {
 						events.push(e.toString());
 					}
@@ -323,9 +354,52 @@
 				}}
 			>
 				<h2 class="mb-4 text-xl font-bold">Set Handle</h2>
-				<input class="input w-full" bind:value={streamHandle} placeholder="example.handle.com" />
+				<input
+					class="input w-full"
+					bind:value={streamHandle}
+					placeholder="example.handle.com"
+				/>
 				<button class="btn btn-outline" disabled={loading}>Set Handle</button>
 			</form>
+
+			<!-- Unreads -->
+			<div class="m-8 flex flex-col gap-2">
+				<h2 class="mb-4 text-xl font-bold">Unreads</h2>
+				<button class="btn btn-outline" onclick={getUnreads} disabled={loading}
+					>Refresh Unreads</button
+				>
+				{#if unreads.length > 0}
+					<button class="btn btn-primary mt-2" onclick={markAllAsRead} disabled={loading}
+						>Mark All as Read</button
+					>
+					<div class="mt-4 flex flex-col gap-2">
+						{#each unreads as unread}
+							<div
+								class="bg-base-200 flex items-center justify-between rounded border p-3"
+							>
+								<div class="flex flex-col">
+									<span class="font-bold">{unread.roomId}</span>
+									<span class="text-sm opacity-60">
+										{unread.unreadCount} unread{unread.unreadCount !== 1
+											? 's'
+											: ''}
+										{unread.mentionCount > 0
+											? `, ${unread.mentionCount} mention${unread.mentionCount !== 1 ? 's' : ''}`
+											: ''}
+									</span>
+								</div>
+								<button
+									class="btn btn-sm"
+									onclick={() => markRoomAsRead(unread.roomId)}
+									disabled={loading}>Mark Read</button
+								>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="mt-4 opacity-60">No unread messages</p>
+				{/if}
+			</div>
 		{:else if currentTab == 'Create Stream'}
 			<div class="m-3 flex flex-col gap-2">
 				<button class="btn w-40" onclick={createStream}>Create Stream</button>
@@ -334,7 +408,7 @@
 		{/if}
 	</div>
 
-	<div class="thin-scroll min-w-[20em] grow overflow-auto bg-base-100 shadow-md">
+	<div class="thin-scroll bg-base-100 min-w-[20em] grow overflow-auto shadow-md">
 		{#if currentTab == 'Query'}
 			<div class="flex h-full flex-col gap-3">
 				<h2 class="text-md m-2 flex items-center justify-between font-bold">
@@ -355,7 +429,9 @@
 						>
 					</div>
 					{#if eventMode === 'state'}
-						<button class="btn btn-sm btn-error" onclick={clearState}>Clear State</button>
+						<button class="btn btn-sm btn-error" onclick={clearState}
+							>Clear State</button
+						>
 					{/if}
 				</div>
 				<CodeMirror
@@ -371,7 +447,8 @@
 			<div>
 				<h2 class="m-3 text-xl font-bold">Init SQL</h2>
 				<p class="m-3 text-sm opacity-40">
-					This code will be run to initialize the module database and should be idempotent.
+					This code will be run to initialize the module database and should be
+					idempotent.
 				</p>
 				<CodeMirror
 					lang={sqlLang()}
@@ -382,10 +459,14 @@
 				/>
 				<h2 class="m-3 text-xl font-bold">State Init SQL</h2>
 				<div class="m-3 gap-2 text-sm opacity-40">
-					<p>This code will be run to initialize the state database and should be idempotent.</p>
 					<p>
-						The state database is attached to the module database as "state". This SQL is executed
-						when the stream is first loaded or if the state database is reset.
+						This code will be run to initialize the state database and should be
+						idempotent.
+					</p>
+					<p>
+						The state database is attached to the module database as "state". This SQL
+						is executed when the stream is first loaded or if the state database is
+						reset.
 					</p>
 				</div>
 				<CodeMirror
@@ -399,7 +480,9 @@
 				<div class="m-3 gap-2 text-sm opacity-40">
 					<p>SQL used to authorize new events before the are accepted into the stream.</p>
 					<p>
-						To access the event that is being authorized you can query the <code>user</code>
+						To access the event that is being authorized you can query the <code
+							>user</code
+						>
 						and <code>payload</code> from the <code>event</code> table.
 					</p>
 				</div>
@@ -412,9 +495,14 @@
 				/>
 				<h2 class="m-3 text-xl font-bold">Materializer SQL</h2>
 				<div class="m-3 gap-2 text-sm opacity-40">
-					<p>SQL used to materialize new events after they have been accepted into the stream.</p>
 					<p>
-						To access the event that is being materialized you can query the <code>user</code>
+						SQL used to materialize new events after they have been accepted into the
+						stream.
+					</p>
+					<p>
+						To access the event that is being materialized you can query the <code
+							>user</code
+						>
 						and <code>payload</code> from the <code>event</code> table.
 					</p>
 				</div>
@@ -429,11 +517,13 @@
 				<div class="m-3 gap-2 text-sm opacity-40">
 					<p>SQL used to materialize state events.</p>
 					<p>
-						State events are used for transient, state that doesn't need to be part of the permanent
-						event log.
+						State events are used for transient, state that doesn't need to be part of
+						the permanent event log.
 					</p>
 					<p>
-						To access the event that is being materialized you can query the <code>user</code>
+						To access the event that is being materialized you can query the <code
+							>user</code
+						>
 						and <code>payload</code> from the <code>event</code> table.
 					</p>
 					<p>
@@ -447,7 +537,7 @@
 					theme={oneDarkTheme}
 					placeholder="-- state event materialization sql"
 				/>
-				<h2 class="mx-3 mt-5 mb-2 flex items-center text-xl font-bold">
+				<h2 class="mx-3 mb-2 mt-5 flex items-center text-xl font-bold">
 					Queries
 					<div class="grow"></div>
 					<button
@@ -468,8 +558,11 @@
 							<input class="input" placeholder="query name" bind:value={query.name} />
 							<button
 								class="btn"
-								onclick={() => (newStreamModule.queries = newStreamModule.queries.splice(i, 0))}
-								>Delete Query</button
+								onclick={() =>
+									(newStreamModule.queries = newStreamModule.queries.splice(
+										i,
+										0
+									))}>Delete Query</button
 							>
 						</div>
 						<div class="m-3 gap-2 text-sm opacity-40">
@@ -479,8 +572,8 @@
 									>$requesting_user</code
 								>
 								placeholder, as well as and
-								<code>$start</code> and <code>$limit</code> in order to limit results based on the event
-								index and count.
+								<code>$start</code> and <code>$limit</code> in order to limit results
+								based on the event index and count.
 							</p>
 						</div>
 						<CodeMirror
@@ -506,10 +599,18 @@
 						</h3>
 						{#each query.params as param, i}
 							<div class="flex justify-between">
-								<input class="input" placeholder="$myParam" bind:value={param.name} />
+								<input
+									class="input"
+									placeholder="$myParam"
+									bind:value={param.name}
+								/>
 								<select class="select" bind:value={param.kind}>
-									<option selected value={{ tag: 'any', value: undefined }}>Any</option>
-									<option value={{ tag: 'integer', value: undefined }}>Integer</option>
+									<option selected value={{ tag: 'any', value: undefined }}
+										>Any</option
+									>
+									<option value={{ tag: 'integer', value: undefined }}
+										>Integer</option
+									>
 									<option value={{ tag: 'real', value: undefined }}>Real</option>
 									<option value={{ tag: 'text', value: undefined }}>Text</option>
 									<option value={{ tag: 'blob', value: undefined }}>Blob</option>
@@ -523,7 +624,9 @@
 										bind:checked={param.optional}
 									/>
 								</label>
-								<button class="btn" onclick={() => (query.params = query.params.splice(i, 0))}
+								<button
+									class="btn"
+									onclick={() => (query.params = query.params.splice(i, 0))}
 									>Delete Param</button
 								>
 							</div>
