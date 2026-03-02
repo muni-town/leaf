@@ -1,7 +1,7 @@
 import type { ProfileViewDetailed } from '@atproto/api/dist/client/types/app/bsky/actor/defs';
 import { messagePortInterface, reactiveWorkerState } from './workerMessaging';
 import backendWorkerUrl from './backendWorker.ts?worker&url';
-import type { LeafQuery, SqlRows, BasicModule } from '@muni-town/leaf-client';
+import type { LeafQuery, SqlRows, BasicModule, UnreadsGetItem } from '@muni-town/leaf-client';
 
 // Force page reload when hot reloading this file to avoid confusion if the workers get mixed up.
 if (import.meta.hot) {
@@ -39,6 +39,8 @@ export type BackendInterface = {
 	sendStateEvents(streamDid: string, events: Uint8Array[]): Promise<void>;
 	clearState(streamDid: string): Promise<void>;
 	setLeafUrl(url: string): Promise<void>;
+	getUnreads(streamDid: string): Promise<UnreadsGetItem[]>;
+	markAsRead(streamDid: string, roomId?: string, lastReadIdx?: number): Promise<boolean>;
 	/** Adds a new message port connection to the backend that can call the backend interface. */
 	addClient(port: MessagePort): Promise<void>;
 };

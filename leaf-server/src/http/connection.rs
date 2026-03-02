@@ -130,7 +130,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let StreamInfoArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -140,7 +140,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 };
 
                 anyhow::Ok(StreamInfoResp {
-                    module_cid: stream.module_cid().await,
+                    module_cid: s.stream.module_cid().await,
                 })
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/info"))
@@ -183,7 +183,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only a stream owner can update its module");
                 }
 
-                STREAMS.update_module(stream, module_cid).await?;
+                STREAMS.update_module(stream.clone(), module_cid).await?;
 
                 anyhow::Ok(())
             }
@@ -223,6 +223,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let signing_key = STORAGE.get_did_signing_key(stream_did).await?;
 
                 stream
+                    .stream
                     .add_events(
                         signing_key,
                         events
@@ -261,7 +262,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -270,7 +271,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                stream
+                s.stream
                     .add_state_events(
                         events
                             .into_iter()
@@ -309,7 +310,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let StreamClearStateArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -324,7 +325,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only a stream owner can set its handle");
                 }
 
-                stream.clear_state_db().await?;
+                s.stream.clear_state_db().await?;
 
                 anyhow::Ok(())
             }
@@ -358,7 +359,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let subscription_id = Ulid::new();
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -367,7 +368,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let receiver = stream.subscribe_events(did_.clone(), query).await;
+                let receiver = s.stream.subscribe_events(did_.clone(), query).await;
 
                 tokio::spawn(async move {
                     let (unsubscribe_tx, unsubscribe_rx) = oneshot::channel();
@@ -453,7 +454,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 let StreamQueryArgs { stream_did, query } = dasl::drisl::from_slice(&bytes?[..])?;
 
                 let open_streams = open_streams_.upgradable_read().await;
-                let stream = if let Some(stream) = open_streams.get(&stream_did) {
+                let s = if let Some(stream) = open_streams.get(&stream_did) {
                     stream.clone()
                 } else {
                     let stream = STREAMS.load(stream_did.clone()).await?;
@@ -462,7 +463,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let response = stream.query(did_.clone(), query).await?;
+                let response = s.stream.query(did_.clone(), query).await?;
 
                 anyhow::Ok(response)
             }
@@ -500,6 +501,109 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                 anyhow::Ok(())
             }
             .instrument(tracing::info_span!(parent: span_.clone(), "handle stream/set_handle"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    // ============================================================================
+    // Unreads tracking endpoints
+    // ============================================================================
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
+        "unreads/get",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can query unreads");
+                };
+
+                let UnreadsGetArgs { stream_did } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Load the stream (which includes the cached unreads_db)
+                let stream_with_unreads = STREAMS.load(stream_did.clone()).await?;
+                let unreads_db = &stream_with_unreads.unreads_db;
+
+                // Verify the user is a member of this space
+                if !unreads_db.is_member(&did_).await? {
+                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
+                }
+
+                // Get unreads for the user
+                let unreads = unreads_db.get_user_unreads(&did_).await?;
+
+                // Convert to response format
+                let response: Vec<UnreadsGetItem> = unreads
+                    .into_iter()
+                    .map(|u| UnreadsGetItem {
+                        room_id: u.room_id,
+                        unread_count: u.unread_count as u32,
+                        mention_count: u.mention_count as u32,
+                    })
+                    .collect();
+
+                anyhow::Ok(UnreadsGetResp { unreads: response })
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/get"))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
+        "unreads/mark_read",
+        async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Only authenticated users can mark items as read");
+                };
+
+                let UnreadsMarkReadArgs {
+                    stream_did,
+                    room_id,
+                    last_read_idx,
+                } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Load the stream (which includes the cached unreads_db)
+                let s = STREAMS.load(stream_did.clone()).await?;
+                let unreads_db = &s.unreads_db;
+
+                // Verify the user is a member of this space
+                if !unreads_db.is_member(&did_).await? {
+                    anyhow::bail!("User {did_} is not a member of space {stream_did}");
+                }
+
+                if let Some(room_id) = room_id {
+                    // Mark specific room as read
+                    // Use provided last_read_idx or get the latest event index from the stream
+                    let last_read_idx = match last_read_idx {
+                        Some(idx) => idx,
+                        None => {
+                            // Get the stream to fetch the latest event index
+                            s.stream.latest_event().await
+                        }
+                    };
+                    unreads_db
+                        .mark_as_read(&did_, &room_id, last_read_idx)
+                        .await?;
+                } else {
+                    // Mark all rooms as read
+                    unreads_db.reset_user_unreads(&did_).await?;
+                }
+
+                anyhow::Ok(UnreadsMarkReadResp { success: true })
+            }
+            .instrument(tracing::info_span!(parent: span_.clone(), "handle unreads/mark_read"))
             .await;
 
             ack.send(&response(result))
@@ -630,4 +734,42 @@ struct StreamUnsubscribeArgs {
 #[serde(rename_all = "camelCase")]
 struct StreamUnsubscribeResp {
     was_subscribed: bool,
+}
+
+// ============================================================================
+// Unreads tracking types
+// ============================================================================
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsGetArgs {
+    stream_did: Did,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsGetItem {
+    room_id: String,
+    unread_count: u32,
+    mention_count: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsGetResp {
+    unreads: Vec<UnreadsGetItem>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsMarkReadArgs {
+    stream_did: Did,
+    room_id: Option<String>,
+    last_read_idx: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnreadsMarkReadResp {
+    success: bool,
 }

@@ -25,7 +25,6 @@ use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use weak_table::WeakValueHashMap;
 use zeroize::ZeroizeOnDrop;
-use zstd::zstd_safe::WriteBuf;
 
 use crate::{
     async_oncelock::AsyncOnceLock,
@@ -723,6 +722,7 @@ impl Storage {
 
                     // Get the events that are newer than the latest backed up event.
                     let events = s
+                        .stream
                         .raw_get_events((stream.backup_latest_event.map(|l| l + 1).unwrap_or(1))..)
                         .await?;
                     let events_len = events.len() as i64;
@@ -853,7 +853,7 @@ impl Storage {
                 ))
                 .await?;
             let compressed = resp.bytes().await?;
-            let bytes = zstd::decode_all(compressed.as_slice())?;
+            let bytes = zstd::decode_all(&compressed[..])?;
 
             self.add_module_blob(bytes).await?;
         }
@@ -916,7 +916,7 @@ impl Storage {
             )
             .await?;
             // Create the stream
-            let stream = self.create_stream(stream_did.clone()).await?;
+            let s = self.create_stream(stream_did.clone()).await?;
 
             // Fetch the list of event archives on S3
             let mut ranges_on_s3 = bucket
@@ -969,7 +969,7 @@ impl Storage {
                 let archive: EventArchive = dasl::drisl::from_slice(&decompressed)?;
 
                 // Import the events from the archive
-                stream.raw_import_events(archive.events).await?;
+                s.stream.raw_import_events(archive.events).await?;
             }
 
             // Restore the state database if necessary
@@ -984,12 +984,12 @@ impl Storage {
                     .join("state.db");
 
                 let compressed = bucket.get(statedb_bucket_path).await?.bytes().await?;
-                let statedb_bytes = zstd::decode_all(compressed.as_slice())?;
+                let statedb_bytes = zstd::decode_all(&compressed[..])?;
                 tokio::fs::write(statedb_path, statedb_bytes).await?;
             }
 
             // Set the module for the stream and catch it up
-            stream.raw_set_module(metadata.module_cid).await?;
+            s.stream.raw_set_module(metadata.module_cid).await?;
 
             // TODO: we want to load the module and catch it up now, so it doesn't error when we try
             // to connect to it later. There's a bug that means modules can end up in an error state

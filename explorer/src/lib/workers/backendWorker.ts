@@ -56,7 +56,7 @@ class Backend {
 	#leafUrl: string | undefined;
 
 	#oauthReady: Promise<void>;
-	#resolveOauthReady: () => void = () => { };
+	#resolveOauthReady: () => void = () => {};
 	get ready() {
 		return state.#oauthReady;
 	}
@@ -274,6 +274,14 @@ function connectMessagePort(port: MessagePortApi) {
 			if (!state.leafClient) throw 'Leaf client not initialized';
 			const resp = await state.leafClient.query(streamDid, query);
 			return resp;
+		},
+		async getUnreads(streamDid) {
+			if (!state.leafClient) throw 'Leaf client not initialized';
+			return await state.leafClient.getUnreads(streamDid);
+		},
+		async markAsRead(streamDid, roomId, lastReadIdx) {
+			if (!state.leafClient) throw 'Leaf client not initialized';
+			return await state.leafClient.markAsRead(streamDid, roomId, lastReadIdx);
 		},
 		async addClient(port) {
 			connectMessagePort(port);
