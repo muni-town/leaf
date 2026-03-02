@@ -64,7 +64,7 @@ impl UnreadsDB {
 
     /// Add a member to the space
     #[instrument(skip(self), err)]
-    pub async fn add_member(&self, user_did: &str, _event_idx: i64) -> anyhow::Result<()> {
+    pub async fn add_member(&self, user_did: &str) -> anyhow::Result<()> {
         self.db()
             .execute(
                 "insert into space_members (user_did) values (?)",
@@ -76,7 +76,7 @@ impl UnreadsDB {
 
     /// Remove a member from the space
     #[instrument(skip(self), err)]
-    pub async fn remove_member(&self, user_did: &str, _event_idx: i64) -> anyhow::Result<()> {
+    pub async fn remove_member(&self, user_did: &str) -> anyhow::Result<()> {
         self.db()
             .execute("delete from space_members where user_did = ?", [user_did])
             .await?;
@@ -116,10 +116,10 @@ impl UnreadsDB {
     /// Get unreads for a user across all rooms
     #[instrument(skip(self), err)]
     pub async fn get_user_unreads(&self, user_did: &str) -> anyhow::Result<Vec<RoomUnread>> {
-        let rows: Vec<(String, i64, i64, Option<i64>, i64)> = self
+        let rows: Vec<(String, i64, i64, Option<i64>)> = self
             .db()
             .query(
-                "select room_id, unread_count, mention_count, last_event_idx, updated_at from room_unreads where user_did = ? order by updated_at desc",
+                "select room_id, unread_count, mention_count, last_event_idx from room_unreads where user_did = ?",
                 [user_did],
             )
             .await?
@@ -129,50 +129,14 @@ impl UnreadsDB {
         Ok(rows
             .into_iter()
             .map(
-                |(room_id, unread_count, mention_count, last_event_idx, updated_at)| RoomUnread {
+                |(room_id, unread_count, mention_count, last_event_idx)| RoomUnread {
                     room_id,
                     unread_count,
                     mention_count,
                     last_event_idx,
-                    updated_at,
                 },
             )
             .collect())
-    }
-
-    /// Get unreads for a user in a specific room
-    #[instrument(skip(self), err)]
-    pub async fn get_user_unreads_for_room(
-        &self,
-        user_did: &str,
-        room_id: &str,
-    ) -> anyhow::Result<Option<RoomUnread>> {
-        let mut rows = self
-            .db()
-            .query(
-                "select room_id, unread_count, mention_count, last_event_idx, updated_at from room_unreads where user_did = ? and room_id = ?",
-                (user_did, room_id),
-            )
-            .await?;
-
-        if let Some(row) = rows.next().await? {
-            let (room_id, unread_count, mention_count, last_event_idx, updated_at): (
-                String,
-                i64,
-                i64,
-                Option<i64>,
-                i64,
-            ) = row.parse_row().await?;
-            return Ok(Some(RoomUnread {
-                room_id,
-                unread_count,
-                mention_count,
-                last_event_idx,
-                updated_at,
-            }));
-        }
-
-        Ok(None)
     }
 
     /// Increment unread counts for multiple users
@@ -184,13 +148,12 @@ impl UnreadsDB {
         for inc in increments {
             trans
                 .execute(
-                    "insert into room_unreads (user_did, room_id, unread_count, mention_count, last_event_idx, updated_at)
-                     values (?, ?, ?, ?, ?, unixepoch())
+                    "insert into room_unreads (user_did, room_id, unread_count, mention_count, last_event_idx)
+                     values (?, ?, ?, ?, ?)
                      on conflict (user_did, room_id) do update set
                         unread_count = unread_count + ?,
                         mention_count = mention_count + ?,
-                        last_event_idx = ?,
-                        updated_at = unixepoch()",
+                        last_event_idx = ?",
                     (
                         inc.user_did.as_str(),
                         inc.room_id.as_str(),
@@ -224,7 +187,7 @@ impl UnreadsDB {
 
         self.db()
             .execute(
-                "update room_unreads set unread_count = 0, mention_count = 0, last_event_idx = max(last_event_idx, ?), updated_at = unixepoch() where user_did = ? and room_id = ?",
+                "update room_unreads set unread_count = 0, mention_count = 0, last_event_idx = max(last_event_idx, ?) where user_did = ? and room_id = ?",
                 (last_read_idx, user_did, room_id),
             )
             .await?;
@@ -236,7 +199,7 @@ impl UnreadsDB {
     pub async fn reset_user_unreads(&self, user_did: &str) -> anyhow::Result<()> {
         self.db()
             .execute(
-                "update room_unreads set unread_count = 0, mention_count = 0, updated_at = unixepoch() where user_did = ?",
+                "update room_unreads set unread_count = 0, mention_count = 0 where user_did = ?",
                 [user_did],
             )
             .await?;
@@ -267,13 +230,17 @@ impl UnreadsDB {
     /// Update the materialization state
     #[instrument(skip(self), err)]
     pub async fn update_materialization_state(&self, last_event_idx: i64) -> anyhow::Result<()> {
-        self.db()
+        let trans = self.db().transaction().await?;
+        trans
+            .execute("delete from materialization_state", ())
+            .await?;
+        trans
             .execute(
-                "insert into materialization_state (last_event_idx) values (?)
-                 on conflict do update set last_event_idx = ?",
-                (last_event_idx, last_event_idx),
+                "insert into materialization_state (last_event_idx) values (?)",
+                [last_event_idx],
             )
             .await?;
+        trans.commit().await?;
         Ok(())
     }
 }
@@ -308,8 +275,6 @@ pub struct RoomUnread {
     pub mention_count: i64,
     /// The last event index that was processed
     pub last_event_idx: Option<i64>,
-    /// Timestamp of last update
-    pub updated_at: i64,
 }
 
 /// Increment operation for unreads
@@ -529,7 +494,7 @@ async fn handle_join_space(
     unreads_db: &UnreadsDB,
 ) -> anyhow::Result<()> {
     // Add the user as a member of the space
-    unreads_db.add_member(&event.user, event.idx).await?;
+    unreads_db.add_member(&event.user).await?;
 
     debug!(
         "Added member {} to space at event index {}",
@@ -546,7 +511,7 @@ async fn handle_leave_space(
     unreads_db: &UnreadsDB,
 ) -> anyhow::Result<()> {
     // Remove the user from the space
-    unreads_db.remove_member(&event.user, event.idx).await?;
+    unreads_db.remove_member(&event.user).await?;
 
     // Clean up unread records for this user
     unreads_db.reset_user_unreads(&event.user).await?;

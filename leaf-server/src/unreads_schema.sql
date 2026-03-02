@@ -28,8 +28,6 @@ CREATE TABLE IF NOT EXISTS room_unreads (
     mention_count INTEGER NOT NULL DEFAULT 0,
     -- The last event index that was processed for this room
     last_event_idx INTEGER,
-    -- Timestamp of last update
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
 
     PRIMARY KEY (user_did, room_id),
     FOREIGN KEY (user_did)
@@ -39,20 +37,11 @@ CREATE TABLE IF NOT EXISTS room_unreads (
     CHECK (mention_count >= 0)
 ) STRICT;
 
--- Index for querying unreads for a user across all rooms
-CREATE INDEX IF NOT EXISTS idx_room_unreads_user
-    ON room_unreads(user_did, unread_count DESC, mention_count DESC);
-
 -- Index for querying unreads for a user where unread_count > 0
 -- This composite index efficiently supports queries filtering by both user_did and unread_count > 0
 CREATE INDEX IF NOT EXISTS idx_room_unreads_user_unread
     ON room_unreads(user_did, unread_count DESC, room_id)
     WHERE unread_count > 0;
-
--- Index for querying unreads in a specific room
-CREATE INDEX IF NOT EXISTS idx_room_unreads_room
-    ON room_unreads(room_id)
-    WHERE unread_count > 0 OR mention_count > 0;
 
 -- ----------------------------------------------------------------------------
 -- Table: materialization_state
