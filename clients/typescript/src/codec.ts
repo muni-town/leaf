@@ -138,3 +138,31 @@ export type StreamClearStateArgs = {
   streamDid: Did;
 };
 export type StreamClearStateResp = Result<void>;
+
+// ============================================================================
+// Unreads tracking types
+// ============================================================================
+
+export type UnreadsGetArgs = {
+  streamDid: Did;
+};
+
+export type UnreadsGetItem = {
+  roomId: string;
+  unreadCount: number;
+  mentionCount: number;
+};
+
+export type UnreadsGetResp = Result<{
+  unreads: UnreadsGetItem[];
+}>;
+
+export type UnreadsMarkReadArgs = {
+  streamDid: Did;
+  roomId?: string;
+  lastReadIdx?: number;
+};
+
+export type UnreadsMarkReadResp = Result<{
+  success: boolean;
+}>;

@@ -4,6 +4,7 @@ import { query } from "./commands/query.js";
 import { sendEvents } from "./commands/send-events.js";
 import { createStream } from "./commands/create-stream.js";
 import { streamInfo } from "./commands/stream-info.js";
+import { getUnreads, markAsRead } from "./commands/unreads.js";
 
 const HELP_TEXT = `
 Leaf CLI - Testing tool for Leaf server
@@ -16,6 +17,8 @@ Commands:
   send-events <stream-did> <file>      Send events to a stream from JSON file
   create-stream <module-cid>           Create a new stream from genesis JSON
   stream-info <stream-did>             Get stream information
+  unreads <stream-did>                 Get unread counts for a user
+  mark-read <stream-did> [room-id]    Mark items as read (all rooms or specific room)
 
 Global Options:
   --url <url>       Leaf server URL (default: http://localhost:5530 or LEAF_URL env var)
@@ -33,6 +36,9 @@ Examples:
   leaf send-events abc123 events.json
   leaf create-stream a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6
   leaf stream-info abc123
+  leaf unreads abc123
+  leaf mark-read abc123
+  leaf mark-read abc123 room123 100
 
 Environment Variables:
   LEAF_URL         Default Leaf server URL
@@ -63,6 +69,12 @@ async function main() {
         break;
       case "stream-info":
         await streamInfo(commandArgs);
+        break;
+      case "unreads":
+        await getUnreads(commandArgs);
+        break;
+      case "mark-read":
+        await markAsRead(commandArgs);
         break;
       default:
         console.error(`Unknown command: ${command}`);

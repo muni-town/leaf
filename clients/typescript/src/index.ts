@@ -37,6 +37,11 @@ import {
   StreamUpdateModuleResp,
   SubscribeEventsResp,
   SubscriptionId,
+  UnreadsGetArgs,
+  UnreadsGetItem,
+  UnreadsGetResp,
+  UnreadsMarkReadArgs,
+  UnreadsMarkReadResp,
 } from "./codec.js";
 
 export * from "./codec.js";
@@ -256,7 +261,10 @@ export class LeafClient {
     }
   }
 
-  async sendStateEvents(streamDid: string, events: Uint8Array[]): Promise<void> {
+  async sendStateEvents(
+    streamDid: string,
+    events: Uint8Array[],
+  ): Promise<void> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/state_event_batch",
       toBinary(
@@ -275,7 +283,9 @@ export class LeafClient {
   async clearState(streamDid: string): Promise<void> {
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/clear_state",
-      toBinary(encode({ streamDid: streamDid as Did } satisfies StreamClearStateArgs)),
+      toBinary(
+        encode({ streamDid: streamDid as Did } satisfies StreamClearStateArgs),
+      ),
     );
     const resp: StreamClearStateResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -356,6 +366,42 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
+  }
+
+  async getUnreads(streamDid: string): Promise<UnreadsGetItem[]> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "unreads/get",
+      toBinary(
+        encode({ streamDid: streamDid as Did } satisfies UnreadsGetArgs),
+      ),
+    );
+    const resp: UnreadsGetResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
+    }
+    return resp.Ok.unreads;
+  }
+
+  async markAsRead(
+    streamDid: string,
+    roomId?: string,
+    lastReadIdx?: number,
+  ): Promise<boolean> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "unreads/mark_read",
+      toBinary(
+        encode({
+          streamDid: streamDid as Did,
+          roomId,
+          lastReadIdx,
+        } satisfies UnreadsMarkReadArgs),
+      ),
+    );
+    const resp: UnreadsMarkReadResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
+    }
+    return resp.Ok.success;
   }
 }
 
