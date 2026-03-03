@@ -75,8 +75,12 @@ peg::parser! {
 
         rule discriminant() -> Ex = "?discriminant" { Ex::ExtractDiscriminant }
         rule array() -> Ex  = n:$(['0'..='9']+) {? Ok(Ex::ArrayAccess(n.parse().or(Err("u32"))?)) }
-        rule field() -> Ex = name:$(['$' | 'a'..='z' | 'A'..='Z'](['0'..='9' | 'a'..='z' | 'A'..='Z'] / "\\." )*)
-            { Ex::FieldAccess(name.to_string().replace("\\.", ".")) }
+        rule field() -> Ex =
+            name:(
+                $(['$' | 'a'..='z' | 'A'..='Z'](['0'..='9' | 'a'..='z' | 'A'..='Z'] / "\\." )*) /
+                "\"" n:$( [^'"']* ) "\"" { n }
+            )
+            { Ex::FieldAccess(name.into()) }
     }
 }
 
@@ -92,7 +96,7 @@ mod test {
     #[derive(Serialize)]
     struct Example {
         name: String,
-        #[serde(rename = "name.with.periods")]
+        #[serde(rename = "name.with.special#?chars")]
         name_with_periods: String,
         age: u32,
         result: Result<Option<u16>, String>,
@@ -159,7 +163,7 @@ mod test {
             Some(V::Text("John".into()))
         );
         assert_eq!(
-            extract_sql_value_from_drisl(a.clone(), ".name\\.with\\.periods").unwrap(),
+            extract_sql_value_from_drisl(a.clone(), r#"."name.with.special#?chars""#).unwrap(),
             Some(V::Text("Jane".into()))
         );
         assert_eq!(
