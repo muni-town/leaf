@@ -1052,7 +1052,8 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
         // authorization responsibility to the module.
         (libsql::AuthAction::Function { function_name }, _db) => match function_name {
             "unauthorized" | "throw" | "coalesce" | "->>" | "->" | "drisl_extract"
-            | "drisl_exists" => libsql::Authorization::Allow,
+            | "drisl_exists" | "json_object" | "json_group_array" | "json_array"
+            | "json_patch" | "json_set" | "json_extract" | "json_each" => libsql::Authorization::Allow,
             _ => libsql::Authorization::Deny,
         },
         (op, db) => {
