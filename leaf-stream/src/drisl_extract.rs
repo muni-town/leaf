@@ -75,7 +75,8 @@ peg::parser! {
 
         rule discriminant() -> Ex = "?discriminant" { Ex::ExtractDiscriminant }
         rule array() -> Ex  = n:$(['0'..='9']+) {? Ok(Ex::ArrayAccess(n.parse().or(Err("u32"))?)) }
-        rule field() -> Ex = name:$(['$' | 'a'..='z' | 'A'..='Z']['0'..='9' | 'a'..='z' | 'A'..='Z']*) { Ex::FieldAccess(name.into()) }
+        rule field() -> Ex = name:$(['$' | 'a'..='z' | 'A'..='Z'](['0'..='9' | 'a'..='z' | 'A'..='Z'] / "\\." )*)
+            { Ex::FieldAccess(name.to_string().replace("\\.", ".")) }
     }
 }
 
@@ -91,6 +92,8 @@ mod test {
     #[derive(Serialize)]
     struct Example {
         name: String,
+        #[serde(rename = "name.with.periods")]
+        name_with_periods: String,
         age: u32,
         result: Result<Option<u16>, String>,
     }
@@ -113,18 +116,21 @@ mod test {
     fn extract_drisl() {
         let a = to_value(Example {
             name: "John".into(),
+            name_with_periods: "Jane".into(),
             age: 32,
             result: Ok(Some(7)),
         })
         .unwrap();
         let b = to_value(Example {
             name: "John".into(),
+            name_with_periods: "Jane".into(),
             age: 32,
             result: Ok(None),
         })
         .unwrap();
         let c = to_value(Example {
             name: "John".into(),
+            name_with_periods: "Jane".into(),
             age: 32,
             result: Err("error".into()),
         })
@@ -151,6 +157,10 @@ mod test {
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".name").unwrap(),
             Some(V::Text("John".into()))
+        );
+        assert_eq!(
+            extract_sql_value_from_drisl(a.clone(), ".name\\.with\\.periods").unwrap(),
+            Some(V::Text("Jane".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".age").unwrap(),
