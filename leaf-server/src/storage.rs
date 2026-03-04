@@ -25,7 +25,6 @@ use tracing::{Span, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use weak_table::WeakValueHashMap;
 use zeroize::ZeroizeOnDrop;
-use zstd::zstd_safe::WriteBuf;
 
 use crate::{
     async_oncelock::AsyncOnceLock,
@@ -48,7 +47,7 @@ pub const METADATA_FILENAME: &str = "metadata.drisl";
 
 #[derive(Default)]
 pub struct Storage {
-    db: AsyncOnceLock<libsql::Connection>,
+    db: AsyncOnceLock<Arc<RwLock<libsql::Connection>>>,
     data_dir: RwLock<Option<PathBuf>>,
     backup_bucket: RwLock<Option<Bucket>>,
 }
@@ -81,8 +80,8 @@ pub struct ListStreamsItem {
 }
 
 impl Storage {
-    async fn db(&self) -> &libsql::Connection {
-        (&self.db).await
+    async fn db(&self) -> Arc<RwLock<libsql::Connection>> {
+        (&self.db).await.clone()
     }
 
     pub fn data_dir(&self) -> anyhow::Result<PathBuf> {
@@ -142,7 +141,8 @@ impl Storage {
         // Start the background storage tasks
         start_background_tasks();
 
-        self.db.set(c).ok();
+        // Wrap in Arc<RwLock> before storing
+        self.db.set(Arc::new(RwLock::new(c))).ok();
 
         Ok(())
     }
@@ -151,9 +151,9 @@ impl Storage {
     /// provided to search for.
     #[instrument(skip(self, cid), err)]
     pub async fn has_module_blob(&self, cid: Cid) -> anyhow::Result<bool> {
-        let mut rows = self
-            .db()
-            .await
+        let db = self.db().await;
+        let db_guard = db.read().await;
+        let mut rows = db_guard
             .query(
                 "select 1 from module_blobs where cid = ?",
                 [cid.as_bytes().to_vec()],
@@ -165,9 +165,10 @@ impl Storage {
     // Get a moudle blob from the database
     #[instrument(skip(self), err)]
     pub async fn get_module_blob(&self, cid: Cid) -> anyhow::Result<Option<Vec<u8>>> {
+        let db = self.db().await;
+        let db_guard = db.read().await;
         let mut blobs = Vec::<Vec<u8>>::from_rows(
-            self.db()
-                .await
+            db_guard
                 .query(
                     "select data from module_blobs where cid=?",
                     [cid.as_bytes().to_vec()],
@@ -180,9 +181,9 @@ impl Storage {
 
     /// List the module blobs in the database
     pub async fn list_module_blobs(&self) -> anyhow::Result<HashSet<Cid>> {
-        let modules: Vec<Cid> = self
-            .db()
-            .await
+        let db = self.db().await;
+        let db_guard = db.read().await;
+        let modules: Vec<Cid> = db_guard
             .query("select cid from module_blobs", ())
             .await?
             .parse_rows()
@@ -221,8 +222,9 @@ impl Storage {
     pub async fn create_stream(&self, stream_did: Did) -> anyhow::Result<StreamHandle> {
         let stream = STREAMS.load(stream_did.clone()).await?;
 
-        self.db()
-            .await
+        let db = self.db().await;
+        let db_guard = db.write().await;
+        db_guard
             .execute(
                 "insert into streams (did, module_cid, latest_event) values (?, null, 0)",
                 [stream_did.as_str().to_string()],
@@ -242,33 +244,37 @@ impl Storage {
         stream_update: StreamUpdate,
     ) -> anyhow::Result<()> {
         let db = self.db().await;
+        let db_guard = db.write().await;
 
         match stream_update {
             StreamUpdate::NewEvents { latest_idx } => {
-                db.execute(
-                    "update streams set latest_event = ? where did = ?",
-                    (latest_idx, stream_did.as_str().to_string()),
-                )
-                .await?;
+                db_guard
+                    .execute(
+                        "update streams set latest_event = ? where did = ?",
+                        (latest_idx, stream_did.as_str().to_string()),
+                    )
+                    .await?;
             }
             StreamUpdate::StateChanged => {
-                db.execute(
-                    "
+                db_guard
+                    .execute(
+                        "
                         insert into backup_status (did) values (?) \
                         on conflict do nothing
                     ",
-                    [stream_did.as_str().to_string()],
-                )
-                .await?;
-                db.execute(
-                    "
+                        [stream_did.as_str().to_string()],
+                    )
+                    .await?;
+                db_guard
+                    .execute(
+                        "
                         update backup_status
                         set state_db_updated_at = unixepoch()
                         where did = ?
                     ",
-                    [stream_did.as_str().to_string()],
-                )
-                .await?;
+                        [stream_did.as_str().to_string()],
+                    )
+                    .await?;
             }
         }
         Ok(())
@@ -281,54 +287,59 @@ impl Storage {
         update: BackupUpdate,
     ) -> anyhow::Result<()> {
         let db = self.db().await;
-        db.execute(
-            "
+        let db_guard = db.write().await;
+        db_guard
+            .execute(
+                "
                     insert into backup_status (did) values (?) \
                     on conflict do nothing
                 ",
-            [stream_did.as_str().to_string()],
-        )
-        .await?;
+                [stream_did.as_str().to_string()],
+            )
+            .await?;
 
         match update {
             BackupUpdate::Stream(stream_update) => match stream_update {
                 StreamUpdate::NewEvents { latest_idx } => {
-                    db.execute(
-                        "
+                    db_guard
+                        .execute(
+                            "
                         update backup_status
                         set backup_latest_event = ?
                         where did = ?
                     ",
-                        (latest_idx, stream_did.as_str().to_string()),
-                    )
-                    .await?;
+                            (latest_idx, stream_did.as_str().to_string()),
+                        )
+                        .await?;
                 }
                 StreamUpdate::StateChanged => {
-                    db.execute(
-                        "
+                    db_guard
+                        .execute(
+                            "
                         update backup_status
                         set state_db_backed_up_at = unixepoch()
                         where did = ?
                     ",
-                        [stream_did.as_str().to_string()],
-                    )
-                    .await?;
+                            [stream_did.as_str().to_string()],
+                        )
+                        .await?;
                 }
             },
             BackupUpdate::Metadata { owners, module_cid } => {
-                db.execute(
-                    "
+                db_guard
+                    .execute(
+                        "
                         update backup_status
                         set backup_module_cid = ?, backup_owners = ?
                         where did = ?
                     ",
-                    (
-                        module_cid.map(|x| x.to_string()),
-                        serde_json::to_string(&owners).unwrap(),
-                        stream_did.as_str().to_string(),
-                    ),
-                )
-                .await?;
+                        (
+                            module_cid.map(|x| x.to_string()),
+                            serde_json::to_string(&owners).unwrap(),
+                            stream_did.as_str().to_string(),
+                        ),
+                    )
+                    .await?;
             }
         }
 
@@ -337,12 +348,15 @@ impl Storage {
 
     pub async fn reset_backup_cache(&self) -> anyhow::Result<()> {
         let db = self.db().await;
-        db.execute("delete from backup_status", ()).await?;
+        let db_guard = db.write().await;
+        db_guard.execute("delete from backup_status", ()).await?;
         Ok(())
     }
 
     /// Get the list of streams and the latest event we have for each
     pub async fn list_streams(&self) -> anyhow::Result<Vec<ListStreamsItem>> {
+        let db = self.db().await;
+        let db_guard = db.read().await;
         #[allow(clippy::type_complexity)]
         let rows: Vec<(
             Did,
@@ -353,14 +367,12 @@ impl Storage {
             Option<i64>,
             Option<Cid>,
             Option<String>,
-        )> = self
-            .db()
-            .await
+        )> = db_guard
             .query(
                 "
                 select
-                    streams.did, 
-                    module_cid, 
+                    streams.did,
+                    module_cid,
                     latest_event,
                     state_db_updated_at,
                     state_db_backed_up_at,
@@ -423,8 +435,9 @@ impl Storage {
         stream_did: Did,
         module_cid: Cid,
     ) -> anyhow::Result<()> {
-        self.db()
-            .await
+        let db = self.db().await;
+        let db_guard = db.write().await;
+        db_guard
             .execute(
                 "update streams set module_cid = ? where did = ?",
                 (
@@ -443,8 +456,9 @@ impl Storage {
     #[instrument(skip(self, data), err)]
     async fn add_module_blob(&self, data: Vec<u8>) -> anyhow::Result<Cid> {
         let cid = Cid::digest_sha2(Drisl, &data);
-        self.db()
-            .await
+        let db = self.db().await;
+        let db_guard = db.write().await;
+        db_guard
             .execute(
                 r#"insert or ignore into module_blobs (cid, data) values (?, ?)"#,
                 (cid.as_bytes().to_vec(), data),
@@ -455,7 +469,9 @@ impl Storage {
 
     #[instrument(skip(self), err)]
     pub async fn upload_module(&self, creator: &str, module: ModuleCodec) -> anyhow::Result<Cid> {
-        let trans = self.db().await.transaction().await?;
+        let db = self.db().await;
+        let db_guard = db.write().await;
+        let trans = db_guard.transaction().await?;
         let (cid, data) = module.encode();
         trans
             .execute(
@@ -475,9 +491,9 @@ impl Storage {
 
     #[instrument(skip(self), err)]
     pub async fn garbage_collect_modules(&self) -> anyhow::Result<()> {
-        let mut deleted = self
-            .db()
-            .await
+        let db = self.db().await;
+        let db_guard = db.write().await;
+        let mut deleted = db_guard
             .execute_batch(
                 r#"
                 delete from staged_modules where (unixepoch() - timestamp) > 500 returning creator, cid;
@@ -538,6 +554,7 @@ impl Storage {
         owners: Vec<String>,
     ) -> anyhow::Result<()> {
         let db = self.db().await;
+        let db = db.write().await;
         db.execute("begin immediate", ()).await?;
         db.execute(
             "insert into dids (did) values (?)",
@@ -575,6 +592,7 @@ impl Storage {
     #[instrument(skip(self, did), err)]
     pub async fn get_did_signing_key(&self, did: Did) -> anyhow::Result<SigningKey> {
         let db = self.db().await;
+        let db = db.read().await;
 
         #[allow(clippy::type_complexity)]
         let keys: Vec<(Option<Vec<u8>>, Option<Vec<u8>>)> = db
@@ -604,9 +622,9 @@ impl Storage {
 
     #[instrument(skip(self), err)]
     pub async fn get_did_owners(&self, did: Did) -> anyhow::Result<Vec<String>> {
-        let owners: Vec<String> = self
-            .db()
-            .await
+        let db = self.db().await;
+        let db = db.read().await;
+        let owners: Vec<String> = db
             .query(
                 "select owner from did_owners where did = ?",
                 [did.as_str().to_string()],
@@ -853,7 +871,7 @@ impl Storage {
                 ))
                 .await?;
             let compressed = resp.bytes().await?;
-            let bytes = zstd::decode_all(compressed.as_slice())?;
+            let bytes = zstd::decode_all(&compressed[..])?;
 
             self.add_module_blob(bytes).await?;
         }
@@ -984,7 +1002,7 @@ impl Storage {
                     .join("state.db");
 
                 let compressed = bucket.get(statedb_bucket_path).await?.bytes().await?;
-                let statedb_bytes = zstd::decode_all(compressed.as_slice())?;
+                let statedb_bytes = zstd::decode_all(&compressed[..])?;
                 tokio::fs::write(statedb_path, statedb_bytes).await?;
             }
 

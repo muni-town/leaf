@@ -11,7 +11,7 @@ use leaf_stream_types::{
     Event, IncomingEvent, LeafQuery, LeafSubscribeEventsResponse, QueryValidationError, SqlRows,
 };
 use leaf_utils::convert::*;
-use libsql::{AuthAction, Authorization, Connection};
+use libsql::{AuthAction, Authorization};
 use tracing::instrument;
 use ulid::Ulid;
 
@@ -84,7 +84,7 @@ enum ModuleState {
     /// A module has been loaded.
     Loaded {
         module: Arc<dyn LeafModule>,
-        module_db: libsql::Connection,
+        module_db: Arc<RwLock<libsql::Connection>>,
     },
     /// A module has been loaded, but could not be caught up so that it's ready for handling events.
     Errored {
@@ -187,6 +187,7 @@ impl Stream {
                 return Ok(());
             }
         };
+        let module_db = module_db.write().await;
 
         // Get all table names in the state database
         let tables: Vec<String> = module_db
@@ -207,7 +208,7 @@ impl Stream {
 
         // Re-initialize the state database schema
         module_db.authorizer(Some(Arc::new(state_materialize_authorizer)))?;
-        let state_init_result = module.init_state_db_schema(module_db).await;
+        let state_init_result = module.init_state_db_schema(&*module_db).await;
         module_db.authorizer(None)?;
         state_init_result?;
 
@@ -221,13 +222,14 @@ impl Stream {
     /// stream from a backup.
     pub async fn raw_set_module(&self, module_cid: Option<Cid>) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
-        state
-            .db
-            .execute(
-                "update stream_state set module_cid = ?, module_event_cursor = null where id = 1",
-                [module_cid.map(|x| x.as_bytes().to_vec())],
-            )
-            .await?;
+        {
+            state.db
+                .execute(
+                    "update stream_state set module_cid = ?, module_event_cursor = null where id = 1",
+                    [module_cid.map(|x| x.as_bytes().to_vec())],
+                )
+                .await?;
+        }
         state.module_event_cursor = 0;
         state.module_state = ModuleState::Unloaded(module_cid);
 
@@ -399,6 +401,9 @@ impl Stream {
         module: Arc<dyn LeafModule>,
         module_db: libsql::Connection,
     ) -> Result<(), StreamError> {
+        let module_db_cell = Arc::new(RwLock::new(module_db));
+        let module_db = module_db_cell.write().await;
+
         let mut state = self.state.write().await;
         let needed_id = match &state.module_state {
             ModuleState::Unloaded(needed_id) => Ok(*needed_id),
@@ -417,6 +422,7 @@ impl Stream {
                 .await?
                 .parse_rows()
                 .await?;
+
             let Some(db_filename) = files.first() else {
                 return Err(StreamError::ModuleDbMissingEventsAttachment);
             };
@@ -425,9 +431,13 @@ impl Stream {
             }
 
             // Allow the module to install UDFs.
-            module.init_db_conn(&module_db).await?;
+            module.init_db_conn(&*module_db).await?;
 
-            state.module_state = ModuleState::Loaded { module, module_db };
+            drop(module_db);
+            state.module_state = ModuleState::Loaded {
+                module,
+                module_db: module_db_cell,
+            };
             drop(state);
 
             // Make sure we catch up the new module if it needs it.
@@ -442,12 +452,13 @@ impl Stream {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn ensure_module_loaded(
         module: &ModuleState,
-    ) -> Result<(Arc<dyn LeafModule>, &Connection), StreamError> {
+    ) -> Result<(Arc<dyn LeafModule>, Arc<RwLock<libsql::Connection>>), StreamError> {
         match module {
             ModuleState::Unloaded(module_cid) => Err(StreamError::ModuleNotProvided(*module_cid)),
-            ModuleState::Loaded { module, module_db } => Ok((module.clone(), module_db)),
+            ModuleState::Loaded { module, module_db } => Ok((module.clone(), module_db.clone())),
             ModuleState::Errored { error, .. } => Err(StreamError::ModuleError(
                 anyhow::format_err!("Module is currently in an error state: {error}"),
             )),
@@ -488,18 +499,19 @@ impl Stream {
     pub async fn raw_catch_up_module_impl(&self) -> Result<i64, StreamError> {
         let mut state = self.state.write().await;
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
+        let module_db = module_db.write().await;
 
         // NOTE the init sql must be idempodent since there are edge cases where this might be
         // called twice.
         if state.module_event_cursor == 0 {
             module_db.authorizer(Some(Arc::new(module_init_authorizer)))?;
-            let init_result = module.init_db_schema(module_db).await;
+            let init_result = module.init_db_schema(&module_db).await;
             module_db.authorizer(None)?;
             init_result?;
 
             // Initialize the state database schema
             module_db.authorizer(Some(Arc::new(state_materialize_authorizer)))?;
-            let state_init_result = module.init_state_db_schema(module_db).await;
+            let state_init_result = module.init_state_db_schema(&module_db).await;
             module_db.authorizer(None)?;
             state_init_result?;
         }
@@ -536,7 +548,7 @@ impl Stream {
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
                 let result = module
                     .materialize(
-                        module_db,
+                        &module_db,
                         Event {
                             idx,
                             user,
@@ -600,6 +612,7 @@ impl Stream {
         // sure other async tasks don't come and try to use this same database connection while the
         // transaction is in progress.
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
+        let module_db = module_db.write().await;
 
         // Start a new transaction
         tracing::debug!("Starting new transaction");
@@ -617,7 +630,7 @@ impl Stream {
                 tracing::debug!("Running authorizer");
 
                 module_db.authorizer(Some(Arc::new(module_authorize_authorizer)))?;
-                let result = module.authorize(module_db, event.clone()).await;
+                let result = module.authorize(&module_db, event.clone()).await;
                 module_db.authorizer(None)?;
                 result?;
 
@@ -643,7 +656,7 @@ impl Stream {
                 module_db.authorizer(Some(Arc::new(module_materialize_authorizer)))?;
                 let result = module
                     .materialize(
-                        module_db,
+                        &module_db,
                         Event {
                             idx,
                             user: event.user,
@@ -712,6 +725,7 @@ impl Stream {
 
         // Ensure the module is loaded
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
+        let module_db = module_db.write().await;
 
         // Start a new transaction on the module_db (which has state attached as "state")
         tracing::debug!("Starting state event transaction");
@@ -722,7 +736,7 @@ impl Stream {
                 // Use state_materialize_authorizer to allow writes to state database
                 module_db.authorizer(Some(Arc::new(state_materialize_authorizer)))?;
                 let result = module
-                    .materialize_state_event(module_db, event.clone())
+                    .materialize_state_event(&module_db, event.clone())
                     .await;
                 module_db.authorizer(None)?;
                 result?;
@@ -829,12 +843,13 @@ impl Stream {
     ) -> Result<SqlRows, StreamError> {
         let state = self.state.read().await;
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
+        let module_db = module_db.write().await;
 
         // Start a new read transaction
         module_db.execute("begin deferred", ()).await?;
 
         module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
-        let result = module.query(module_db, user, query).await;
+        let result = module.query(&module_db, user, query).await;
         module_db.authorizer(None)?;
         let result = match result {
             Ok(result) => result,
@@ -1052,8 +1067,8 @@ fn read_only_module_db_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriz
         // authorization responsibility to the module.
         (libsql::AuthAction::Function { function_name }, _db) => match function_name {
             "unauthorized" | "throw" | "coalesce" | "->>" | "->" | "drisl_extract"
-            | "drisl_exists" | "json_object" | "json_group_array" | "json_array"
-            | "json_patch" | "json_set" | "json_extract" | "json_each" => libsql::Authorization::Allow,
+            | "drisl_exists" | "json_object" | "json_group_array" | "json_array" | "json_patch"
+            | "json_set" | "json_extract" | "json_each" => libsql::Authorization::Allow,
             _ => libsql::Authorization::Deny,
         },
         (op, db) => {
