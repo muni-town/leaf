@@ -29,7 +29,7 @@ use zstd::zstd_safe::WriteBuf;
 
 use crate::{
     async_oncelock::AsyncOnceLock,
-    streams::{STREAMS, StreamHandle},
+    streams::{STREAMS, StreamHandle, load_module},
 };
 
 pub static GLOBAL_SQLITE_PRAGMA: &str = "pragma synchronous = normal; pragma journal_mode = wal;";
@@ -988,12 +988,20 @@ impl Storage {
                 tokio::fs::write(statedb_path, statedb_bytes).await?;
             }
 
-            // Set the module for the stream and catch it up
+            // Set the module for the stream
             stream.raw_set_module(metadata.module_cid).await?;
 
-            // TODO: we want to load the module and catch it up now, so it doesn't error when we try
-            // to connect to it later. There's a bug that means modules can end up in an error state
-            // right now that we have to track down and fix.
+            // Catch up module
+            if let Some(module_cid) = metadata.module_cid {
+                self.update_stream_module(stream_did.clone(), module_cid)
+                    .await?;
+
+                let data_dir = STORAGE.data_dir()?;
+                let stream_dir = data_dir.join("streams").join(stream_did.as_str());
+                let (module, module_db) = load_module(stream_dir.as_path(), module_cid).await?;
+                stream.provide_module(module, module_db).await?;
+                stream.raw_catch_up_module().await?;
+            }
 
             // Update the backed-up status of the stream so that it doesn't re-backup events already
             // on the backup server.
