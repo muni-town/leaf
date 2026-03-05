@@ -5,6 +5,7 @@ members = [
     "leaf-utils",
     "leaf-server",
     "leaf-stream-types",
+    "clients/leaf-client-rust",
 ]
 
 [workspace.package]
