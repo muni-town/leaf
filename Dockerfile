@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/home/rust/.cargo/git \
     --mount=type=cache,target=/home/rust/src/target \
     cargo build -p leaf-server --release --target $TARGET
 
-FROM scratch
+FROM alpine:3
 ARG TARGET
 COPY --from=build /project/target/${TARGET}/release/leaf /leaf
 CMD ["server"]
