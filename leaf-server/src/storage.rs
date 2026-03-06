@@ -887,14 +887,17 @@ impl Storage {
             .map(|x| x.did)
             .collect::<HashSet<_>>();
 
+        let total_streams = stream_dids_on_s3.len();
+
         // Loop over streams
-        'restore_streams: for stream_did in stream_dids_on_s3 {
+        'restore_streams: for (i, stream_did) in stream_dids_on_s3.into_iter().enumerate() {
             // Only import streams we don't have locally
             if local_streams.contains(&stream_did) {
                 tracing::warn!(did=%stream_did, "Skipping restore of stream that we already have locally.");
                 continue 'restore_streams;
             }
-            tracing::info!(did=%stream_did, "Restoring stream");
+            let remaining = total_streams - i;
+            tracing::info!(did=%stream_did, n=i,total=total_streams, remaining, "Restoring stream");
 
             let stream_dir = format!("{BUCKET_STREAMS_DIR}/{}", stream_did);
 
