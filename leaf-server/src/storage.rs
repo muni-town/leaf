@@ -28,6 +28,7 @@ use zeroize::ZeroizeOnDrop;
 use zstd::zstd_safe::WriteBuf;
 
 use crate::{
+    ARGS,
     async_oncelock::AsyncOnceLock,
     streams::{STREAMS, StreamHandle, load_module},
 };
@@ -139,8 +140,10 @@ impl Storage {
         // Run migrations
         run_database_migrations(&c).await?;
 
-        // Start the background storage tasks
-        start_background_tasks();
+        if matches!(ARGS.command, crate::cli::Command::Server(_)) {
+            // Start the background storage tasks
+            start_background_tasks();
+        }
 
         self.db.set(c).ok();
 
