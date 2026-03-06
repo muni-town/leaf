@@ -94,6 +94,18 @@ mod test {
     use crate::drisl_extract::extract_sql_value_from_drisl;
 
     #[derive(Serialize)]
+    struct Nested1 {
+        #[serde(rename = "inner.value")]
+        inner: Nested2,
+    }
+
+    #[derive(Serialize)]
+    struct Nested2 {
+        #[serde(rename = "sub.value")]
+        data: String,
+    }
+
+    #[derive(Serialize)]
     struct Example {
         name: String,
         #[serde(rename = "name.with.special#?chars")]
@@ -157,6 +169,12 @@ mod test {
             items: vec![7, 8, 9],
         })
         .unwrap();
+        let g = to_value(Nested1 {
+            inner: Nested2 {
+                data: "data".into(),
+            },
+        })
+        .unwrap();
 
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".name").unwrap(),
@@ -165,6 +183,10 @@ mod test {
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), r#"."name.with.special#?chars""#).unwrap(),
             Some(V::Text("Jane".into()))
+        );
+        assert_eq!(
+            extract_sql_value_from_drisl(g.clone(), r#"."inner.value"."sub.value""#).unwrap(),
+            Some(V::Text("data".into()))
         );
         assert_eq!(
             extract_sql_value_from_drisl(a.clone(), ".age").unwrap(),
