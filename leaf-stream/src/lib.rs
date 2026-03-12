@@ -1020,8 +1020,8 @@ fn state_materialize_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorizat
         | (AlterTable { .. }, Some("state") | Some("temp"))
         | (Reindex { .. }, Some("state") | Some("temp"))
         | (Analyze { .. }, Some("state") | Some("temp"))
-        | (Function { .. }, Some("state") | Some("temp"))
-        | (Recursive { .. }, Some("state") | Some("temp"))
+        | (Function { .. }, None | Some("main") | Some("state") | Some("temp"))
+        | (Recursive { .. }, None | Some("state") | Some("temp"))
         | (Read { .. }, Some("events") | Some("main"))
         | (Select { .. }, Some("events") | Some("main")) => Allow,
         op => {
