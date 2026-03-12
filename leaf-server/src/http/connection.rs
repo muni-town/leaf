@@ -21,6 +21,7 @@ fn response<T: Serialize>(v: anyhow::Result<T>) -> bytes::Bytes {
 }
 
 use crate::{
+    ARGS,
     did::{create_did, update_did_handle},
     error::LogError,
     storage::STORAGE,
@@ -178,8 +179,15 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     stream
                 };
 
-                let stream_owners = STORAGE.get_did_owners(stream_did.clone()).await?;
-                if !stream_owners.iter().any(|x| x == &did_) {
+                let mut module_admins = STORAGE
+                    // The stream owners are allowed to admin the stream module
+                    .get_did_owners(stream_did.clone())
+                    .await?
+                    .into_iter()
+                    // As well as the module admins specified when starting the Leaf server
+                    .chain(ARGS.module_admins.iter().map(|x| x.as_str().to_string()));
+
+                if !module_admins.any(|x| x == did_) {
                     anyhow::bail!("Only a stream owner can update its module");
                 }
 

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use leaf_stream::atproto_plc::Did;
 use reqwest::Url;
 
 use crate::storage::S3BackupConfig;
@@ -21,6 +22,10 @@ pub struct Args {
     /// Set the PLC directory to use
     #[arg(long, env, default_value = "http://localhost:3001")]
     pub plc_directory: String,
+
+    /// List of admin DIDs that are allowed to change the module for ANY stream.
+    #[arg(long, env, value_delimiter = ',')]
+    pub module_admins: Vec<Did>,
 
     #[clap(subcommand)]
     pub command: Command,
