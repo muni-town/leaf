@@ -996,6 +996,7 @@ fn state_materialize_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorizat
     use Authorization::*;
 
     match (ctx.action, ctx.database_name) {
+        // Writes allowed to state and temp databases
         (CreateIndex { .. }, Some("state") | Some("temp"))
         | (CreateTable { .. }, Some("state") | Some("temp"))
         | (CreateTempIndex { .. }, Some("state") | Some("temp"))
@@ -1014,16 +1015,15 @@ fn state_materialize_authorizer(ctx: &libsql::AuthContext) -> libsql::Authorizat
         | (DropTrigger { .. }, Some("state") | Some("temp"))
         | (DropView { .. }, Some("state") | Some("temp"))
         | (Insert { .. }, Some("state") | Some("temp"))
-        | (Read { .. }, Some("state") | Some("temp"))
-        | (Select { .. }, Some("state") | Some("temp"))
         | (Update { .. }, Some("state") | Some("temp"))
         | (AlterTable { .. }, Some("state") | Some("temp"))
         | (Reindex { .. }, Some("state") | Some("temp"))
         | (Analyze { .. }, Some("state") | Some("temp"))
+        // Reads allowed from all databases; None for expressions not tied to a specific db
+        | (Read { .. }, None | Some("main") | Some("events") | Some("state") | Some("temp"))
+        | (Select { .. }, None | Some("main") | Some("events") | Some("state") | Some("temp"))
         | (Function { .. }, None | Some("main") | Some("state") | Some("temp"))
-        | (Recursive { .. }, None | Some("state") | Some("temp"))
-        | (Read { .. }, Some("events") | Some("main"))
-        | (Select { .. }, Some("events") | Some("main")) => Allow,
+        | (Recursive { .. }, None | Some("state") | Some("temp")) => Allow,
         op => {
             tracing::warn!(
                 ?op,
