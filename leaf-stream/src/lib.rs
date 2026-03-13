@@ -954,7 +954,7 @@ fn module_materialize_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriza
         | (CreateTempView { .. }, None | Some("main") | Some("temp"))
         | (CreateTrigger { .. }, None | Some("main") | Some("temp"))
         | (CreateView { .. }, None | Some("main") | Some("temp"))
-        | (Delete { .. }, None | Some("main") | Some("temp"))
+        | (Delete { .. }, None | Some("main") | Some("temp") | Some("state"))
         | (DropIndex { .. }, None | Some("main") | Some("temp"))
         | (DropTable { .. }, None | Some("main") | Some("temp"))
         | (DropTempIndex { .. }, None | Some("main") | Some("temp"))
@@ -963,17 +963,15 @@ fn module_materialize_authorizer(ctx: &libsql::AuthContext) -> libsql::Authoriza
         | (DropTempView { .. }, None | Some("main") | Some("temp"))
         | (DropTrigger { .. }, None | Some("main") | Some("temp"))
         | (DropView { .. }, None | Some("main") | Some("temp"))
-        | (Insert { .. }, None | Some("main") | Some("temp"))
-        | (Read { .. }, None | Some("main") | Some("temp"))
-        | (Select { .. }, None | Some("main") | Some("temp"))
-        | (Update { .. }, None | Some("main") | Some("temp"))
+        | (Insert { .. }, None | Some("main") | Some("temp") | Some("state"))
+        | (Read { .. }, None | Some("main") | Some("temp") | Some("state") | Some("events"))
+        | (Select { .. }, None | Some("main") | Some("temp") | Some("state") | Some("events"))
+        | (Update { .. }, None | Some("main") | Some("temp") | Some("state"))
         | (AlterTable { .. }, None | Some("main") | Some("temp"))
         | (Reindex { .. }, None | Some("main") | Some("temp"))
         | (Analyze { .. }, None | Some("main") | Some("temp"))
-        | (Function { .. }, None | Some("main") | Some("temp"))
-        | (Recursive { .. }, None | Some("main") | Some("temp"))
-        | (Read { .. }, Some("events"))
-        | (Select { .. }, Some("events")) => Allow,
+        | (Function { .. }, None | Some("main") | Some("temp") | Some("state"))
+        | (Recursive { .. }, None | Some("main") | Some("temp") | Some("state")) => Allow,
         op => {
             tracing::warn!(
                 ?op,
