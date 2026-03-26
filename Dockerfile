@@ -25,4 +25,3 @@ COPY --from=build /project/target/${TARGET}/release/leaf /leaf
 CMD ["server"]
 ENTRYPOINT ["/leaf"]
 EXPOSE 5530
-VOLUME ["/data"]
