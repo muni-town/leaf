@@ -14,9 +14,9 @@ RUN if [ "$TARGET" != "x86_64-unknown-linux-musl" ]; then \
     rustup target add $TARGET; \
     fi
 
-RUN --mount=type=cache,target=/home/rust/.cargo/git \
-    --mount=type=cache,target=/home/rust/.cargo/registry \
-    --mount=type=cache,target=/home/rust/src/target \
+RUN --mount=type=cache,id=cargo-git,target=/home/rust/.cargo/git \
+    --mount=type=cache,id=cargo-registry,target=/home/rust/.cargo/registry \
+    --mount=type=cache,id=rust-target,target=/home/rust/src/target \
     cargo build -p leaf-server --release --target $TARGET
 
 FROM alpine:3
