@@ -830,9 +830,6 @@ impl Stream {
         let state = self.state.read().await;
         let (module, module_db) = Self::ensure_module_loaded(&state.module_state)?;
 
-        // Start a new read transaction
-        module_db.execute("begin deferred", ()).await?;
-
         module_db.authorizer(Some(Arc::new(module_query_authorizer)))?;
         let result = module.query(module_db, user, query).await;
         module_db.authorizer(None)?;
@@ -843,9 +840,6 @@ impl Stream {
                 return Err(e.into());
             }
         };
-
-        // Finish the read transaction
-        module_db.execute("commit", ()).await?;
 
         // Return the result
         Ok(result)
