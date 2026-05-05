@@ -185,7 +185,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     .await?
                     .into_iter()
                     // As well as the module admins specified when starting the Leaf server
-                    .chain(ARGS.module_admins.iter().map(|x| x.as_str().to_string()));
+                    .chain(ARGS.module_admins.iter().cloned());
 
                 if !module_admins.any(|x| x == did_) {
                     anyhow::bail!("Only a stream owner can update its module");

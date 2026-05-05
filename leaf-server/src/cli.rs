@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use leaf_stream::atproto_plc::Did;
 use reqwest::Url;
 
 use crate::storage::S3BackupConfig;
@@ -24,11 +23,22 @@ pub struct Args {
     pub plc_directory: String,
 
     /// List of admin DIDs that are allowed to change the module for ANY stream.
-    #[arg(long, env, value_delimiter = ',')]
-    pub module_admins: Vec<Did>,
+    /// Accepts both `did:plc:` and `did:web:` DIDs.
+    #[arg(long, env, value_delimiter = ',', value_parser = parse_admin_did)]
+    pub module_admins: Vec<String>,
 
     #[clap(subcommand)]
     pub command: Command,
+}
+
+fn parse_admin_did(s: &str) -> Result<String, String> {
+    if s.starts_with("did:plc:") || s.starts_with("did:web:") {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "expected a `did:plc:` or `did:web:` DID, got `{s}`"
+        ))
+    }
 }
 
 #[derive(clap::Subcommand, Debug)]
