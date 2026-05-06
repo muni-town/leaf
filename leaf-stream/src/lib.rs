@@ -835,10 +835,7 @@ impl Stream {
         module_db.authorizer(None)?;
         let result = match result {
             Ok(result) => result,
-            Err(e) => {
-                module_db.execute("rollback", ()).await?;
-                return Err(e.into());
-            }
+            Err(e) => return Err(e.into()),
         };
 
         // Return the result
