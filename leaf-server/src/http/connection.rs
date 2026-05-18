@@ -613,6 +613,7 @@ struct StreamEventBatchArgs {
     /// Only accepted when the connection authenticated via the shared
     /// `unsafe_auth_token` — regular JWT-authenticated connections must
     /// use their own DID and will receive an error if this is set.
+    #[serde(default)]
     user_override: Option<String>,
 }
 
@@ -625,6 +626,7 @@ struct StreamStateEventBatchArgs {
     ///
     /// Only accepted when the connection authenticated via the shared
     /// `unsafe_auth_token`.
+    #[serde(default)]
     user_override: Option<String>,
 }
 
