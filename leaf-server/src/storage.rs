@@ -54,7 +54,7 @@ pub struct Storage {
     backup_bucket: RwLock<Option<Bucket>>,
 }
 
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Clone, clap::Args)]
 pub struct S3BackupConfig {
     #[arg(long = "s3-host", env = "S3_HOST")]
     pub host: Url,
@@ -66,6 +66,18 @@ pub struct S3BackupConfig {
     pub access_key: String,
     #[arg(long = "s3-secret-key", env = "S3_SECRET_KEY")]
     pub secret_key: String,
+}
+
+impl std::fmt::Debug for S3BackupConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3BackupConfig")
+            .field("host", &self.host)
+            .field("name", &self.name)
+            .field("region", &self.region)
+            .field("access_key", &"***REDACTED***")
+            .field("secret_key", &"***REDACTED***")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
