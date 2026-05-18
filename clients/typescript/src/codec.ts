@@ -100,6 +100,14 @@ export type StreamUpdateModuleResp = Result<void>;
 export type StreamEventBatchArgs = {
   streamDid: Did;
   events: EventPayload[];
+  /**
+   * Override the `user` field on all events in this batch.
+   *
+   * Only accepted when the connection authenticated via the shared
+   * `unsafe_auth_token` — regular JWT-authenticated connections will
+   * receive an error if this is set.
+   */
+  userOverride?: string;
 };
 export type StreamEventBatchResp = Result<void>;
 
@@ -131,6 +139,13 @@ export type StreamSetHandleResp = Result<void>;
 export type StreamStateEventBatchArgs = {
   streamDid: Did;
   events: EventPayload[];
+  /**
+   * Override the `user` field on all events in this batch.
+   *
+   * Only accepted when the connection authenticated via the shared
+   * `unsafe_auth_token`.
+   */
+  userOverride?: string;
 };
 export type StreamStateEventBatchResp = Result<void>;
 

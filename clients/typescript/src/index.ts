@@ -236,19 +236,21 @@ export class LeafClient {
     return resp.Ok;
   }
 
-  async sendEvent(streamDid: string, event: Uint8Array): Promise<void> {
-    await this.sendEvents(streamDid as Did, [event]);
+  async sendEvent(streamDid: string, event: Uint8Array, userOverride?: string): Promise<void> {
+    await this.sendEvents(streamDid as Did, [event], userOverride);
   }
 
-  async sendEvents(streamDid: string, events: Uint8Array[]): Promise<void> {
+  async sendEvents(streamDid: string, events: Uint8Array[], userOverride?: string): Promise<void> {
+    const args: StreamEventBatchArgs = {
+      streamDid: streamDid as Did,
+      events: events.map((x) => new BytesWrapper(x)),
+    };
+    if (userOverride !== undefined) {
+      args.userOverride = userOverride;
+    }
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/event_batch",
-      toBinary(
-        encode({
-          streamDid: streamDid as Did,
-          events: events.map((x) => new BytesWrapper(x)),
-        } satisfies StreamEventBatchArgs),
-      ),
+      toBinary(encode(args satisfies StreamEventBatchArgs)),
     );
     const resp: StreamEventBatchResp = decode(fromBinary(data));
     if ("Err" in resp) {
@@ -256,15 +258,17 @@ export class LeafClient {
     }
   }
 
-  async sendStateEvents(streamDid: string, events: Uint8Array[]): Promise<void> {
+  async sendStateEvents(streamDid: string, events: Uint8Array[], userOverride?: string): Promise<void> {
+    const args: StreamStateEventBatchArgs = {
+      streamDid: streamDid as Did,
+      events: events.map((x) => new BytesWrapper(x)),
+    };
+    if (userOverride !== undefined) {
+      args.userOverride = userOverride;
+    }
     const data: Uint8Array = await this.socket.emitWithAck(
       "stream/state_event_batch",
-      toBinary(
-        encode({
-          streamDid: streamDid as Did,
-          events: events.map((x) => new BytesWrapper(x)),
-        } satisfies StreamStateEventBatchArgs),
-      ),
+      toBinary(encode(args satisfies StreamStateEventBatchArgs)),
     );
     const resp: StreamStateEventBatchResp = decode(fromBinary(data));
     if ("Err" in resp) {
