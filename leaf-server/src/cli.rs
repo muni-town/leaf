@@ -79,7 +79,7 @@ pub enum BackupCommand {
 }
 
 /// Run the leaf server.
-#[derive(clap::Parser, Debug)]
+#[derive(clap::Parser)]
 pub struct ServerArgs {
     /// The address to start the server on
     #[arg(short = 'l', long, env, default_value = "0.0.0.0:5530")]
@@ -106,7 +106,22 @@ pub struct ServerArgs {
     pub backup_config: OptionalS3BackupConfig,
 }
 
-#[derive(Debug, Clone, clap::Args)]
+impl std::fmt::Debug for ServerArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerArgs")
+            .field("listen_address", &self.listen_address)
+            .field("did", &self.did)
+            .field("endpoint", &self.endpoint)
+            .field(
+                "unsafe_auth_token",
+                &self.unsafe_auth_token.as_ref().map(|_| "***REDACTED***"),
+            )
+            .field("backup_config", &self.backup_config)
+            .finish()
+    }
+}
+
+#[derive(Clone, clap::Args)]
 #[group(
     required = false,
     multiple = true,
@@ -124,6 +139,18 @@ pub struct OptionalS3BackupConfig {
     pub access_key: Option<String>,
     #[arg(long = "s3-secret-key", env = "S3_SECRET_KEY")]
     pub secret_key: Option<String>,
+}
+
+impl std::fmt::Debug for OptionalS3BackupConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OptionalS3BackupConfig")
+            .field("host", &self.host)
+            .field("name", &self.name)
+            .field("region", &self.region)
+            .field("access_key", &self.access_key.as_ref().map(|_| "***REDACTED***"))
+            .field("secret_key", &self.secret_key.as_ref().map(|_| "***REDACTED***"))
+            .finish()
+    }
 }
 
 impl From<OptionalS3BackupConfig> for S3BackupConfig {
