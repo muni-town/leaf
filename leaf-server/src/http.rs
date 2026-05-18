@@ -79,16 +79,16 @@ pub static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::ne
 #[instrument(skip(socket, data))]
 async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
     // Get the auth token from incomming connection
-    let did = async move {
+    let auth = async move {
         let Some(token) = get_token(&data).ok() else {
             return Ok(None);
         };
-        let did = verify_auth_token(token).await?;
-        anyhow::Ok(Some(did))
+        let auth = verify_auth_token(token).await?;
+        anyhow::Ok(Some(auth))
     }
     .await;
-    let did = match did {
-        Ok(did) => did,
+    let auth = match auth {
+        Ok(auth) => auth,
         Err(error) => {
             socket
                 .emit("error", &format!("Error validating auth token: {error}"))
@@ -99,6 +99,9 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
             return;
         }
     };
+
+    let did = auth.as_ref().map(|a| a.did.clone());
+    let is_unsafe_auth = auth.as_ref().map_or(false, |a| a.is_unsafe_auth);
 
     tracing::info!(?did, "Authenticated user");
     let span = Span::current();
@@ -117,7 +120,7 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
         )
         .ok();
 
-    connection::setup_socket_handlers(&socket, did);
+    connection::setup_socket_handlers(&socket, did, is_unsafe_auth);
 
     // Wait for disconnect, this is important to make sure the socket_io_connection tracing span
     // lasts longer than it's children and is recorded as such.
@@ -141,9 +144,19 @@ fn get_token(data: &Value) -> anyhow::Result<&str> {
         .ok_or_else(|| anyhow::format_err!("Auth token not found in socket.io connection"))
 }
 
-/// Validate that an ATProto JWT auth token is valid and return the user DID.
+/// Whether the connection authenticated via the shared unsafe auth token.
+///
+/// Connections authenticated this way are trusted to shadow the `user` field
+/// on events (e.g. an appserver proxying writes on behalf of an end user).
+pub struct AuthMethod {
+    pub did: String,
+    pub is_unsafe_auth: bool,
+}
+
+/// Validate that an ATProto JWT auth token is valid and return the user DID
+/// together with whether the connection used the shared unsafe auth token.
 #[instrument(skip(token), err)]
-async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
+async fn verify_auth_token(token: &str) -> anyhow::Result<AuthMethod> {
     // Check for shared key auth bypass
     let Command::Server(server_args) = &ARGS.command else {
         panic!("Invalid command");
@@ -154,7 +167,10 @@ async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
     {
         tracing::info!("Authenticated via unsafe auth token");
         Span::current().set_attribute("did", server_args.did.clone());
-        return Ok(server_args.did.clone());
+        return Ok(AuthMethod {
+            did: server_args.did.clone(),
+            is_unsafe_auth: true,
+        });
     }
 
     let claims_base64 = token
@@ -213,7 +229,10 @@ async fn verify_auth_token(token: &str) -> anyhow::Result<String> {
 
     atproto_oauth::jwt::verify(token, &key_data)?;
 
-    Ok(did)
+    Ok(AuthMethod {
+        did,
+        is_unsafe_auth: false,
+    })
 }
 
 #[handler]
