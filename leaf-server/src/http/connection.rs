@@ -28,7 +28,11 @@ use crate::{
     streams::STREAMS,
 };
 
-pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
+pub fn setup_socket_handlers(
+    socket: &SocketRef,
+    did: Option<String>,
+    is_unsafe_auth: bool,
+) {
     let span = Span::current();
 
     let open_streams = Arc::new(RwLock::new(HashMap::new()));
@@ -215,8 +219,22 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only authenticated users can send events");
                 };
 
-                let StreamEventBatchArgs { stream_did, events } =
-                    dasl::drisl::from_slice(&bytes?[..])?;
+                let StreamEventBatchArgs {
+                    stream_did,
+                    events,
+                    user_override,
+                } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Determine the effective user DID for this batch.
+                let user = match user_override {
+                    Some(override_did) if is_unsafe_auth => override_did,
+                    Some(_) => {
+                        anyhow::bail!(
+                            "user_override is only allowed for trusted (unsafe_auth_token) connections"
+                        );
+                    }
+                    None => did_.clone(),
+                };
 
                 let open_streams = open_streams_.upgradable_read().await;
                 let stream = if let Some(stream) = open_streams.get(&stream_did) {
@@ -236,7 +254,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                         events
                             .into_iter()
                             .map(|x| IncomingEvent {
-                                user: did_.clone(),
+                                user: user.clone(),
                                 payload: x.0,
                             })
                             .collect(),
@@ -265,8 +283,22 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                     anyhow::bail!("Only authenticated users can send state events");
                 };
 
-                let StreamStateEventBatchArgs { stream_did, events } =
-                    dasl::drisl::from_slice(&bytes?[..])?;
+                let StreamStateEventBatchArgs {
+                    stream_did,
+                    events,
+                    user_override,
+                } = dasl::drisl::from_slice(&bytes?[..])?;
+
+                // Determine the effective user DID for this batch.
+                let user = match user_override {
+                    Some(override_did) if is_unsafe_auth => override_did,
+                    Some(_) => {
+                        anyhow::bail!(
+                            "user_override is only allowed for trusted (unsafe_auth_token) connections"
+                        );
+                    }
+                    None => did_.clone(),
+                };
 
                 let open_streams = open_streams_.upgradable_read().await;
                 let stream = if let Some(stream) = open_streams.get(&stream_did) {
@@ -283,7 +315,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>) {
                         events
                             .into_iter()
                             .map(|x| IncomingEvent {
-                                user: did_.clone(),
+                                user: user.clone(),
                                 payload: x.0,
                             })
                             .collect(),
@@ -576,6 +608,12 @@ struct StreamUpdateModuleArgs {
 struct StreamEventBatchArgs {
     stream_did: Did,
     events: Vec<EventPayload>,
+    /// Override the `user` field on all events in this batch.
+    ///
+    /// Only accepted when the connection authenticated via the shared
+    /// `unsafe_auth_token` — regular JWT-authenticated connections must
+    /// use their own DID and will receive an error if this is set.
+    user_override: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -583,6 +621,11 @@ struct StreamEventBatchArgs {
 struct StreamStateEventBatchArgs {
     stream_did: Did,
     events: Vec<EventPayload>,
+    /// Override the `user` field on all events in this batch.
+    ///
+    /// Only accepted when the connection authenticated via the shared
+    /// `unsafe_auth_token`.
+    user_override: Option<String>,
 }
 
 #[derive(Deserialize)]
