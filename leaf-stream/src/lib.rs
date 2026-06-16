@@ -585,7 +585,7 @@ impl Stream {
     #[instrument(skip(self, events, signing_key), err)]
     pub async fn add_events(
         &self,
-        signing_key: SigningKey,
+        signing_key: Option<SigningKey>,
         events: Vec<IncomingEvent>,
     ) -> Result<Option<Cid>, StreamError> {
         // Make sure the current module is caught up
@@ -610,7 +610,15 @@ impl Stream {
             // once, and we should also include the event indexes in the signature.
 
             // Sign the whole event batch. It is much slower to sign each event individually.
-            let signature = signing_key.sign(&dasl::drisl::to_vec(&events).unwrap())?;
+            // If no signing key is provided, use an empty signature (unsigned events).
+            // 
+            // This is hacky but we never used signatures anyway, and we'll be migrating away
+            // from the leaf server in the future.
+            let signature = if let Some(ref key) = signing_key {
+                key.sign(&dasl::drisl::to_vec(&events).unwrap())?
+            } else {
+                Vec::new()
+            };
 
             for event in events {
                 // Execute the authorizer

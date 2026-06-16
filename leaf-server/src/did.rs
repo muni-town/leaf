@@ -121,7 +121,10 @@ pub async fn update_did_handle(stream_did: Did, handle: Option<String>) -> anyho
     );
 
     // Get the signing key for this DID
-    let signing_key = STORAGE.get_did_signing_key(stream_did.clone()).await?;
+    let signing_key = STORAGE
+        .get_did_signing_key(stream_did.clone())
+        .await?
+        .ok_or_else(|| anyhow::format_err!("No signing key found for DID: cannot update handle"))?;
 
     // Sign the update operation
     let operation = unsigned_operation.sign(&signing_key)?;

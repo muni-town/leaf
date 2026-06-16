@@ -588,7 +588,7 @@ impl Storage {
     }
 
     #[instrument(skip(self, did), err)]
-    pub async fn get_did_signing_key(&self, did: Did) -> anyhow::Result<SigningKey> {
+    pub async fn get_did_signing_key(&self, did: Did) -> anyhow::Result<Option<SigningKey>> {
         let db = self.db().await;
 
         #[allow(clippy::type_complexity)]
@@ -613,8 +613,7 @@ impl Storage {
                 None
             }
         });
-        keys.next()
-            .ok_or_else(|| anyhow::format_err!("No signing key found for DID"))
+        Ok(keys.next())
     }
 
     #[instrument(skip(self), err)]
@@ -703,11 +702,15 @@ impl Storage {
                 continue;
             }
 
-            // Backup the stream's metadata if needed
+// Backup the stream's metadata if needed
             if metadata_needs_backup {
+                let did_key = self
+                    .get_did_signing_key(stream.did.clone())
+                    .await?
+                    .map(|k| k.into());
                 let metadata = StreamMetadata {
                     did: stream.did.clone(),
-                    did_key: self.get_did_signing_key(stream.did.clone()).await?.into(),
+                    did_key,
                     owners: stream.owners.clone(),
                     module_cid: stream.module_cid,
                 };
@@ -926,13 +929,34 @@ impl Storage {
                 continue 'restore_streams;
             }
 
-            // Create the DID for the stream
-            self.create_did(
-                metadata.did.clone(),
-                metadata.did_key.try_into()?,
-                metadata.owners,
-            )
-            .await?;
+            // Create the DID for the stream (if we have the key)
+            if let Some(did_key) = metadata.did_key {
+                self.create_did(
+                    metadata.did.clone(),
+                    did_key.try_into()?,
+                    metadata.owners,
+                )
+                .await?;
+            } else {
+                tracing::warn!(
+                    did=%stream_did,
+                    "No DID key in backup metadata; stream will be imported without key material"
+                );
+                // Still need to create the DID row and owners for FK constraints
+                let db = self.db().await;
+                db.execute(
+                    "insert into dids (did) values (?)",
+                    [metadata.did.as_str().to_string()],
+                )
+                .await?;
+                for owner in metadata.owners {
+                    db.execute(
+                        "insert into did_owners (did, owner) values (?, ?)",
+                        [metadata.did.as_str().to_string(), owner],
+                    )
+                    .await?;
+                }
+            }
             // Create the stream
             let stream = self.create_stream(stream_did.clone()).await?;
 
@@ -1055,7 +1079,7 @@ struct EventArchive {
 #[derive(Serialize, Deserialize, Debug)]
 struct StreamMetadata {
     did: Did,
-    did_key: StreamMetadataDidKey,
+    did_key: Option<StreamMetadataDidKey>,
     owners: Vec<String>,
     module_cid: Option<Cid>,
 }
