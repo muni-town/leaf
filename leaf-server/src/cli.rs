@@ -147,8 +147,14 @@ impl std::fmt::Debug for OptionalS3BackupConfig {
             .field("host", &self.host)
             .field("name", &self.name)
             .field("region", &self.region)
-            .field("access_key", &self.access_key.as_ref().map(|_| "***REDACTED***"))
-            .field("secret_key", &self.secret_key.as_ref().map(|_| "***REDACTED***"))
+            .field(
+                "access_key",
+                &self.access_key.as_ref().map(|_| "***REDACTED***"),
+            )
+            .field(
+                "secret_key",
+                &self.secret_key.as_ref().map(|_| "***REDACTED***"),
+            )
             .finish()
     }
 }

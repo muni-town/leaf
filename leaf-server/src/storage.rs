@@ -702,7 +702,7 @@ impl Storage {
                 continue;
             }
 
-// Backup the stream's metadata if needed
+            // Backup the stream's metadata if needed
             if metadata_needs_backup {
                 let did_key = self
                     .get_did_signing_key(stream.did.clone())
@@ -931,12 +931,8 @@ impl Storage {
 
             // Create the DID for the stream (if we have the key)
             if let Some(did_key) = metadata.did_key {
-                self.create_did(
-                    metadata.did.clone(),
-                    did_key.try_into()?,
-                    metadata.owners,
-                )
-                .await?;
+                self.create_did(metadata.did.clone(), did_key.try_into()?, metadata.owners)
+                    .await?;
             } else {
                 tracing::warn!(
                     did=%stream_did,
@@ -984,7 +980,7 @@ impl Storage {
                     Some((start, end))
                 })
                 .collect::<Vec<_>>();
-            ranges_on_s3.sort_by(|x, y| x.0.cmp(&y.0));
+            ranges_on_s3.sort_by_key(|x| x.0);
 
             // Make sure ranges are non-overlapping and without holes
             let mut last_idx = 0;

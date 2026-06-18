@@ -101,7 +101,7 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
     };
 
     let did = auth.as_ref().map(|a| a.did.clone());
-    let is_unsafe_auth = auth.as_ref().map_or(false, |a| a.is_unsafe_auth);
+    let is_unsafe_auth = auth.as_ref().is_some_and(|a| a.is_unsafe_auth);
 
     tracing::info!(?did, "Authenticated user");
     let span = Span::current();

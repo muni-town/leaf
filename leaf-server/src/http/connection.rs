@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_lock::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use futures::future::{Either, select};
@@ -8,7 +8,10 @@ use leaf_stream::{
     types::{IncomingEvent, LeafQuery, LeafSubscribeEventsResponse, ModuleCodec},
 };
 use serde::{Deserialize, Serialize};
-use socketioxide::extract::{AckSender, SocketRef, TryData};
+use socketioxide::{
+    SendError,
+    extract::{AckSender, SocketRef, TryData},
+};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 use ulid::Ulid;
@@ -28,11 +31,7 @@ use crate::{
     streams::STREAMS,
 };
 
-pub fn setup_socket_handlers(
-    socket: &SocketRef,
-    did: Option<String>,
-    is_unsafe_auth: bool,
-) {
+pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>, is_unsafe_auth: bool) {
     let span = Span::current();
 
     let open_streams = Arc::new(RwLock::new(HashMap::new()));
@@ -425,21 +424,47 @@ pub fn setup_socket_handlers(
                         next_event = Box::pin(receiver.recv());
 
                         if socket_.connected() {
-                            if let Err(e) = dasl::drisl::to_vec(&StreamSubscribeNotification {
+                            let encoded = match dasl::drisl::to_vec(&StreamSubscribeNotification {
                                 subscription_id,
                                 response: event.map_err(|e| e.to_string()),
-                            })
-                            .map_err(anyhow::Error::from)
-                            .and_then(|encoded| {
-                                socket_
-                                    .emit(
-                                        "stream/subscription_response",
-                                        &bytes::Bytes::from_owner(encoded),
-                                    )
-                                    .map_err(anyhow::Error::from)
                             }) {
-                                // TODO: better error message
-                                tracing::error!("Error sending event, unsubscribing: {e}");
+                                Ok(encoded) => encoded,
+                                Err(e) => {
+                                    tracing::error!("Error encoding subscription response: {e}");
+                                    continue;
+                                }
+                            };
+                            let data = bytes::Bytes::from_owner(encoded);
+
+                            // Retry loop for backpressure: if engine.io's internal channel is
+                            // full (client overwhelmed), wait and retry instead of dropping the
+                            // message.
+                            let mut retry_delay = Duration::from_millis(10);
+                            let max_delay = Duration::from_secs(1);
+                            loop {
+                                match socket_.emit("stream/subscription_response", &data) {
+                                    Ok(()) => break,
+                                    Err(SendError::Socket(
+                                        socketioxide::SocketError::InternalChannelFull,
+                                    )) => {
+                                        if !socket_.connected() {
+                                            tracing::warn!(
+                                                "Client disconnected while retrying emit, stopping"
+                                            );
+                                            break;
+                                        }
+                                        tracing::debug!(
+                                            ?retry_delay,
+                                            "Engine.io channel full, retrying emit"
+                                        );
+                                        tokio::time::sleep(retry_delay).await;
+                                        retry_delay = (retry_delay * 2).min(max_delay);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Error sending event via socket.io: {e}");
+                                        break;
+                                    }
+                                }
                             }
                         } else if let Some(unsubscriber) =
                             unsubscribers_.lock().await.remove(&subscription_id)

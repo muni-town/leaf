@@ -356,13 +356,14 @@ impl Stream {
 
         // Create a new subscription
         let sub_id = Ulid::new();
+        let latest_event = subscription_query
+            .start
+            .map(|s| s - 1)
+            .unwrap_or(state.latest_event);
         subscriptions.push(ActiveSubscription {
             sub_id,
             user,
-            latest_event: subscription_query
-                .start
-                .map(|s| s - 1)
-                .unwrap_or(state.latest_event),
+            latest_event,
             subscription_query,
             result_sender: sender,
         });
@@ -913,22 +914,55 @@ impl Stream {
                         .update_for_subscription(sub.latest_event + 1);
                     let query_last_event = query.last_event().min(stream_latest_event);
 
-                    let query_limit = query.limit;
-                    let result = this.query(sub.user.clone(), query).await.map(|rows| {
-                        LeafSubscribeEventsResponse {
-                            has_more: rows.len() as i64 >= query_limit
-                                && query_last_event < stream_latest_event,
-                            rows,
+                    let result = this.query(sub.user.clone(), query).await;
+
+                    match result {
+                        Ok(rows) => {
+                            let has_more = query_last_event < stream_latest_event;
+
+                            let response = LeafSubscribeEventsResponse { has_more, rows };
+
+                            if sub.result_sender.send(Ok(response)).await.is_err() {
+                                tracing::warn!(
+                                    sub_id = %sub.sub_id,
+                                    "Subscription result channel closed, stopping backfill"
+                                );
+                                // Channel closed means the client disconnected or
+                                // unsubscribed. Stop backfilling this subscription.
+                                sub.latest_event = stream_latest_event;
+                                continue;
+                            }
+
+                            if has_more
+                                && sender
+                                    .send(WorkerMessage::NeedsUpdate(sub.sub_id))
+                                    .await
+                                    .is_err()
+                            {
+                                tracing::warn!(
+                                    sub_id = %sub.sub_id,
+                                    "Worker message channel closed, worker is shutting down"
+                                );
+                                return;
+                            }
                         }
-                    });
-
-                    let has_more = result.as_ref().map(|x| x.has_more).unwrap_or(false);
-
-                    sub.result_sender.try_send(result).ok();
-
-                    if has_more {
-                        sender.try_send(WorkerMessage::NeedsUpdate(sub.sub_id)).ok();
+                        Err(e) => {
+                            tracing::error!(
+                                sub_id = %sub.sub_id,
+                                error = %e,
+                                "Subscription query failed"
+                            );
+                            if sub.result_sender.send(Err(e)).await.is_err() {
+                                tracing::warn!(
+                                    sub_id = %sub.sub_id,
+                                    "Subscription error channel closed, stopping backfill"
+                                );
+                                sub.latest_event = stream_latest_event;
+                                continue;
+                            }
+                        }
                     }
+
                     sub.latest_event = query_last_event;
                 }
             }

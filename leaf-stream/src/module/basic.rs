@@ -118,13 +118,13 @@ impl LeafModule for BasicModule {
                 .execute("drop table if exists temp.event", ())
                 .await?;
             module_db
-            .execute(
-                r#"
+                .execute(
+                    r#"
                             create temp table if not exists event as select ? as user, ? as payload
                         "#,
-                (user, payload),
-            )
-            .await?;
+                    (user, payload),
+                )
+                .await?;
 
             module_db.execute_batch(&def.state_materializer).await?;
             Ok(())
