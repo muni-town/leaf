@@ -4,6 +4,7 @@ import { query } from "./commands/query.js";
 import { sendEvents } from "./commands/send-events.js";
 import { createStream } from "./commands/create-stream.js";
 import { streamInfo } from "./commands/stream-info.js";
+import { listStreams } from "./commands/list-streams.js";
 
 const HELP_TEXT = `
 Leaf CLI - Testing tool for Leaf server
@@ -16,6 +17,7 @@ Commands:
   send-events <stream-did> <file>      Send events to a stream from JSON file
   create-stream <module-cid>           Create a new stream from genesis JSON
   stream-info <stream-did>             Get stream information
+  list-streams                          List all streams on the server (requires unsafe auth token)
 
 Global Options:
   --url <url>       Leaf server URL (default: http://localhost:5530 or LEAF_URL env var)
@@ -63,6 +65,9 @@ async function main() {
         break;
       case "stream-info":
         await streamInfo(commandArgs);
+        break;
+      case "list-streams":
+        await listStreams(commandArgs);
         break;
       default:
         console.error(`Unknown command: ${command}`);

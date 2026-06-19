@@ -37,6 +37,8 @@ import {
   StreamUpdateModuleResp,
   SubscribeEventsResp,
   SubscriptionId,
+  AdminListStreamsItem,
+  AdminListStreamsResp,
 } from "./codec.js";
 
 export * from "./codec.js";
@@ -360,6 +362,18 @@ export class LeafClient {
     if ("Err" in resp) {
       throw new Error(resp.Err);
     }
+  }
+
+  async listStreams(): Promise<AdminListStreamsItem[]> {
+    const data: Uint8Array = await this.socket.emitWithAck(
+      "admin/list_streams",
+      toBinary(encode({})),
+    );
+    const resp: AdminListStreamsResp = decode(fromBinary(data));
+    if ("Err" in resp) {
+      throw new Error(resp.Err);
+    }
+    return resp.Ok.streams;
   }
 }
 

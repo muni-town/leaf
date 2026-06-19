@@ -153,3 +153,8 @@ export type StreamClearStateArgs = {
   streamDid: Did;
 };
 export type StreamClearStateResp = Result<void>;
+
+export type AdminListStreamsItem = {
+  did: Did;
+};
+export type AdminListStreamsResp = Result<{ streams: AdminListStreamsItem[] }>;

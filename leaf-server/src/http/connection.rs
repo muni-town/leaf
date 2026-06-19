@@ -25,6 +25,7 @@ fn response<T: Serialize>(v: anyhow::Result<T>) -> bytes::Bytes {
 
 use crate::{
     ARGS,
+    cli::Command,
     did::{create_did, update_did_handle},
     error::LogError,
     storage::STORAGE,
@@ -543,6 +544,44 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>, is_unsafe_
     let span_ = span.clone();
     let did_ = did.clone();
     socket.on(
+        "admin/list_streams",
+        async move |_data: TryData<bytes::Bytes>, ack: AckSender| {
+            let result = async {
+                let Some(did_) = did_ else {
+                    anyhow::bail!("Authentication required");
+                };
+
+                // Only allow the server's own DID (i.e. unsafe auth token) to list all DIDs
+                let Command::Server(server_args) = &ARGS.command else {
+                    anyhow::bail!("Unreachable: not in server mode");
+                };
+                if did_ != server_args.did {
+                    anyhow::bail!("Only the server admin can list all DIDs");
+                }
+
+                let streams = STORAGE.list_streams().await?;
+                let dids: Vec<AdminListStreamsItem> = streams
+                    .into_iter()
+                    .map(|s| AdminListStreamsItem { did: s.did })
+                    .collect();
+
+                anyhow::Ok(AdminListStreamsResp { streams: dids })
+            }
+            .instrument(tracing::info_span!(
+                parent: span_.clone(),
+                "handle admin/list_streams"
+            ))
+            .await;
+
+            ack.send(&response(result))
+                .log_error("Internal error sending response")
+                .ok();
+        },
+    );
+
+    let span_ = span.clone();
+    let did_ = did.clone();
+    socket.on(
         "stream/set_handle",
         async move |TryData::<bytes::Bytes>(bytes), ack: AckSender| {
             let result = async {
@@ -696,6 +735,18 @@ struct StreamSubscribeResp {
 struct StreamSubscribeNotification {
     subscription_id: Ulid,
     response: Result<LeafSubscribeEventsResponse, String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminListStreamsItem {
+    did: Did,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminListStreamsResp {
+    streams: Vec<AdminListStreamsItem>,
 }
 
 #[derive(Deserialize)]
