@@ -378,6 +378,16 @@ impl Stream {
         receiver
     }
 
+    /// Remove a subscription by its ID.
+    ///
+    /// This is called when a client unsubscribes or disconnects, to eagerly clean up the
+    /// subscription state rather than waiting for lazy cleanup on the next event or subscription.
+    pub async fn close_query_subscription(&self, sub_id: Ulid) {
+        let state = self.state.read().await;
+        let mut subscriptions = state.query_subscriptions.lock().await;
+        subscriptions.retain(|s| s.sub_id != sub_id);
+    }
+
     /// If this stream needs a Leaf module to be loaded before it can continue processing events,
     /// then this will return `Some(x)`. If the stream has a specific module it needs, then `x` will
     /// be `Some(module_cid)`.

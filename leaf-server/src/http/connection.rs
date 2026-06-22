@@ -408,6 +408,7 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>, is_unsafe_
                 };
 
                 let receiver = stream.subscribe_events(did_.clone(), query).await;
+                let stream_for_task = stream.clone();
 
                 tokio::spawn(async move {
                     let (unsubscribe_tx, unsubscribe_rx) = oneshot::channel();
@@ -474,6 +475,9 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>, is_unsafe_
                             unsubscriber.send(()).ok();
                         }
                     }
+
+                    // Eagerly clean up the subscription from the stream
+                    stream_for_task.close_query_subscription(subscription_id).await;
                 });
 
                 anyhow::Ok(StreamSubscribeResp { subscription_id })
