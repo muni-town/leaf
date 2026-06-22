@@ -120,13 +120,19 @@ async fn socket_io_connection(socket: SocketRef, Data(data): Data<Value>) {
         )
         .ok();
 
-    connection::setup_socket_handlers(&socket, did, is_unsafe_auth);
+    let unsubscribers = connection::setup_socket_handlers(&socket, did, is_unsafe_auth);
 
     // Wait for disconnect, this is important to make sure the socket_io_connection tracing span
     // lasts longer than it's children and is recorded as such.
     let notify = Arc::new(Notify::new());
     let notify_ = notify.clone();
-    socket.on_disconnect(move || {
+    socket.on_disconnect(async move || {
+        // Trigger all active unsubscriptions so their spawned tasks can exit
+        let mut map = unsubscribers.lock().await;
+        for (_, sender) in map.drain() {
+            sender.send(()).ok();
+        }
+        drop(map);
         notify_.notify_one();
     });
     notify.notified().await;

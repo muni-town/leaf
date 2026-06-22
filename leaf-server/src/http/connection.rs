@@ -32,7 +32,11 @@ use crate::{
     streams::STREAMS,
 };
 
-pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>, is_unsafe_auth: bool) {
+pub fn setup_socket_handlers(
+    socket: &SocketRef,
+    did: Option<String>,
+    is_unsafe_auth: bool,
+) -> Arc<Mutex<HashMap<Ulid, oneshot::Sender<()>>>> {
     let span = Span::current();
 
     let open_streams = Arc::new(RwLock::new(HashMap::new()));
@@ -615,6 +619,8 @@ pub fn setup_socket_handlers(socket: &SocketRef, did: Option<String>, is_unsafe_
                 .ok();
         },
     );
+
+    unsubscribers
 }
 
 #[derive(Deserialize)]
