@@ -1,6 +1,6 @@
 use std::{
     ops::{Bound, RangeBounds},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use anyhow::Context;
@@ -870,9 +870,7 @@ impl Stream {
     ///
     /// If you call this function a second time it will return `None` because there may only be one
     /// worker task.
-    pub async fn create_worker_task(&self) -> Option<impl Future<Output = ()> + 'static> {
-        let this = self.clone();
-
+    pub async fn create_worker_task(self: &Arc<Self>) -> Option<impl Future<Output = ()> + 'static> {
         let mut state = self.state.write().await;
         if state.worker_sender.is_some() {
             return None;
@@ -882,8 +880,16 @@ impl Stream {
         state.worker_sender = Some(sender.clone());
         drop(state);
 
+        // Use a weak reference to the Stream so the worker doesn't prevent the Stream from
+        // being dropped when all external references are gone. This breaks the circular
+        // reference: worker -> Stream -> worker_sender -> channel -> worker.
+        let weak_self = Arc::downgrade(self);
+
         Some(async move {
             while let Ok(message) = receiver.recv().await {
+                // Upgrade the weak reference. If the Stream has been dropped, exit the worker.
+                let Some(this) = weak_self.upgrade() else { return; };
+
                 let (query_subscriptions, latest_event_subscriptions) = {
                     let state = this.state.read().await;
                     (

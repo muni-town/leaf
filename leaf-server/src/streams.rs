@@ -47,6 +47,8 @@ impl Streams {
 
         // Open the stream
         let stream = leaf_stream::Stream::open(id.clone(), stream_db).await?;
+        // Wrap in Arc so we can create a weak reference for the worker task
+        let stream = Arc::new(stream);
         // Spawn background worker task for the stream
         stream.create_worker_task().await.map(tokio::spawn);
 
@@ -71,7 +73,7 @@ impl Streams {
         });
 
         // Store the stream handle in the cache
-        let handle = Arc::new(stream);
+        let handle = stream.clone();
         self.streams
             .write()
             .await
